@@ -6,7 +6,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 
-class RedisTokenManager:
+class PasswordResetTokenManager:
     """
     Manages password reset tokens stored in Redis.
     Tokens expire after 24 hours.
@@ -97,9 +97,3 @@ class RedisTokenManager:
             self.redis_client.delete(key)
         else:
             self._memory_store.pop(key, None)
-    
-    def is_token_valid(self, token):
-        """
-        Check if a token exists and is valid.
-        """
-        return self.verify_token(token) is not None

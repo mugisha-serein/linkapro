@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from dj_rest_auth.serializers import UserDetailsSerializer
-from .models import User
+from ..models import User
+from ..validators.password import validate_password_policy
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -15,9 +16,13 @@ class UserSerializer(serializers.ModelSerializer):
 class PlannerRegistrationSerializer(serializers.Serializer):
     """Serializer for Planner registration"""
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, min_length=8)
-    password_confirm = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True, min_length=12)
+    password_confirm = serializers.CharField(write_only=True, min_length=12)
     full_name = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_password(self, value):
+        validate_password_policy(value)
+        return value
 
     def validate(self, data):
         if data['password'] != data['password_confirm']:
@@ -41,11 +46,15 @@ class PlannerRegistrationSerializer(serializers.Serializer):
 class VendorRegistrationSerializer(serializers.Serializer):
     """Serializer for Vendor registration"""
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, min_length=8)
-    password_confirm = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True, min_length=12)
+    password_confirm = serializers.CharField(write_only=True, min_length=12)
     business_name = serializers.CharField(required=False, allow_blank=True)
     phone = serializers.CharField(required=False, allow_blank=True)
     location = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_password(self, value):
+        validate_password_policy(value)
+        return value
 
     def validate(self, data):
         if data['password'] != data['password_confirm']:
@@ -67,8 +76,12 @@ class VendorRegistrationSerializer(serializers.Serializer):
 class AdminCreationSerializer(serializers.Serializer):
     """Serializer for Admin creation (internal use only)"""
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, min_length=8)
-    password_confirm = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True, min_length=12)
+    password_confirm = serializers.CharField(write_only=True, min_length=12)
+
+    def validate_password(self, value):
+        validate_password_policy(value)
+        return value
 
     def validate(self, data):
         if data['password'] != data['password_confirm']:
@@ -89,19 +102,19 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
     def validate_email(self, value):
-        """Verify that the email exists in the system"""
-        try:
-            User.objects.get(email=value)
-        except User.DoesNotExist:
-            raise serializers.ValidationError('No user found with this email address.')
+        # Do not reveal whether an email exists in the system.
         return value
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     """Serializer for confirming password reset with token"""
     token = serializers.CharField()
-    new_password = serializers.CharField(write_only=True, min_length=8)
-    new_password_confirm = serializers.CharField(write_only=True, min_length=8)
+    new_password = serializers.CharField(write_only=True, min_length=12)
+    new_password_confirm = serializers.CharField(write_only=True, min_length=12)
+
+    def validate_new_password(self, value):
+        validate_password_policy(value)
+        return value
 
     def validate(self, data):
         if data['new_password'] != data['new_password_confirm']:
