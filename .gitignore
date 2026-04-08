@@ -1,33 +1,33 @@
-# # Environment variables
-# .env
+# Environment variables
+.env
 
-# # Database
-# *.sqlite3
-# *.db
+# Database
+*.sqlite3
+*.db
 
-# # Python
-# __pycache__/
-# *.pyc
-# *.pyo
-# *.pyd
-# .Python
-# env/
-# venv/
-# ENV/
-# env.bak/
-# venv.bak/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
-# # Django
-# *.log
-# local_settings.py
+# Django
+*.log
+local_settings.py
 
-# # IDE
-# .vscode/
-# .idea/
+# IDE
+.vscode/
+.idea/
 
-# # OS
-# .DS_Store
-# Thumbs.db
+# OS
+.DS_Store
+Thumbs.db
 
-# # JWT Keys (keep private key secure)
-# keys/jwt_private.pem
+# JWT Keys (keep private key secure)
+keys/jwt_private.pem
