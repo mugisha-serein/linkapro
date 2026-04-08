@@ -7,6 +7,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .serializers import UserSerializer
 from ..tokens import token_revocation_manager
+from ..services.auth_service import authenticate_user
 from ..services.rate_limit_service import rate_limiter, get_client_ip
 from ..validators.password import validate_password_policy
 
@@ -17,17 +18,15 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     """
     
     def post(self, request, *args, **kwargs):
-        # First, authenticate the user to check verification status
-        from django.contrib.auth import authenticate
         email = request.data.get('email')
         password = request.data.get('password')
-        
+
         if not email or not password:
             return Response(
                 {'error': 'Email and password are required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         client_ip = get_client_ip(request)
         if not rate_limiter.is_allowed('login', client_ip, limit=5, period_seconds=60):
             return Response(
@@ -35,8 +34,12 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS
             )
 
-        user = authenticate(request, email=email, password=password)
-        if not user or not getattr(user, 'is_verified', False):
+        try:
+            user = authenticate_user(email=email, password=password)
+        except Exception:
+            user = None
+
+        if not user:
             return Response(
                 {'error': 'Invalid credentials or account not verified.'},
                 status=status.HTTP_401_UNAUTHORIZED

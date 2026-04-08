@@ -25,8 +25,10 @@ urlpatterns = [
     # Registration and User Endpoints
     path('', include(router.urls)),
     
-    # dj-rest-auth endpoints (includes social auth)
+    # dj-rest-auth endpoints (registration and authentication)
     path('auth/', include('dj_rest_auth.urls')),
     path('auth/registration/', include('dj_rest_auth.registration.urls')),
+    
+    # Django Allauth social login routes
     path('auth/social/', include('allauth.socialaccount.urls')),
 ]

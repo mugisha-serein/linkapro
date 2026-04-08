@@ -1,6 +1,11 @@
 from rest_framework import serializers
 from dj_rest_auth.serializers import UserDetailsSerializer
 from ..models import User
+from ..services.registration_service import (
+    register_planner,
+    register_vendor,
+    create_admin_user,
+)
 from ..validators.password import validate_password_policy
 
 
@@ -32,15 +37,11 @@ class PlannerRegistrationSerializer(serializers.Serializer):
     def create(self, validated_data):
         validated_data.pop('password_confirm')
         full_name = validated_data.pop('full_name', '')
-        user = User.objects.create_planner(
+        return register_planner(
             email=validated_data['email'],
-            password=validated_data['password']
+            password=validated_data['password'],
+            full_name=full_name,
         )
-        # Update planner profile with full_name if provided
-        if full_name and hasattr(user, 'planner_profile'):
-            user.planner_profile.full_name = full_name
-            user.planner_profile.save()
-        return user
 
 
 class VendorRegistrationSerializer(serializers.Serializer):
@@ -63,14 +64,13 @@ class VendorRegistrationSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         validated_data.pop('password_confirm')
-        user = User.objects.create_vendor(
+        return register_vendor(
             email=validated_data['email'],
             password=validated_data['password'],
             business_name=validated_data.get('business_name', ''),
             phone=validated_data.get('phone', ''),
-            location=validated_data.get('location', '')
+            location=validated_data.get('location', ''),
         )
-        return user
 
 
 class AdminCreationSerializer(serializers.Serializer):
@@ -90,11 +90,10 @@ class AdminCreationSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         validated_data.pop('password_confirm')
-        user = User.objects.create_admin(
+        return create_admin_user(
             email=validated_data['email'],
-            password=validated_data['password']
+            password=validated_data['password'],
         )
-        return user
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):

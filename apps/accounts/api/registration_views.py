@@ -77,17 +77,10 @@ class AdminCreationView(viewsets.ViewSet):
     """
     Create a new Admin user (internal use only)
     """
-    permission_classes = [IsAuthenticated]
-
-    def get_permissions(self):
-        # Only allow superusers to create admins
-        if self.action == 'create_admin':
-            return [IsAuthenticated()]
-        return super().get_permissions()
+    permission_classes = [IsAdminUser]
 
     @action(detail=False, methods=['post'], name='create-admin')
     def create_admin(self, request):
-        # Check if user is superuser
         if not request.user.is_superuser:
             return Response(
                 {'error': 'Only superusers can create admin accounts'},

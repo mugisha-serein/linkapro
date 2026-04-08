@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -208,8 +209,8 @@ ACCOUNT_EMAIL_VERIFICATION = 'optional'  # Change to 'mandatory' in production
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
         'APP': {
-            'client_id': '',  # Set via environment variable
-            'secret': '',     # Set via environment variable
+            'client_id': os.environ.get('GOOGLE_CLIENT_ID', ''),
+            'secret': os.environ.get('GOOGLE_CLIENT_SECRET', ''),
             'key': ''
         },
         'SCOPE': [
@@ -218,14 +219,18 @@ SOCIALACCOUNT_PROVIDERS = {
         ],
         'AUTH_PARAMS': {
             'access_type': 'online',
-        }
+        },
+        'EMAIL_VERIFIED': True,
     }
 }
 
+SOCIALACCOUNT_QUERY_EMAIL = True
 SOCIALACCOUNT_AUTO_SIGNUP = False
 SOCIALACCOUNT_ADAPTER = 'apps.accounts.services.oauth_service.CustomSocialAccountAdapter'
 ACCOUNT_EMAIL_VERIFICATION = 'mandatory'
 SOCIALACCOUNT_EMAIL_VERIFICATION = 'mandatory'
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_UNIQUE_EMAIL = True
 
 # dj-rest-auth Configuration
 REST_AUTH = {
@@ -246,3 +251,8 @@ CORS_ALLOWED_ORIGINS = [
 REDIS_HOST = 'localhost'
 REDIS_PORT = 6379
 REDIS_DB = 0
+
+# Captcha configuration for public inquiry submission
+RECAPTCHA_SECRET_KEY = os.environ.get('RECAPTCHA_SECRET_KEY', '')
+HCAPTCHA_SECRET_KEY = os.environ.get('HCAPTCHA_SECRET_KEY', '')
+CAPTCHA_RECAPTCHA_SCORE_THRESHOLD = float(os.environ.get('CAPTCHA_RECAPTCHA_SCORE_THRESHOLD', 0.5))
