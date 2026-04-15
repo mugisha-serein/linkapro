@@ -1,1 +1,0 @@
-# User selectors for read-only queries

@@ -2,7 +2,6 @@ from django.apps import AppConfig
 
 
 class AccountsConfig(AppConfig):
-    name = 'apps.accounts'
-
-    def ready(self):
-        import apps.accounts.events.user_events
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.accounts"
+    label = "accounts"

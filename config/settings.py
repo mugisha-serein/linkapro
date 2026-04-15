@@ -124,7 +124,7 @@ AUTH_PASSWORD_VALIDATORS = [
         },
     },
     {
-        'NAME': 'apps.accounts.validators.password.PasswordComplexityValidator',
+        'NAME': 'apps.accounts.infrastructure.security.password_validator.PasswordComplexityValidator',
     },
     {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
@@ -155,7 +155,7 @@ STATIC_URL = 'static/'
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'apps.accounts.tokens.jwt.CustomJWTAuthentication',
+        'apps.accounts.infrastructure.tokens.jwt_authentication.CustomJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -189,7 +189,7 @@ SIMPLE_JWT = {
     'VERIFYING_KEY': JWT_PUBLIC_KEY,
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',
-    'AUTH_TOKEN_CLASSES': ('apps.accounts.tokens.jwt.CustomAccessToken',),
+    'AUTH_TOKEN_CLASSES': ('apps.accounts.infrastructure.tokens.jwt_provider.CustomAccessToken',),
     'TOKEN_TYPE_CLAIM': 'token_type',
     'JTI_CLAIM': 'jti',  # Unique token ID
 }
