@@ -53,17 +53,20 @@ INSTALLED_APPS = [
     
     # Apps
     'apps.accounts',
-    'apps.users',
-    'apps.vendors',
-    'apps.planners',
-    'apps.inquiries',
-    'apps.reviews',
-    'apps.core',
-    'apps.admin_panel',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'
 SITE_ID = 1
+
+# django-allauth / dj-rest-auth configuration
+# Keep authentication email-only and disable username assumptions.
+ACCOUNT_AUTHENTICATION_METHOD = "email"
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None
+ACCOUNT_USERNAME_REQUIRED = False
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_EMAIL_VERIFICATION = "mandatory"
 
 # Default auto field for models
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
