@@ -1,57 +1,36 @@
-# Value Object - Immutable Business Concept
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
+
+from domain.exceptions import InvalidEmailError
 
 
 @dataclass(frozen=True)
 class Email:
     """
-    Email value object.
+    Value object representing a validated, normalized email address.
 
-    Represents a validated email address in the business domain.
-    Immutable and self-validating.
+    Immutable. Equality is structural (same address = same identity).
+    Normalization: lowercased, whitespace stripped.
     """
 
-    value: str
+    address: str
 
-    def __post_init__(self):
-        """Validate email format and business rules."""
-        self._validate_format()
-        self._validate_business_rules()
+    # Minimal RFC-5321-inspired pattern. Deliberate: domain layer
+    # does not need a full RFC 5322 parser.
+    _PATTERN: str = r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$"
 
-    def _validate_format(self) -> None:
-        """Validate email format using regex."""
-        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        if not re.match(email_pattern, self.value):
-            raise ValueError(f"Invalid email format: {self.value}")
+    def __post_init__(self) -> None:
+        normalized = self.address.strip().lower()
+        # frozen=True means we must use object.__setattr__ to set derived values
+        object.__setattr__(self, "address", normalized)
 
-    def _validate_business_rules(self) -> None:
-        """Apply business-specific email validation rules."""
-        # Email must be lowercase (business rule)
-        if self.value != self.value.lower():
-            raise ValueError("Email must be lowercase")
-
-        # Email length constraints
-        if len(self.value) > 254:  # RFC 5321 limit
-            raise ValueError("Email too long")
-
-        # Domain restrictions (example business rule)
-        blocked_domains = ['tempmail.com', 'throwaway.com']
-        domain = self.value.split('@')[1].lower()
-        if domain in blocked_domains:
-            raise ValueError(f"Email domain not allowed: {domain}")
-
-    @property
-    def domain(self) -> str:
-        """Extract domain from email."""
-        return self.value.split('@')[1]
-
-    @property
-    def local_part(self) -> str:
-        """Extract local part from email."""
-        return self.value.split('@')[0]
+        if not re.match(self._PATTERN, normalized):
+            raise InvalidEmailError(
+                f"'{self.address}' is not a valid email address."
+            )
 
     def __str__(self) -> str:
-        return self.value
+        return self.address
+
+    def domain_part(self) -> str:
+        return self.address.split("@")[1]
