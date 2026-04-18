@@ -1,0 +1,8 @@
+from django.contrib import admin
+from django.urls import path, include
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("api/django/identity/", include("django_app.identity.urls")),
+    path("api/django/events/", include("django_app.events.urls")),
+]
