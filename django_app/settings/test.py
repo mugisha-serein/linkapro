@@ -1,6 +1,8 @@
 from .base import *
 
-# Use in-memory SQLite for faster tests
+DEBUG = True
+ALLOWED_HOSTS = ["*"]
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
@@ -13,22 +15,14 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.MD5PasswordHasher",
 ]
 
-# Disable logging during tests
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": True,
-}
-
-# Use a fast, insecure secret key for tests
-SECRET_KEY = "6324f9be-8fe7-4771-a197-e4bceceb265e"
-
-# Disable email sending
+# Email backend for testing
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
-# Celery task always eager for tests
+# Celery always eager
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
+# Shorter token lifetimes for tests
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
@@ -38,10 +32,8 @@ SIMPLE_JWT = {
     "SIGNING_KEY": SECRET_KEY,
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
-
 PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
 EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
 
-CLOUDINARY_CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
-CLOUDINARY_API_KEY = os.environ.get("CLOUDINARY_API_KEY", "")
-CLOUDINARY_API_SECRET = os.environ.get("CLOUDINARY_API_SECRET", "")
+# Use a fast, insecure secret key for tests
+SECRET_KEY = "*5f*tl1v=p0v=(l9f6e)*c7a-bq6mr=sl-!ub3hn42cq0m3br5"

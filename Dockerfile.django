@@ -1,1 +1,61 @@
-# Scaffold placeholder for the Django image.
+FROM python:3.12-alpine
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+# -------------------------
+# 1. Install build deps
+# -------------------------
+RUN apk add --no-cache --virtual .build-deps \
+    gcc \
+    musl-dev \
+    python3-dev \
+    postgresql-dev \
+    cairo-dev \
+    pango-dev \
+    gdk-pixbuf-dev \
+    libffi-dev
+
+# -------------------------
+# 2. Install runtime deps
+# -------------------------
+RUN apk add --no-cache --virtual .build-deps \
+    gcc \
+    musl-dev \
+    postgresql-dev \
+    libffi-dev
+
+# -------------------------
+# 3. Install Python deps (cached)
+# -------------------------
+COPY requirements/ ./requirements/
+
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements/production.txt
+
+# -------------------------
+# 4. Remove build deps
+# -------------------------
+RUN apk del .build-deps
+
+# -------------------------
+# 5. Copy project
+# -------------------------
+COPY . .
+
+# -------------------------
+# 6. Setup user + directories
+# -------------------------
+RUN adduser -D -u 1000 django && \
+    mkdir -p /app/static /app/media && \
+    chown -R django:django /app
+
+USER django
+
+# -------------------------
+# 7. Run server
+# -------------------------
+CMD ["gunicorn", "django_app.wsgi:application", "--bind", "0.0.0.0:8000"]

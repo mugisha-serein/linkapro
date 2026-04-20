@@ -3,5 +3,5 @@ from .base import *
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
-# Override database for local dev if needed
-DATABASES["default"]["HOST"] = "localhost"
+# Override for local development
+DATABASES["default"]["HOST"] = os.environ.get("DB_HOST", "localhost")

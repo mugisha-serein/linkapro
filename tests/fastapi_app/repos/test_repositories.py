@@ -30,9 +30,8 @@ class TestAsyncVendorListingRepository:
         assert retrieved.business_name == "Test Biz"
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Full‑text search requires PostgreSQL with pg_trgm")
+    @pytest.mark.skip(reason="Full-text search requires PostgreSQL pg_trgm")
     async def test_search_full_text(self, session: AsyncSession):
-        # Skipped for SQLite
         pass
 
     @pytest.mark.asyncio
