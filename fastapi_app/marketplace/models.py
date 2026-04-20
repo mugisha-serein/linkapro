@@ -1,10 +1,9 @@
 from sqlalchemy import Boolean, Column, String, Float, Integer, DateTime, Text, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base
+from ..database import Base
 from sqlalchemy.sql import func
 import uuid
 
-Base = declarative_base()
 
 class VendorListingModel(Base):
     __tablename__ = "marketplace_vendorlisting"

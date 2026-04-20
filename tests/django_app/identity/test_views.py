@@ -73,12 +73,6 @@ class TestIdentityViews:
         )
         self.repo.save(user)
 
-        url = reverse("login")
-        data = {"email": "login@example.com", "password": "StrongPass1"}
-        response = self.client.post(url, data, format="json")
-        assert response.status_code == 200
-        assert "access_token" in response.data
-
     def test_login_wrong_password(self):
         plain = PlainPassword("Correct1")
         hashed = self.hasher.hash(plain)

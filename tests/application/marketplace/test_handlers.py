@@ -63,6 +63,7 @@ class TestMarketplaceCommandHandlers:
             category="photography",
             description="desc",
             service_area="Kigali",
+            cover_image_url=None, 
         )
         result = await command_handlers.update_vendor_listing(cmd)
 
@@ -78,6 +79,7 @@ class TestMarketplaceCommandHandlers:
             category="catering",
             description="old desc",
             service_area="area",
+            cover_image_url=None, 
         )
         mock_listing_repo.get_by_vendor_id.return_value = existing
         mock_listing_repo.save.side_effect = lambda x: x
@@ -118,6 +120,7 @@ class TestMarketplaceQueryHandlers:
                 category="photography",
                 description="...",
                 service_area="Kigali",
+                cover_image_url=None, 
             ),
             VendorListing(
                 id=uuid.uuid4(),
@@ -126,6 +129,7 @@ class TestMarketplaceQueryHandlers:
                 category="catering",
                 description="...",
                 service_area="Kigali",
+                cover_image_url=None, 
             ),
         ]
         mock_listing_repo.search.return_value = (listings, 2)
