@@ -39,6 +39,7 @@ db.sqlite3-journal
 
 # Folders
 /scafford/
+/Evidences/
 
 # ==============================================
 # Environment & Secrets
