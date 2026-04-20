@@ -1,0 +1,53 @@
+FROM python:3.12-alpine
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+# -------------------------
+# 1. Install build deps
+# -------------------------
+RUN apk add --no-cache --virtual .build-deps \
+    gcc \
+    musl-dev \
+    python3-dev \
+    postgresql-dev
+
+# -------------------------
+# 2. Install runtime deps
+# -------------------------
+RUN apk add --no-cache \
+    libpq
+
+# -------------------------
+# 3. Install Python deps (cache optimized)
+# -------------------------
+COPY requirements/ ./requirements/
+
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements/fastapi.txt
+
+# -------------------------
+# 4. Remove build deps
+# -------------------------
+RUN apk del .build-deps
+
+# -------------------------
+# 5. Copy app
+# -------------------------
+COPY . .
+
+# -------------------------
+# 6. Non-root user
+# -------------------------
+RUN adduser -D -u 1000 fastapi && \
+    chown -R fastapi:fastapi /app
+
+USER fastapi
+
+# -------------------------
+# 7. Run server
+# -------------------------
+CMD ["uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8001"]

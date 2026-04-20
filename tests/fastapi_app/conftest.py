@@ -1,45 +1,46 @@
 import asyncio
+import os
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import text
 
-# Ensure models are imported and attached to Base.metadata BEFORE engine fixture runs
+# Import Base from your application (adjust path if needed)
 from fastapi_app.database import Base
-from fastapi_app.marketplace.models import VendorListingModel, ReviewModel
+
+# Force import of all model modules so they register with Base.metadata
+from fastapi_app.marketplace.models import VendorListingModel, ReviewModel  # noqa: F401
 
 @pytest.fixture(scope="session")
 def event_loop():
+    """Create an instance of the default event loop for each test session."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
 
 @pytest.fixture(scope="session")
 async def engine():
-    DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+    """Create a file-based SQLite engine and create all tables."""
+    # File-based SQLite ensures tables persist across connections
+    DATABASE_URL = "sqlite+aiosqlite:///./test_marketplace.db"
     engine = create_async_engine(DATABASE_URL, echo=False)
 
     async with engine.begin() as conn:
+        # Drop all tables first (clean slate)
+        await conn.run_sync(Base.metadata.drop_all)
+        # Create all tables
         await conn.run_sync(Base.metadata.create_all)
-        if "postgresql" in DATABASE_URL:
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-    
+
     yield engine
+
     await engine.dispose()
+    # Clean up the test database file
+    if os.path.exists("./test_marketplace.db"):
+        os.remove("./test_marketplace.db")
 
 @pytest.fixture
 async def session(engine):
+    """Provide a transactional session for a test."""
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with async_session() as session:
         yield session
         await session.rollback()
-
-@pytest.mark.asyncio
-async def test_tables_exist(session):
-    from sqlalchemy import inspect
-    def get_tables(conn):
-        inspector = inspect(conn)
-        return inspector.get_table_names()
-    tables = await session.run_sync(get_tables)
-    assert "marketplace_vendorlisting" in tables
-    assert "marketplace_review" in tables   

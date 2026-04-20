@@ -40,6 +40,7 @@ class TestReview:
                 vendor_id=uuid.uuid4(),
                 author_user_id=uuid.uuid4(),
                 rating=0,
+                comment="Test", 
             )
         with pytest.raises(ValueError, match="Rating must be between 1 and 5"):
             Review(
@@ -47,4 +48,5 @@ class TestReview:
                 vendor_id=uuid.uuid4(),
                 author_user_id=uuid.uuid4(),
                 rating=6,
+                comment="Test",
             )
