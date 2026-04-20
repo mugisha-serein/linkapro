@@ -1,7 +1,7 @@
 # ==============================================
 # Python / Django
 # ==============================================
-__pycache__/
+*__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -38,8 +38,8 @@ db.sqlite3-journal
 /staticfiles/
 
 # Folders
-/scafford/
-/Evidences/
+scafford/
+Evidences/
 
 # ==============================================
 # Environment & Secrets
