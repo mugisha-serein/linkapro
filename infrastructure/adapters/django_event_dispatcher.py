@@ -14,6 +14,13 @@ budget_line_added = Signal()
 guest_added = Signal()
 timeline_block_added = Signal()
 
+# Define the event dispatcher
+vendor_submitted_for_review = Signal()
+vendor_approved = Signal()
+vendor_rejected = Signal()
+vendor_suspended = Signal()
+inquiry_received = Signal()
+
 class DjangoEventDispatcher:
     def dispatch(self, event) -> None:
         event_type = type(event).__name__
@@ -31,6 +38,13 @@ class DjangoEventDispatcher:
             "BudgetLineAdded": budget_line_added,
             "GuestAdded": guest_added,
             "TimelineBlockAdded": timeline_block_added,
+
+            # vendors
+            "VendorSubmittedForReview": vendor_submitted_for_review,
+            "VendorApproved": vendor_approved,
+            "VendorRejected": vendor_rejected,
+            "VendorSuspended": vendor_suspended,
+            "InquiryReceived": inquiry_received,
         }
         signal = signal_map.get(event_type)
         if signal:

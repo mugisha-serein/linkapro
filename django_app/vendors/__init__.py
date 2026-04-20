@@ -1,0 +1,1 @@
+default_app_config = "evplan.django_app.vendors.apps.VendorsConfig"

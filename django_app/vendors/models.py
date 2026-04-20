@@ -1,0 +1,88 @@
+import uuid
+from django.db import models
+from django.utils import timezone
+from django_app.identity.models import User
+
+class VendorProfile(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft"
+        PENDING_REVIEW = "pending_review"
+        APPROVED = "approved"
+        REJECTED = "rejected"
+        SUSPENDED = "suspended"
+
+    class Category(models.TextChoices):
+        PHOTOGRAPHY = "photography"
+        CATERING = "catering"
+        DECOR = "decor"
+        VENUE = "venue"
+        ENTERTAINMENT = "entertainment"
+        TRANSPORTATION = "transportation"
+        ATTIRE = "attire"
+        OTHER = "other"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="vendor_profile")
+    business_name = models.CharField(max_length=200)
+    category = models.CharField(max_length=30, choices=Category.choices)
+    description = models.TextField()
+    service_area = models.CharField(max_length=200)
+    contact_email = models.EmailField()
+    contact_phone = models.CharField(max_length=30)
+    website = models.URLField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.business_name
+
+
+class PortfolioImage(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="images")
+    public_id = models.CharField(max_length=200)
+    secure_url = models.URLField()
+    caption = models.CharField(max_length=500, blank=True, null=True)
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["order"]
+
+    def __str__(self):
+        return f"Image {self.order} for {self.vendor.business_name}"
+
+
+class ServicePackage(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="packages")
+    name = models.CharField(max_length=200)
+    description = models.TextField()
+    price = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3, default="RWF")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name} - {self.vendor.business_name}"
+
+
+class Inquiry(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="inquiries")
+    client_name = models.CharField(max_length=200)
+    client_email = models.EmailField()
+    client_phone = models.CharField(max_length=30, blank=True, null=True)
+    message = models.TextField()
+    event_date = models.DateField(null=True, blank=True)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f"Inquiry from {self.client_name} to {self.vendor.business_name}"

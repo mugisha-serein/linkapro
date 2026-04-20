@@ -23,6 +23,7 @@ INSTALLED_APPS = [
 
     "django_app.identity",
     "django_app.events",
+    "django_app.vendors",
     # other apps will be added later
 ]
 
