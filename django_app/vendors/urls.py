@@ -1,0 +1,25 @@
+from django.urls import path
+from .views import (
+    VendorProfileView,
+    VendorSubmitForReviewView,
+    PortfolioImageView,
+    PortfolioImageReorderView,
+    ServicePackageListView,
+    ServicePackageDetailView,
+    ServicePackageActivateView,
+    InquiryListView,
+    PublicInquiryView,
+)
+
+urlpatterns = [
+    path("profile/", VendorProfileView.as_view(), name="vendor-profile"),
+    path("profile/submit/", VendorSubmitForReviewView.as_view(), name="vendor-submit"),
+    path("portfolio/", PortfolioImageView.as_view(), name="portfolio-list"),
+    path("portfolio/<uuid:image_id>/", PortfolioImageView.as_view(), name="portfolio-detail"),
+    path("portfolio/reorder/", PortfolioImageReorderView.as_view(), name="portfolio-reorder"),
+    path("packages/", ServicePackageListView.as_view(), name="package-list"),
+    path("packages/<uuid:package_id>/", ServicePackageDetailView.as_view(), name="package-detail"),
+    path("packages/<uuid:package_id>/activate/", ServicePackageActivateView.as_view(), name="package-activate"),
+    path("inquiries/", InquiryListView.as_view(), name="inquiry-list"),
+    path("public/<uuid:vendor_id>/inquiry/", PublicInquiryView.as_view(), name="public-inquiry"),
+]

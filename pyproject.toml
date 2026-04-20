@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evplan"
+version = "0.1.0"
+description = "Event Planning & Vendor Marketplace Platform"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "django_app.settings.test"
+asyncio_mode = "auto"
+markers = [
+    "asyncio: mark test as async",
+]
