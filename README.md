@@ -1,11 +1,12 @@
 <div align="center">
-  <h1>🎉 Linkapro</h1>
-  <h3>Event Planning & Vendor Marketplace Platform</h3>
+  <h1>Linkapro</h1>
+  <h3>Event Planning & Vendor Marketplace Backend</h3>
   <p>
     <img src="https://img.shields.io/badge/Django-5.0-092E20?style=for-the-badge&logo=django&logoColor=white" alt="Django">
     <img src="https://img.shields.io/badge/FastAPI-0.110-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL">
     <img src="https://img.shields.io/badge/Celery-5.4-37814A?style=for-the-badge&logo=celery&logoColor=white" alt="Celery">
+    <img src="https://img.shields.io/badge/Redis-7.2-D82C20?style=for-the-badge&logo=redis&logoColor=white" alt="Redis">
     <img src="https://img.shields.io/badge/Docker-24.0-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   </p>
 </div>
@@ -14,139 +15,227 @@
 
 ## 📖 Table of Contents
 
-- [Overview](#-overview)
-- [Key Features](#-key-features)
-- [System Architecture](#-system-architecture)
-- [Technology Stack](#-technology-stack)
-- [Project Structure](#-project-structure)
-- [Getting Started](#-getting-started)
-- [Environment Variables](#-environment-variables)
-- [Running Tests](#-running-tests)
-- [Test Evidence](#-test-evidence)
+- [1. Overview](#-overview)
+- [2. System Architecture](#-system-architecture)
+- [3. Domain Design (Core Logic)](#-domain-design-core-logic)
+- [4. Key Features (Use Cases)](#-key-features-use-cases)
+- [5. Technology Stack](#-technology-stack)
+- [6. Project Structure](#-project-structure)
+- [7. Getting Started](#-getting-started)
+- [8. Configuration & Environment](#-configuration--environment)
+- [9. Testing Strategy](#-testing-strategy)
+- [10. Test Evidence](#-test-evidence)
+<!-- - [11. Deployment Architecture](#-deployment-architecture) -->
 
 ---
 
 ## 📋 Overview
 
-**Linkapro** is a production‑grade backend system that connects **Event Planners** with **Service Vendors**.  
-Whether you're planning a wedding, corporate gathering, or travel experience, Linkapro streamlines the entire workflow:
+**Linkapro** is a domain-driven, layered backend system designed to manage event planning workflows and vendor marketplace interactions with strict separation of concerns and scalable architecture.
 
-- **Planners** build checklists, track budgets, manage guest lists, and discover trusted vendors.
-- **Vendors** showcase their portfolios, define pricing packages, and receive client inquiries.
-- **Administrators** govern the platform with approval workflows, content moderation, and real‑time analytics.
+The system models three primary bounded actors:
+
+- **Event Planners** — create and manage event lifecycles including budgeting, scheduling, guest coordination, and vendor selection.
+- **Service Vendors** — expose structured service offerings through portfolios, pricing models, and availability management.
+- **System Administrators** — enforce governance through moderation, approvals, auditability, and operational control.
+
+Linkapro is not a monolithic application layer; it is structured around independent domains that communicate through well-defined application services and infrastructure adapters.
+
+Core design constraints:
+- Business rules are isolated within the Domain layer
+- Application layer orchestrates workflows without owning rules
+- Infrastructure is replaceable and framework-bound (Django, FastAPI, Celery)
+- All external integrations are abstracted behind ports
 
 ---
 
-## ✨ Key Features
+## ✨ Key Features (Application Capabilities)
 
-<table>
-  <tr>
-    <td width="50%">
-      <h4>🔐 Identity & Access</h4>
-      <ul>
-        <li>Email/Password registration with role selection (Planner / Vendor)</li>
-        <li>Google OAuth2 integration</li>
-        <li>JWT‑based sessions with refresh tokens</li>
-        <li>Profile management & password reset</li>
-      </ul>
-    </td>
-    <td width="50%">
-      <h4>📋 Event Planning Dashboard</h4>
-      <ul>
-        <li>Multi‑event workspace</li>
-        <li>Customizable checklists with due dates</li>
-        <li>Budget tracker (estimated vs. actual by category)</li>
-        <li>Guest list with RSVP, dietary needs & table assignments</li>
-        <li>Drag‑and‑drop timeline builder</li>
-      </ul>
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <h4>📸 Vendor & Photographer Portal</h4>
-      <ul>
-        <li>Business profile with bio, category, service area</li>
-        <li>Portfolio gallery (Cloudinary upload, reorder, captions)</li>
-        <li>Service packages with pricing tiers</li>
-        <li>Admin approval workflow</li>
-      </ul>
-    </td>
-    <td>
-      <h4>🛒 Marketplace & Discovery</h4>
-      <ul>
-        <li>Full‑text search with filters (location, category, price, rating)</li>
-        <li>Public vendor profile pages</li>
-        <li>Verified reviews and star ratings</li>
-        <li>Captcha‑protected inquiry form</li>
-      </ul>
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <h4>📄 Document Generation Engine</h4>
-      <ul>
-        <li>Server‑side PDF export of Event Briefs & Timelines (WeasyPrint)</li>
-        <li>Excel/CSV export of budgets and guest lists (OpenPyXL)</li>
-        <li>Branded templates</li>
-        <li>Background processing via Celery</li>
-      </ul>
-    </td>
-    <td>
-      <h4>🛡️ Administration & Governance</h4>
-      <ul>
-        <li>Super admin dashboard (Django Admin)</li>
-        <li>Vendor approval queue with notes</li>
-        <li>User ban/suspend/reinstate with audit log</li>
-        <li>Content flagging & moderation</li>
-        <li>Platform analytics dashboard</li>
-      </ul>
-    </td>
-  </tr>
-</table>
+### 🔐 Identity & Access Domain
+- Authentication via email/password and social OAuth2 (Google)
+- Role-based access control (Event Planner / Vendor / Admin)
+- JWT session management with refresh token rotation
+- Profile lifecycle management (update, recovery, reset)
+
+---
+
+### 📋 Event Management Domain
+- Event lifecycle orchestration (create → plan → execute)
+- Budget tracking (estimated vs actual per category)
+- Task/checklist engine with due dates and status transitions
+- Guest management with RSVP and metadata tracking
+- Event timeline modeling and scheduling logic
+
+---
+
+### 📸 Vendor Management Domain
+- Vendor profile aggregation (bio, category, service scope)
+- Portfolio media management (upload, ordering, metadata)
+- Pricing model definitions (packages and tiers)
+- Vendor approval workflow via governance layer
+
+---
+
+### 🛒 Marketplace & Discovery (Read-Optimized Domain)
+- Full-text search with multi-criteria filtering
+- Public vendor exposure layer (read-only projection)
+- Rating and review aggregation model
+- Inquiry submission system with validation layer
+
+---
+
+### 📄 Document Generation Domain
+- Server-side PDF generation for event reports (WeasyPrint)
+- Spreadsheet exports for budgets and guest lists (OpenPyXL)
+- Template-based document rendering system
+- Asynchronous generation via background workers (Celery)
+
+---
+
+### 🛡️ Governance & Administration Domain
+- Administrative control plane (Django Admin)
+- Vendor approval and rejection pipeline
+- User lifecycle enforcement (ban, suspend, reinstate)
+- Audit logging and system traceability
+- Platform-level analytics and monitoring views
 
 ---
 
 ## 🏗️ System Architecture
 
-Linkapro strictly adheres to a **Three‑Layer Architecture** to keep the codebase maintainable, testable, and framework‑agnostic.
+Linkapro is designed using a **strict layered architecture** with enforced dependency direction and clear separation of concerns. The system follows a **unidirectional flow model** to ensure testability, scalability, and framework independence.
 
-<div style="background-color: #f6f8fa; padding: 15px; border-radius: 8px;">
-  <h4 style="margin-top: 0;">🧠 1. Domain Layer</h4>
-  <p>Pure Python code containing <strong>Entities</strong>, <strong>Value Objects</strong>, <strong>Repository Interfaces</strong>, and <strong>Domain Events</strong>. No external dependencies.</p>
+---
 
-  <h4>⚙️ 2. Application Layer</h4>
-  <p>Orchestrates use cases via <strong>Commands</strong>, <strong>Queries</strong>, and <strong>Handlers</strong>. Returns <strong>DTOs</strong> and fires domain events.</p>
+### 🧠 1. Domain Layer (Core Business Rules)
 
-  <h4>🔌 3. Infrastructure & Interfaces</h4>
-  <p>Contains concrete repository implementations (Django ORM), FastAPI routers, Celery tasks, and external adapters (Cloudinary, SendGrid, WeasyPrint).</p>
-</div>
+The Domain Layer is completely framework-agnostic and contains the system’s business intelligence.
 
-### Bounded Contexts
+It includes:
+- Entities
+- Value Objects
+- Domain Services
+- Repository Interfaces
+- Domain Events
 
-| Context               | Framework      | Core Responsibilities                              |
-|-----------------------|----------------|----------------------------------------------------|
-| Identity & Access     | Django + DRF   | Authentication, user profiles, roles               |
-| Event Management      | Django + DRF   | Events, checklists, budgets, guests, timelines     |
-| Vendor Portfolio      | Django + DRF   | Vendor profiles, images, packages, inquiries       |
-| Marketplace           | **FastAPI**    | High‑performance search, reviews, public profiles  |
-| Document Engine       | Django + Celery| PDF/Excel generation, export jobs                  |
-| Governance            | Django Admin   | Approval workflows, audit logs, metrics            |
+**Rules:**
+- No Django / FastAPI / external library dependencies
+- No database access
+- No HTTP or infrastructure concerns
+- Defines *what the system is*, not *how it runs*
+
+---
+
+### ⚙️ 2. Application Layer (Use Case Orchestration)
+
+The Application Layer coordinates business workflows without owning business rules.
+
+It includes:
+- Commands
+- Queries
+- Handlers / Use Cases
+- DTOs (Data Transfer Objects)
+
+**Responsibilities:**
+- Executes domain logic in correct order
+- Manages transaction boundaries
+- Publishes domain events
+- Transforms domain models into response structures
+
+**Rules:**
+- No direct database access
+- No framework-specific logic
+- Depends only on Domain Layer
+
+---
+
+### 🔌 3. Infrastructure & Interface Layer
+
+This layer provides all external system integrations and framework implementations.
+
+It includes:
+- Django ORM repositories
+- FastAPI routes/controllers
+- Celery workers
+- External services (Cloudinary, SendGrid, WeasyPrint)
+
+**Responsibilities:**
+- Implements repository interfaces
+- Handles HTTP requests/responses
+- Manages external API communication
+- Executes background jobs
+
+**Rules:**
+- Can depend on Application + Domain
+- Must NOT contain business rules
+- Fully replaceable without affecting core logic
+
+---
+
+## 🔁 Dependency Rule (Strict Constraint)
+
+```text id="dep_flow"
+Infrastructure → Application → Domain
+
+---
+
+### 🧩 Bounded Contexts
+
+Linkapro is decomposed into independent bounded contexts, each representing a cohesive business capability with clear ownership and isolation.
+
+---
+
+| Context              | Core Responsibility (Domain Scope)                         | Primary Interface Layer |
+|----------------------|------------------------------------------------------------|-------------------------|
+| Identity & Access    | Authentication, authorization, user lifecycle, roles       | Django                  |
+| Event Management     | Event lifecycle, planning workflows, budgeting, scheduling | Django                  |
+| Vendor Management    | Vendor identity, portfolios, services, availability        | Django                  |
+| Marketplace          | Search, discovery, ranking, public projections             | FastAPI                 |
+| Document Generation  | Report generation, exports, document rendering pipelines   | Celery Workers          |
+| Governance           | System moderation, approvals, auditability, analytics      | Django Admin            |
 
 ---
 
 ## 🛠️ Technology Stack
 
-![Django](https://img.shields.io/badge/Django-5.0-092E20?style=for-the-badge&logo=django&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
-![Celery](https://img.shields.io/badge/Celery-37814A?style=for-the-badge&logo=celery&logoColor=white)
-![Redis](https://img.shields.io/badge/Redis-D82C20?style=for-the-badge&logo=redis&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![Cloudinary](https://img.shields.io/badge/Cloudinary-FF6C37?style=for-the-badge&logo=cloudinary&logoColor=white)
-![Google OAuth](https://img.shields.io/badge/OAuth-Google-4285F4?style=for-the-badge&logo=google&logoColor=white)
-![SendGrid](https://img.shields.io/badge/SendGrid-00B2A9?style=for-the-badge&logo=sendgrid&logoColor=white)
-![WeasyPrint](https://img.shields.io/badge/WeasyPrint-PDF-4B8BBE?style=for-the-badge)
-![OpenPyXL](https://img.shields.io/badge/OpenPyXL-Excel-1F6F3B?style=for-the-badge)
+The technology stack is organized by **system responsibility layers**. Each component exists to support a specific architectural concern.
+
+---
+
+### ⚙️ Interface Layer (Web & API Delivery)
+- Django (Core application framework, admin interface, API orchestration)
+- FastAPI (High-performance read API / marketplace queries)
+
+---
+
+### 🧠 Domain Support Layer (State & Workflow)
+- PostgreSQL (Primary relational data store)
+- Redis (Caching, session state, background coordination)
+
+---
+
+### ⚙️ Asynchronous Processing Layer
+- Celery (Background job orchestration)
+- Redis Broker (Task queue transport layer)
+
+---
+
+### 🧱 Infrastructure Layer (Deployment & Isolation)
+- Docker (Containerized execution environment)
+- Docker Compose (Multi-service orchestration)
+
+---
+
+### 🌐 External Integration Layer
+- Cloudinary (Media storage and delivery)
+- Google OAuth (Authentication provider integration)
+- SendGrid (Transactional email delivery system)
+
+---
+
+### 📄 Document Processing Layer
+- WeasyPrint (PDF generation engine)
+- OpenPyXL (Spreadsheet generation and export engine)
 
 ---
 
@@ -200,106 +289,182 @@ linkapro/
 
 ## 🚀 Getting Started
 
-### Prerequisites
-
-- Docker & Docker Compose
-- Python 3.12 for local development
-
-### Quick Start with Docker
-
-1. **Clone the repository**
-   ```bash
-   - git clone https://github.com/your-org/linkapro.git
-   - cd linkapro
-
-2. Configure Environment
-   - pythoh -m venv env
-
-   - source env/bin/activate (Mac/Linux)
-   - env\Scripts\activate (Windows)
-
-3. **Install Dependencies**
-   - pip install -r requirements/base.txt
-   - pip install -r requirements/fastapi.txt
-   - pip install -r requirements/production.txt
-   - pip install -r requirements/test.txt
-
-4. Copy environment variables
-   - cp .env.example .env
-   # Edit .env with your secret keys and service credentials
-
-5. Build and run the services
-   - docker-compose up -d --build
-
-7. Access the applications
-   - Django: http://localhost:8000/api/django/
-   - FastAPI Swagger: http://localhost:8001/docs
-   - Django Admin: http://localhost:8000/admin/
+This system is designed to run in a **containerized multi-service environment** (Django + FastAPI + Celery + PostgreSQL + Redis).
 
 ---
 
-## 🧪 Running Tests
-# Or locally (with virtual environment)
-   - pytest tests/ -v
+### 📦 Prerequisites
 
-To run only a specific module:
-    # Domain layer tests
-        - pytest tests/domain/identity -v
-        - pytest tests/domain/events -v
-        - pytest tests/domain/vendors -v
-        - pytest tests/domain/marketplace -v
-        - pytest tests/domain/documents -v
-        - pytest tests/domain/governance -v
-
-    # Application layer tests
-        - pytest tests/application/identity -v
-        - pytest tests/application/events -v
-        - pytest tests/application/vendors -v
-        - pytest tests/application/marketplace -v
-        - pytest tests/application/documents -v
-        - pytest tests/application/governance -v
-
-    # Infrastructure Layer tests
-        - pytest tests/infrastructure/repos -v
-        - pytest tests/infrastructure/adapters -v
-
-    # Django app tests
-        - pytest tests/django_app/identity -v
-        - pytest tests/django_app/events -v
-        - pytest tests/django_app/vendors -v
-        - pytest tests/django_app/documents -v
-        - pytest tests/django_app/governance -v
-
-    # FastAPI app tests
-        - pytest tests/fastapi_app/repos -v
-        - pytest test/fastapi_app/routers -v
-
-    # Tasks tests
-        - pytest tests/tasks -v
+- Docker Engine (24+)
+- Docker Compose v2+
+- Git
 
 ---
 
-## 📄 Test Evidence
+### ⚙️ Environment Setup
 
-## Domain Layer Tests
-<div align="center"> <img src="./Evidences/domain.png" alt="Test Execution Results" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"> </div>
-
-## Application Layer Tests
-<div align="center"> <img src="./Evidences/application.png" alt="Test Execution Results" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"> </div>
-
-## Infrastructure Layer Tests
-<div align="center"> <img src="./Evidences/infrastructure.png" alt="Test Execution Results" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"> </div>
-
-## Django App Tests
-<div align="center"> <img src="./Evidences/django.png" alt="Test Execution Results" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"> </div>
-
-## FastAPI App Tests
-<div align="center"> <img src="./Evidences/fastapi.png" alt="Test Execution Results" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"> </div>
-
-## Tasks Tests
-<div align="center"> <img src="./Evidences/tasks.png" alt="Test Execution Results" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"> </div>
+```bash
+git clone https://github.com/your-org/linkapro.git
+cd linkapro
 
 ---
 
-## License
-<div align="center"> <p> <a href="#"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a> </p> </div>
+### Configure environment variables
+- cp .env.example .env
+
+---
+
+### 🧱 System Build & Startup
+- docker-compose up -d --build
+
+---
+
+### 🌐 Service Access Points
+
+---
+
+| Service      | URL                                                        |
+| ------------ | ---------------------------------------------------------- |
+| Django API   | [http://localhost:8000/api](http://localhost:8000/api)     |
+| FastAPI Docs | [http://localhost:8001/docs](http://localhost:8001/docs)   |
+| Admin Panel  | [http://localhost:8000/admin](http://localhost:8000/admin) |
+
+---
+
+### 🧪 Local Development Mode
+
+---
+
+## 1. Create virtual environment
+- python -m venv env
+
+---
+
+## 2. Activate virtual environment
+# Mac/Linux
+source env/bin/activate
+
+# Windows
+env\Scripts\activate
+
+---
+
+## 3. Install dependencies
+- pip install -r requirements/base.txt
+- pip install -r requirements/fastapi.txt
+- pip install -r requirements/production.txt
+- pip install -r requirements/test.txt
+
+---
+
+### 🧪 Running Tests
+
+The test suite is structured according to the system architecture layers. Each layer can be executed independently to ensure isolation and maintainability.
+
+---
+
+## ▶️ Run All Tests
+
+```bash
+pytest tests/ -v
+
+---
+
+## 🧠 Layered Test Execution
+🧠 Domain Layer (Business Rules)
+- pytest tests/domain/identity -v
+- pytest tests/domain/events -v
+- pytest tests/domain/vendors -v
+- pytest tests/domain/marketplace -v
+- pytest tests/domain/documents -v
+- pytest tests/domain/governance -v
+
+---
+
+⚙️ Application Layer (Use Case Logic)
+- pytest tests/application/identity -v
+- pytest tests/application/events -v
+- pytest tests/application/vendors -v
+- pytest tests/application/marketplace -v
+- pytest tests/application/documents -v
+- pytest tests/application/governance -v
+
+---
+
+🔌 Infrastructure Layer (Adapters & Repositories)
+- pytest tests/infrastructure/repos -v
+- pytest tests/infrastructure/adapters -v
+
+---
+
+## 🌐 Interface Layer (Framework Boundaries)
+Django Application Tests
+- pytest tests/django_app/identity -v
+- pytest tests/django_app/events -v
+- pytest tests/django_app/vendors -v
+- pytest tests/django_app/documents -v
+- pytest tests/django_app/governance -v
+
+FastAPI Application Tests
+- pytest tests/fastapi_app/repos -v
+- pytest tests/fastapi_app/routers -v
+
+---
+
+## ⚙️ Background Tasks
+Tasks Tests
+- pytest tests/tasks -v
+
+---
+
+## 📄 Test Evidence & Verification
+
+This section provides structured proof of test execution across architectural layers. Each artifact represents validation of isolated system boundaries.
+
+---
+
+### 🧠 Domain Layer Validation
+- Verifies business rules and invariants
+- Ensures framework independence
+
+![Domain Tests](./Evidences/domain.png)
+
+---
+
+### ⚙️ Application Layer Validation
+- Verifies use case orchestration
+- Ensures correct workflow execution across domain services
+
+![Application Tests](./Evidences/application.png)
+
+---
+
+### 🔌 Infrastructure Layer Validation
+- Verifies repository implementations and external adapters
+- Ensures correct interaction with persistence and external services
+
+![Infrastructure Tests](./Evidences/infrastructure.png)
+
+---
+
+### 🌐 Django Interface Layer Validation
+- Verifies API endpoints, admin actions, and request lifecycle
+
+![Django Tests](./Evidences/django.png)
+
+---
+
+### ⚡ FastAPI Interface Layer Validation
+- Verifies high-performance read endpoints and query behavior
+
+![FastAPI Tests](./Evidences/fastapi.png)
+
+---
+
+### ⚙️ Background Task Validation
+- Verifies asynchronous execution (Celery workflows)
+- Ensures reliability of long-running operations
+
+![Task Tests](./Evidences/tasks.png)
+
+---
