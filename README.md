@@ -304,7 +304,6 @@ This system is designed to run in a **containerized multi-service environment** 
 
 ### ⚙️ Environment Setup
 
-```bash
 git clone https://github.com/your-org/linkapro.git
 cd linkapro
 
@@ -366,7 +365,6 @@ The test suite is structured according to the system architecture layers. Each l
 
 ## ▶️ Run All Tests
 
-```bash
 pytest tests/ -v
 
 ---
