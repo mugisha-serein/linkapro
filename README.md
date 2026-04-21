@@ -174,7 +174,8 @@ It includes:
 
 ## 🔁 Dependency Rule (Strict Constraint)
 
-```text id="dep_flow"
+---
+
 Infrastructure → Application → Domain
 
 ---
