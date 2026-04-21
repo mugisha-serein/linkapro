@@ -153,7 +153,6 @@ Linkapro strictly adheres to a **Three‑Layer Architecture** to keep the codeba
 ---
 
 ## 📂 Project Structure
-## Project Structure
 
 ```
 linkapro/
