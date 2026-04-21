@@ -432,8 +432,8 @@ FastAPI Application Tests
 ---
 
 ## ⚙️ Background Tasks
-```bash
 Tasks Tests
+```bash
 - pytest tests/tasks -v
 ```
 
