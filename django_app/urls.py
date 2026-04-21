@@ -6,4 +6,5 @@ urlpatterns = [
     path("api/django/identity/", include("django_app.identity.urls")),
     path("api/django/events/", include("django_app.events.urls")),
     path("api/django/vendors/", include("django_app.vendors.urls")),
+    path("api/django/documents/", include("django_app.documents.urls")),
 ]
