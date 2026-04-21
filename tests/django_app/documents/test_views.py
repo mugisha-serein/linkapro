@@ -1,6 +1,7 @@
 import uuid
+import json
+from unittest.mock import patch, MagicMock
 import pytest
-from unittest.mock import Mock, patch
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -31,8 +32,7 @@ class TestDocumentViews:
             event_date="2025-06-01"
         )
 
-    @patch("django_app.documents.views.get_command_handlers")
-    def test_request_export_success(self, mock_get_handlers):
+    def test_request_export_success(self):
         job_id = uuid.uuid4()
         dto = ExportJobDTO(
             id=job_id,
@@ -44,22 +44,31 @@ class TestDocumentViews:
             created_at=timezone.now(),
         )
 
-        mock_handlers = Mock()
-        mock_handlers.request_export.return_value = dto
-        mock_get_handlers.return_value = mock_handlers
+        # Patch at the location where the function is *used* inside the views module
+        with patch("django_app.documents.views.get_command_handlers") as mock_get_cmd:
+            mock_handlers = MagicMock()
+            mock_handlers.request_export.return_value = dto
+            mock_get_cmd.return_value = mock_handlers
 
-        url = reverse("request-export", args=[self.event.id])
-        response = self.client.post(url, {"export_type": "event_brief"}, format="json")
-        assert response.status_code == 202
-        assert response.data["status"] == "pending"
+            url = reverse("request-export", args=[str(self.event.id)])
+            response = self.client.post(
+                url,
+                data=json.dumps({"export_type": "event_brief"}),
+                content_type="application/json"
+            )
+            assert response.status_code == 202
+            assert response.json()["status"] == "pending"
 
     def test_request_export_invalid_type(self):
-        url = reverse("request-export", args=[self.event.id])
-        response = self.client.post(url, {"export_type": "invalid"}, format="json")
+        url = reverse("request-export", args=[str(self.event.id)])
+        response = self.client.post(
+            url,
+            data=json.dumps({"export_type": "invalid"}),
+            content_type="application/json"
+        )
         assert response.status_code == 400
 
-    @patch("django_app.documents.views.get_query_handlers")
-    def test_get_job_status(self, mock_get_handlers):
+    def test_get_job_status(self):
         job_id = uuid.uuid4()
         dto = ExportJobDTO(
             id=job_id,
@@ -71,11 +80,12 @@ class TestDocumentViews:
             created_at=timezone.now(),
         )
 
-        mock_handlers = Mock()
-        mock_handlers.get_job.return_value = dto
-        mock_get_handlers.return_value = mock_handlers
+        with patch("django_app.documents.views.get_query_handlers") as mock_get_qry:
+            mock_handlers = MagicMock()
+            mock_handlers.get_job.return_value = dto
+            mock_get_qry.return_value = mock_handlers
 
-        url = reverse("export-job-status", args=[job_id])
-        response = self.client.get(url)
-        assert response.status_code == 200
-        assert response.data["status"] == "completed"
+            url = reverse("export-job-status", args=[str(job_id)])
+            response = self.client.get(url)
+            assert response.status_code == 200
+            assert response.json()["status"] == "completed"
