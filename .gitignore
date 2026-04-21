@@ -42,7 +42,6 @@ test_marketplace.db
 
 # Project-specific generated folders
 scafford/
-Evidences/
 exports/
 
 # ==============================================
