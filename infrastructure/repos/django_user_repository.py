@@ -26,23 +26,20 @@ class DjangoUserRepository(IUserRepository):
     def save(self, domain_user: DomainUser) -> DomainUser:
         try:
             django_user = DjangoUser.objects.get(id=domain_user.id)
-            created = False
         except DjangoUser.DoesNotExist:
             django_user = DjangoUser(id=domain_user.id)
-            created = True
 
-        # Update fields
         django_user.email = str(domain_user.email)
-        django_user.password_hash = str(domain_user.password_hash) if domain_user.password_hash else None
+        if domain_user.password_hash:
+            django_user.set_password(str(domain_user.password_hash))
+        else:
+            django_user.password = None  # OAuth users have no password
         django_user.first_name = domain_user.first_name
         django_user.last_name = domain_user.last_name
         django_user.role = domain_user.role.value
         django_user.is_active = domain_user.is_active
         django_user.is_verified = domain_user.is_verified
-        django_user.created_at = domain_user.created_at
-        django_user.last_login = domain_user.last_login
         django_user.save()
-
         return self._to_domain(django_user)
 
     def delete(self, user_id: uuid.UUID) -> None:
@@ -52,7 +49,7 @@ class DjangoUserRepository(IUserRepository):
         return DomainUser(
             id=model.id,
             email=Email(model.email),
-            password_hash=PasswordHash(model.password_hash) if model.password_hash else None,
+            password_hash=PasswordHash(model.password) if model.password else None,
             first_name=model.first_name,
             last_name=model.last_name,
             role=DomainRole(model.role),
