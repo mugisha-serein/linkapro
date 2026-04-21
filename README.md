@@ -304,19 +304,22 @@ This system is designed to run in a **containerized multi-service environment** 
 
 ### ⚙️ Environment Setup
 
+```bash
 git clone https://github.com/your-org/linkapro.git
 cd linkapro
-
+```
 ---
 
 ### Configure environment variables
+```bash
 - cp .env.example .env
-
+```
 ---
 
 ### 🧱 System Build & Startup
+```bash
 - docker-compose up -d --build
-
+```
 ---
 
 ### 🌐 Service Access Points
@@ -336,24 +339,30 @@ cd linkapro
 ---
 
 ## 1. Create virtual environment
+```bash
 - python -m venv env
-
+```
 ---
 
 ## 2. Activate virtual environment
 # Mac/Linux
+```bash
 source env/bin/activate
+```
 
 # Windows
+```bash
 env\Scripts\activate
-
+```
 ---
 
 ## 3. Install dependencies
+```bash
 - pip install -r requirements/base.txt
 - pip install -r requirements/fastapi.txt
 - pip install -r requirements/production.txt
 - pip install -r requirements/test.txt
+```
 
 ---
 
@@ -365,54 +374,68 @@ The test suite is structured according to the system architecture layers. Each l
 
 ## ▶️ Run All Tests
 
+```bash
 pytest tests/ -v
+```
 
 ---
 
 ## 🧠 Layered Test Execution
 🧠 Domain Layer (Business Rules)
+```bash
 - pytest tests/domain/identity -v
 - pytest tests/domain/events -v
 - pytest tests/domain/vendors -v
 - pytest tests/domain/marketplace -v
 - pytest tests/domain/documents -v
 - pytest tests/domain/governance -v
+```
 
 ---
 
 ⚙️ Application Layer (Use Case Logic)
+```bash
 - pytest tests/application/identity -v
 - pytest tests/application/events -v
 - pytest tests/application/vendors -v
 - pytest tests/application/marketplace -v
 - pytest tests/application/documents -v
 - pytest tests/application/governance -v
+```
 
 ---
 
 🔌 Infrastructure Layer (Adapters & Repositories)
+```bash
 - pytest tests/infrastructure/repos -v
 - pytest tests/infrastructure/adapters -v
+```
 
 ---
 
 ## 🌐 Interface Layer (Framework Boundaries)
+```bash
 Django Application Tests
 - pytest tests/django_app/identity -v
 - pytest tests/django_app/events -v
 - pytest tests/django_app/vendors -v
 - pytest tests/django_app/documents -v
 - pytest tests/django_app/governance -v
+```
 
 FastAPI Application Tests
+```bash
 - pytest tests/fastapi_app/repos -v
 - pytest tests/fastapi_app/routers -v
+```
 
 ---
 
 ## ⚙️ Background Tasks
+```bash
 Tasks Tests
 - pytest tests/tasks -v
+```
 
 ---
 
