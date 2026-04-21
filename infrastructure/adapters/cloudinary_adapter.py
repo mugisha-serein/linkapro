@@ -27,3 +27,14 @@ class CloudinaryAdapter:
     def delete_image(self, public_id: str) -> bool:
         result = cloudinary.uploader.destroy(public_id)
         return result.get("result") == "ok"
+    
+    def upload_file(self, file_obj, folder: str = "exports", public_id: str = None, resource_type: str = "raw") -> dict:
+        result = cloudinary.uploader.upload(
+            file_obj,
+            folder=folder,
+            public_id=public_id,
+            resource_type=resource_type,
+            use_filename=True,
+            unique_filename=False,
+        )
+        return {"public_id": result["public_id"], "secure_url": result["secure_url"]}
