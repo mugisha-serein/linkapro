@@ -153,41 +153,51 @@ Linkapro strictly adheres to a **Three‑Layer Architecture** to keep the codeba
 ---
 
 ## 📂 Project Structure
+## Project Structure
+
+```
 linkapro/
-├── domain/ # Core business logic (Entities, Value Objects, Interfaces)
-│ ├── identity/
-│ ├── events/
-│ ├── vendors/
-│ ├── marketplace/
-│ ├── documents/
-│ └── governance/
-├── application/ # Use case orchestration (Commands, Handlers, DTOs)
-│ ├── identity/
-│ ├── events/
-│ ├── vendors/
-│ ├── marketplace/
-│ ├── documents/
-│ └── governance/
-├── django_app/ # Django configuration, Admin, and CRUD endpoints
-│ ├── identity/
-│ ├── events/
-│ ├── vendors/
-│ ├── documents/
-│ ├── governance/
-│ └── settings/
-├── fastapi_app/ # High‑performance Marketplace endpoints
-│ ├── marketplace/
-│ ├── dependencies.py
-│ └── main.py
-├── infrastructure/ # Concrete repositories and external adapters
-│ ├── repos/
-│ └── adapters/
-├── tasks/ # Celery background tasks (PDF, Excel, email)
-├── templates/ # Jinja2 templates for PDF generation
+├── domain/                    # Core business logic (Entities, Value Objects, Interfaces)
+│   ├── identity/
+│   ├── events/
+│   ├── vendors/
+│   ├── marketplace/
+│   ├── documents/
+│   └── governance/
+│
+├── application/               # Use case orchestration (Commands, Handlers, DTOs)
+│   ├── identity/
+│   ├── events/
+│   ├── vendors/
+│   ├── marketplace/
+│   ├── documents/
+│   └── governance/
+│
+├── django_app/                # Django configuration, Admin, and CRUD endpoints
+│   ├── identity/
+│   ├── events/
+│   ├── vendors/
+│   ├── documents/
+│   ├── governance/
+│   └── settings/
+│
+├── fastapi_app/               # High-performance Marketplace endpoints
+│   ├── marketplace/
+│   ├── dependencies.py
+│   └── main.py
+│
+├── infrastructure/            # Concrete repositories and external adapters
+│   ├── repos/
+│   └── adapters/
+│
+├── tasks/                     # Celery background tasks (PDF, Excel, email)
+├── templates/                 # Jinja2 templates for PDF generation
+│
 ├── docker-compose.yml
 ├── Dockerfile.django
 ├── Dockerfile.fastapi
 └── nginx.conf
+```
 
 ---
 
