@@ -37,3 +37,26 @@ EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
 
 # Use a fast, insecure secret key for tests
 SECRET_KEY = "*5f*tl1v=p0v=(l9f6e)*c7a-bq6mr=sl-!ub3hn42cq0m3br5"
+
+# Celery always eager for tests (tasks run synchronously)
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True
+
+# Skip broker connection entirely
+CELERY_BROKER_URL = "memory://"
+
+# HashiCorp Vault
+VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://localhost:8200")
+VAULT_ROLE_ID = os.environ.get("VAULT_ROLE_ID", "")
+VAULT_SECRET_ID = os.environ.get("VAULT_SECRET_ID", "")
+VAULT_TRANSIT_KEY_NAME = os.environ.get("VAULT_TRANSIT_KEY_NAME", "linkapro-payments-kek")
+
+# HMAC Key
+PROVIDER_REFERENCE_HMAC_KEY = os.environ.get("PROVIDER_REFERENCE_HMAC_KEY", "change-me-in-production")
+
+# JWE Tests
+JWE_PRIVATE_KEY = """-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIK7gE4hdm0n2hNpqJpY3cZqPcF4q6ZJQ0nGxJ3M3v4hAoGCCqGSM49
+AwEHoUQDQgAEE5BQV9qR0fIq2Z3z5Qq3uFsqZbJ1PjzjV0k2eKj2tZcC5Rj3kC1
+... (a valid P-256 private key in PEM format) ...
+-----END EC PRIVATE KEY-----"""

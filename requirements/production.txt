@@ -1,2 +1,4 @@
 -r base.txt
 gunicorn==22.0.0
+asyncpg==0.29.0
+requests==2.33.1

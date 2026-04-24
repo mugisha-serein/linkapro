@@ -38,7 +38,7 @@ async def test_post_review_success(test_app, mock_command_handlers):
     review_dto.author_user_id = author_id
     review_dto.rating = 5
     review_dto.comment = "Nice"
-    review_dto.created_at = datetime.now(timezone.utc)  # ✅ Add this
+    review_dto.created_at = datetime.now(timezone.utc)
     
     mock_command_handlers.post_review.return_value = review_dto
 
