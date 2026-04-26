@@ -1,4 +1,9 @@
-"""Command and query handlers for identity."""
+from django.core.cache import cache
+
+import pyotp
+import base64
+import qrcode
+from io import BytesIO
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
@@ -20,6 +25,8 @@ from domain.identity.events import (
     UserDeactivated,
 )
 from .commands import (
+    EnableTwoFactorCommand,
+    LoginTwoFactorCommand,
     RegisterUserCommand,
     LoginUserCommand,
     OAuthLoginCommand,
@@ -29,8 +36,9 @@ from .commands import (
     VerifyEmailCommand,
     UpdateProfileCommand,
     DeactivateUserCommand,
+    VerifyTwoFactorSetupCommand,
 )
-from .dtos import UserDTO, AuthenticationResultDTO
+from .dtos import TwoFactorSetupDTO, UserDTO, AuthenticationResultDTO
 from .queries import GetUserByIdQuery, GetUserByEmailQuery
 
 
@@ -294,6 +302,86 @@ class IdentityCommandHandlers:
 
         self.event_dispatcher.dispatch(
             UserDeactivated(user_id=user.id, occurred_at=utc_now())
+        )
+    
+    def enable_two_factor(self, cmd: EnableTwoFactorCommand) -> TwoFactorSetupDTO:
+        user = self.user_repo.get_by_id(cmd.user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        # Generate new TOTP secret
+        secret = pyotp.random_base32()
+        provisioning_uri = pyotp.totp.TOTP(secret).provisioning_uri(
+            name=user.email.value,
+            issuer_name="Linkapro"
+        )
+
+        # Generate QR code as base64 (optional, can be done client-side)
+        img = qrcode.make(provisioning_uri)
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+        # Store secret temporarily (pending verification)
+        # We'll use Django's cache or a separate field
+        cache.set(f"totp_setup_{user.id}", secret, timeout=600)  # 10 minutes
+
+        return TwoFactorSetupDTO(
+            secret=secret,
+            provisioning_uri=provisioning_uri,
+            qr_code_base64=qr_base64,
+        )
+
+    def verify_two_factor_setup(self, cmd: VerifyTwoFactorSetupCommand) -> None:
+        user = self.user_repo.get_by_id(cmd.user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        secret = cache.get(f"totp_setup_{user.id}")
+        if not secret:
+            raise ValueError("TOTP setup expired or not initiated")
+
+        totp = pyotp.TOTP(secret)
+        if not totp.verify(cmd.token):
+            raise ValueError("Invalid TOTP token")
+
+        # Store the secret permanently and enable 2FA
+        self.user_repo.set_totp_secret(user.id, secret)
+        cache.delete(f"totp_setup_{user.id}")
+
+    def login_two_factor(self, cmd: LoginTwoFactorCommand) -> AuthenticationResultDTO:
+        # Decode temp token to get user_id and check it's not expired
+        payload = self.token_service.verify_temp_token(cmd.temp_token)
+        if not payload:
+            raise ValueError("Invalid or expired temporary token")
+
+        user_id = uuid.UUID(payload["user_id"])
+        user = self.user_repo.get_by_id(user_id)
+        if not user or not user.is_active:
+            raise ValueError("User not found or inactive")
+
+        # Verify TOTP
+        secret = self.user_repo.get_totp_secret(user.id)
+        if not secret:
+            raise ValueError("2FA not enabled for this user")
+
+        totp = pyotp.TOTP(secret)
+        if not totp.verify(cmd.token):
+            raise ValueError("Invalid TOTP token")
+
+        # Generate real tokens
+        access_token = self.token_service.create_access_token(str(user.id), user.role.value)
+        refresh_token = self.token_service.create_refresh_token(str(user.id))
+
+        user.record_login()
+        self.user_repo.save(user)
+
+        self.event_dispatcher.dispatch(UserLoggedIn(user_id=user.id, occurred_at=utc_now()))
+
+        return AuthenticationResultDTO(
+            user=self._to_dto(user),
+            access_token=access_token,
+            refresh_token=refresh_token,
         )
 
     def _to_dto(self, user: User) -> UserDTO:

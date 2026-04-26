@@ -59,3 +59,13 @@ class DjangoUserRepository(IUserRepository):
             updated_at=model.updated_at,
             last_login=model.last_login,
         )
+    
+    def set_totp_secret(self, user_id: uuid.UUID, secret: str) -> None:
+        DjangoUser.objects.filter(id=user_id).update(totp_secret=secret, two_factor_enabled=True)
+
+    def get_totp_secret(self, user_id: uuid.UUID) -> Optional[str]:
+        try:
+            user = DjangoUser.objects.get(id=user_id)
+            return user.totp_secret if user.two_factor_enabled else None
+        except DjangoUser.DoesNotExist:
+            return None

@@ -66,3 +66,17 @@ class UpdateProfileCommand:
 @dataclass(frozen=True)
 class DeactivateUserCommand:
     user_id: uuid.UUID
+
+@dataclass(frozen=True)
+class EnableTwoFactorCommand:
+    user_id: uuid.UUID
+
+@dataclass(frozen=True)
+class VerifyTwoFactorSetupCommand:
+    user_id: uuid.UUID
+    token: str   # TOTP code from authenticator app
+
+@dataclass(frozen=True)
+class LoginTwoFactorCommand:
+    temp_token: str   # temporary token issued after password verification
+    token: str        # TOTP code
