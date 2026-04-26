@@ -1,6 +1,9 @@
 import os
 from pathlib import Path
 from datetime import timedelta
+from celery.schedules import crontab
+import structlog
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -34,6 +37,7 @@ INSTALLED_APPS = [
     "django_app.vendors",
     "django_app.documents",
     "django_app.governance",
+    "django_app.payments",
 ]
 
 MIDDLEWARE = [
@@ -45,6 +49,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "payments.infrastructure.middleware.HmacRequestValidator",
+    "payments.infrastructure.correlation_middleware.CorrelationMiddleware"
 ]
 
 ROOT_URLCONF = "django_app.urls"
@@ -76,8 +82,15 @@ DATABASES = {
         "PASSWORD": os.environ.get("DB_PASSWORD", ""),
         "HOST": os.environ.get("DB_HOST", "localhost"),
         "PORT": os.environ.get("DB_PORT", "5432"),
+        'OPTIONS': {},
     }
 }
+
+if os.environ.get('DATABASE_SSL', 'false').lower() == 'true':
+    DATABASES['default']['OPTIONS']['sslmode'] = 'verify-full'
+    DATABASES['default']['OPTIONS']['sslcert'] = '/etc/ssl/certs/client-cert.pem'
+    DATABASES['default']['OPTIONS']['sslkey'] = '/etc/ssl/private/client-key.pem'
+    DATABASES['default']['OPTIONS']['sslrootcert'] = '/etc/ssl/certs/ca.pem'
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -100,7 +113,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "payments.infrastructure.authentication.HardenedJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -114,10 +127,16 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
+    'UPDATE_LAST_LOGIN': True,
     "ALGORITHM": "HS256",
+    'AUDIENCE': None,
+    'ISSUER': None,
     "SIGNING_KEY": SECRET_KEY,
+    'JTI_CLAIM': 'jti',
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
+
+JWE_PRIVATE_KEY = os.environ.get("JWE_PRIVATE_KEY", "")
 
 PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
 EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
@@ -125,6 +144,35 @@ EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
 # Celery
 CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+
+CELERY_BEAT_SCHEDULE = {
+    "expire-stale-payments": {
+        "task": "evplan.payments.tasks.expire_stale_payments_task",
+        "schedule": crontab(minute="*/5"),  # Every 5 minutes
+    },
+}
+
+# Logging
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'json': {
+            '()': structlog.stdlib.ProcessorFormatter,
+            'processor': structlog.processors.JSONRenderer(),
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'json',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
 
 # Cloudinary
 CLOUDINARY_CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
@@ -144,3 +192,22 @@ RECAPTCHA_SECRET_KEY = os.environ.get("RECAPTCHA_SECRET_KEY", "")
 
 # FastAPI internal URL (for Celery tasks)
 FASTAPI_INTERNAL_URL = os.environ.get("FASTAPI_INTERNAL_URL", "http://localhost:8001")
+
+# Flutterwave
+FLW_SECRET_KEY = os.environ.get("FLW_SECRET_KEY", "")
+FLW_SECRET_HASH = os.environ.get("FLW_SECRET_HASH", "")
+PAYMENT_ENV = os.environ.get("PAYMENT_ENV", "test")
+
+REDIS_URL = "redis://localhost:6379/0"
+
+# HashiCorp Vault
+VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://localhost:8200")
+VAULT_ROLE_ID = os.environ.get("VAULT_ROLE_ID", "")
+VAULT_SECRET_ID = os.environ.get("VAULT_SECRET_ID", "")
+VAULT_TRANSIT_KEY_NAME = os.environ.get("VAULT_TRANSIT_KEY_NAME", "linkapro-payments-kek")
+
+# HMAC Key
+PROVIDER_REFERENCE_HMAC_KEY = os.environ.get("PROVIDER_REFERENCE_HMAC_KEY", "change-me-in-production")
+
+# Flutterwave Webhook Decryptor
+FLW_ENCRYPTION_KEY = os.environ.get("FLW_ENCRYPTION_KEY", "")
