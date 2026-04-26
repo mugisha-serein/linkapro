@@ -41,3 +41,11 @@ class LoginSerializer(serializers.Serializer):
             email=Email(self.validated_data["email"]),
             plain_password=PlainPassword(self.validated_data["password"]),
         )
+    
+class TwoFactorLoginSerializer(serializers.Serializer):
+    temp_token = serializers.CharField()
+    token = serializers.CharField(min_length=6, max_length=6)
+
+
+class TwoFactorSetupVerifySerializer(serializers.Serializer):
+    token = serializers.CharField(min_length=6, max_length=6)

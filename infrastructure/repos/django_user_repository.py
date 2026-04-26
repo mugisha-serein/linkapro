@@ -37,6 +37,7 @@ class DjangoUserRepository(IUserRepository):
         django_user.first_name = domain_user.first_name
         django_user.last_name = domain_user.last_name
         django_user.role = domain_user.role.value
+        django_user.two_factor_enabled = domain_user.two_factor_enabled
         django_user.is_active = domain_user.is_active
         django_user.is_verified = domain_user.is_verified
         django_user.save()
@@ -53,6 +54,7 @@ class DjangoUserRepository(IUserRepository):
             first_name=model.first_name,
             last_name=model.last_name,
             role=DomainRole(model.role),
+            two_factor_enabled=model.two_factor_enabled,
             is_active=model.is_active,
             is_verified=model.is_verified,
             created_at=model.created_at,

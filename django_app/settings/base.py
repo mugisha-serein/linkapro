@@ -136,6 +136,8 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
+SECRET_KEY = "*5f*tl1v=p0v=(l9f6e)*c7a-bq6mr=sl-!ub3hn42cq0m3br5"
+
 JWE_PRIVATE_KEY = os.environ.get("JWE_PRIVATE_KEY", "")
 
 PASSWORD_RESET_TIMEOUT = timedelta(hours=1)

@@ -23,6 +23,7 @@ class User:
     first_name: str
     last_name: str
     role: UserRole
+    two_factor_enabled: bool = False
     is_active: bool = True
     is_verified: bool = False
     created_at: datetime = field(default_factory=utc_now)
