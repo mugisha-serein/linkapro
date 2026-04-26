@@ -1,7 +1,9 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
+
+from application.identity.commands import EnableTwoFactorCommand, VerifyTwoFactorSetupCommand
 
 from .serializers import RegisterSerializer, LoginSerializer
 from .services import get_command_handlers
@@ -111,7 +113,7 @@ class VerifyTwoFactorSetupView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        serializer = serializers.Serializer(data=request.data)
+        serializer = serializer.Serializer(data=request.data)
         # add token field
         cmd = VerifyTwoFactorSetupCommand(user_id=request.user.id, token=request.data.get("token"))
         handlers = get_command_handlers()
