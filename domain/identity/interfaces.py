@@ -24,6 +24,12 @@ class IUserRepository(ABC):
     def delete(self, user_id: uuid.UUID) -> None:
         """Permanently delete user (use with caution)."""
 
+    @abstractmethod
+    def set_totp_secret(self, user_id: uuid.UUID, secret: str) -> None: ...
+    
+    @abstractmethod
+    def get_totp_secret(self, user_id: uuid.UUID) -> Optional[str]: ...
+
 
 class IOAuthTokenRepository(ABC):
     @abstractmethod

@@ -24,3 +24,14 @@ class AuthenticationResultDTO:
     access_token: str
     refresh_token: str
     token_type: str = "Bearer"
+
+@dataclass(frozen=True)
+class TwoFactorSetupDTO:
+    secret: str
+    provisioning_uri: str
+    qr_code_base64: Optional[str] = None   # can be generated on client side
+
+@dataclass(frozen=True)
+class TwoFactorChallengeDTO:
+    temp_token: str
+    expires_in: int   # seconds

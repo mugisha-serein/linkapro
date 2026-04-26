@@ -77,3 +77,22 @@ class JWTTokenService:
             return str(refresh.access_token)
         except SimpleTokenError:
             return None
+
+    def create_temp_token(self, user_id: str) -> str:
+        now = datetime.now(timezone.utc)
+        payload = {
+            "user_id": user_id,
+            "purpose": "2fa",
+            "exp": now + timedelta(minutes=3),
+            "iat": now,
+        }
+        return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
+
+    def verify_temp_token(self, token_str: str) -> Optional[dict]:
+        try:
+            payload = jwt.decode(token_str, settings.SECRET_KEY, algorithms=["HS256"])
+            if payload.get("purpose") != "2fa":
+                return None
+            return payload
+        except jwt.PyJWTError:
+            return None

@@ -65,3 +65,15 @@ class PlainPassword:
 
     def __str__(self) -> str:
         return "******"  # Never expose plain password
+    
+@dataclass(frozen=True)
+class TOTPSecret:
+    """Base32‑encoded TOTP secret."""
+    value: str
+
+    def __post_init__(self):
+        if not re.match(r'^[A-Z2-7]+=*$', self.value):
+            raise ValueError("Invalid TOTP secret format")
+
+    def __str__(self) -> str:
+        return self.value
