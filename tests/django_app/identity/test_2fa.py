@@ -16,7 +16,7 @@ class TestTwoFactor:
     def test_enable_2fa_returns_secret_and_qr(self):
         user = User.objects.create_user(
             email="t@t.com",
-            password="p",
+            password="StrongPass1",
             first_name="T",
             last_name="User",
             role="planner",
@@ -31,7 +31,7 @@ class TestTwoFactor:
     def test_verify_setup_with_valid_code(self):
         user = User.objects.create_user(
             email="t@t.com",
-            password="p",
+            password="StrongPass1",
             first_name="T",
             last_name="User",
             role="planner",
@@ -63,20 +63,21 @@ class TestTwoFactor:
         secret = pyotp.random_base32()
         user = User.objects.create_user(
             email="t@t.com",
-            password="p",
+            password="StrongPass1",
             first_name="T",
             last_name="User",
             role="planner",
         )
         user.totp_secret = secret
         user.two_factor_enabled = True
+        user.password_hash = None  # ensure we use Django's password (set_password not used here? Actually create_user hashes the password, so good)
         user.save()
 
         # Step 1: normal login should return temp token
         login_url = reverse("login")
         resp = self.client.post(
             login_url,
-            {"email": "t@t.com", "password": "p"},
+            {"email": "t@t.com", "password": "StrongPass1"},
             format="json",
         )
         assert resp.status_code == 200
