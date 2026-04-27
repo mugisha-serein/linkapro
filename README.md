@@ -8,6 +8,7 @@
     <img src="https://img.shields.io/badge/Celery-5.4-37814A?style=for-the-badge&logo=celery&logoColor=white" alt="Celery">
     <img src="https://img.shields.io/badge/Redis-7.2-D82C20?style=for-the-badge&logo=redis&logoColor=white" alt="Redis">
     <img src="https://img.shields.io/badge/Docker-24.0-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
+    <img src="https://img.shields.io/badge/Flutterwave-v3-orange?style=for-the-badge" alt="Flutterwave">
   </p>
 </div>
 
@@ -54,7 +55,7 @@ Core design constraints:
 ### 🔐 Identity & Access Domain
 - Authentication via email/password and social OAuth2 (Google)
 - Role-based access control (Event Planner / Vendor / Admin)
-- JWT session management with refresh token rotation
+- Hardened JWT management with **Refresh Token Rotation**, **Family-based Blacklisting**, and **Step-up Authentication** for sensitive actions.
 - Profile lifecycle management (update, recovery, reset)
 
 ---
@@ -81,6 +82,14 @@ Core design constraints:
 - Public vendor exposure layer (read-only projection)
 - Rating and review aggregation model
 - Inquiry submission system with validation layer
+
+---
+### 💳 Payments & Financial Domain
+- Secure one-time payments via **Flutterwave Standard v3**.
+- Support for Mobile Money (MTN, Airtel, M-Pesa), Cards, and Bank Transfers.
+- **Race condition protection** via Redis distributed locking.
+- Idempotent webhook processing and strict domain-driven state machine.
+- Multi-currency support (RWF, USD, EUR, KES, GHS, NGN).
 
 ---
 
@@ -192,6 +201,7 @@ Linkapro is decomposed into independent bounded contexts, each representing a co
 | Vendor Management    | Vendor identity, portfolios, services, availability        | Django                  |
 | Marketplace          | Search, discovery, ranking, public projections             | FastAPI                 |
 | Document Generation  | Report generation, exports, document rendering pipelines   | Celery Workers          |
+| Payments             | Transaction lifecycle, webhooks, provider reconciliation   | Django + Flutterwave    |
 | Governance           | System moderation, approvals, auditability, analytics      | Django Admin            |
 
 ---
@@ -258,6 +268,11 @@ linkapro/
 │   ├── marketplace/
 │   ├── documents/
 │   └── governance/
+│
+├── payments/                  # Payment Domain & Application logic
+│   ├── domain/                # State machine, Money value objects, Policies
+│   ├── application/           # Token handlers, Payment commands
+│   └── infrastructure/        # Flutterwave adapters, Redis locks
 │
 ├── django_app/                # Django configuration, Admin, and CRUD endpoints
 │   ├── identity/
