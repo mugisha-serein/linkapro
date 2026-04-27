@@ -56,6 +56,7 @@ Core design constraints:
 - Authentication via email/password and social OAuth2 (Google)
 - Role-based access control (Event Planner / Vendor / Admin)
 - Hardened JWT management with **Refresh Token Rotation**, **Family-based Blacklisting**, and **Step-up Authentication** for sensitive actions.
+- 2FA (2 Factor Authentication) improves security for users
 - Profile lifecycle management (update, recovery, reset)
 
 ---
