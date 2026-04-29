@@ -6,6 +6,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 
 from application.identity.queries import GetUserByEmailQuery
 
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+
 from .serializers import (
     RegisterSerializer,
     LoginSerializer,
@@ -23,6 +26,7 @@ from application.identity.handlers import IdentityCommandHandlers
 from domain.identity.value_objects import Email, PlainPassword
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class RegisterView(APIView):
     permission_classes = [AllowAny]
 
@@ -43,7 +47,7 @@ class RegisterView(APIView):
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-
+@method_decorator(csrf_exempt, name="dispatch")
 class LoginView(APIView):
     permission_classes = [AllowAny]
 

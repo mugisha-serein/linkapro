@@ -16,7 +16,7 @@ if not SECRET_KEY:
     else:
         pass
 
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",") if os.environ.get("ALLOWED_HOSTS") else []
+ALLOWED_HOSTS = ["*"] 
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -178,6 +178,7 @@ LOGGING = {
 
 # CORS
 CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
