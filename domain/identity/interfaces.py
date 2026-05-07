@@ -43,5 +43,11 @@ class IOAuthTokenRepository(ABC):
         """Save OAuth token."""
 
     @abstractmethod
+    def get_by_user_and_provider(
+        self, user_id: uuid.UUID, provider: OAuthProvider
+    ) -> Optional[OAuthToken]:
+        """Retrieve token by internal user and provider."""
+
+    @abstractmethod
     def delete_for_user(self, user_id: uuid.UUID, provider: OAuthProvider) -> None:
         """Remove linked provider for user."""

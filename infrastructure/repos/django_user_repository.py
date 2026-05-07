@@ -31,7 +31,8 @@ class DjangoUserRepository(IUserRepository):
 
         django_user.email = str(domain_user.email)
         if domain_user.password_hash:
-            django_user.set_password(str(domain_user.password_hash))
+            # The application layer already hashed the password.
+            django_user.password = str(domain_user.password_hash)
         else:
             django_user.password = None  # OAuth users have no password
         django_user.first_name = domain_user.first_name

@@ -59,6 +59,35 @@ class TestIdentityViews:
         assert response.status_code == 400
         assert "already exists" in str(response.data["error"])
 
+    def test_register_then_login_success(self):
+        register_url = reverse("register")
+        login_url = reverse("login")
+
+        register_response = self.client.post(
+            register_url,
+            {
+                "email": "fresh@example.com",
+                "password": "StrongPass1",
+                "first_name": "Fresh",
+                "last_name": "User",
+                "role": "planner",
+            },
+            format="json",
+        )
+        assert register_response.status_code == 201
+
+        login_response = self.client.post(
+            login_url,
+            {
+                "email": "fresh@example.com",
+                "password": "StrongPass1",
+            },
+            format="json",
+        )
+        assert login_response.status_code == 200
+        assert "access_token" in login_response.data
+        assert "refresh_token" in login_response.data
+
     def test_login_success(self):
         plain = PlainPassword("StrongPass1")
         hashed = self.hasher.hash(plain)
