@@ -7,6 +7,7 @@ from domain.identity.entities import User, UserRole
 from domain.identity.value_objects import Email, PasswordHash, PlainPassword
 from infrastructure.repos.django_user_repository import DjangoUserRepository
 from infrastructure.adapters.password_hasher import DjangoPasswordHasher
+from django_app.identity.models import User as DjangoUser
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -125,3 +126,39 @@ class TestIdentityViews:
         response = self.client.post(url, data, format="json")
         assert response.status_code == 401
         assert "error" in response.data
+
+    def test_profile_endpoint_returns_authenticated_user(self):
+        user = DjangoUser.objects.create_user(
+            email="profile@example.com",
+            password="StrongPass1",
+            first_name="Profile",
+            last_name="User",
+            role="planner",
+        )
+        self.client.force_authenticate(user=user)
+
+        response = self.client.get(reverse("profile"))
+        assert response.status_code == 200
+        assert response.data["email"] == "profile@example.com"
+        assert response.data["role"] == "planner"
+
+    def test_refresh_token_returns_access_token(self):
+        user = DjangoUser.objects.create_user(
+            email="refresh@example.com",
+            password="StrongPass1",
+            first_name="Refresh",
+            last_name="User",
+            role="planner",
+        )
+        self.client.force_authenticate(user=user)
+        login_response = self.client.post(
+            reverse("login"),
+            {"email": "refresh@example.com", "password": "StrongPass1"},
+            format="json",
+        )
+        refresh_token = login_response.data["refresh_token"]
+
+        self.client.credentials()
+        response = self.client.post(reverse("token-refresh"), {"refresh": refresh_token}, format="json")
+        assert response.status_code == 200
+        assert "access" in response.data
