@@ -15,6 +15,7 @@ from application.identity.commands import (
     LoginTwoFactorCommand,
     VerifyTwoFactorSetupCommand,
 )
+from application.identity.queries import GetUserByIdQuery
 
 from .serializers import (
     LoginSerializer,
@@ -24,6 +25,7 @@ from .serializers import (
 )
 from .services import (
     get_command_handlers,
+    get_query_handlers,
     get_google_login_use_case,
     get_google_oauth_adapter,
 )
@@ -193,6 +195,30 @@ class VerifyTwoFactorSetupView(APIView):
             return Response({"status": "2FA enabled"})
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        handlers = get_query_handlers()
+        user_dto = handlers.get_user_by_id(GetUserByIdQuery(user_id=request.user.id))
+        if not user_dto:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(
+            {
+                "id": str(user_dto.id),
+                "email": user_dto.email,
+                "first_name": user_dto.first_name,
+                "last_name": user_dto.last_name,
+                "role": user_dto.role,
+                "is_active": user_dto.is_active,
+                "is_verified": user_dto.is_verified,
+                "created_at": user_dto.created_at,
+                "last_login": user_dto.last_login,
+            }
+        )
 
 
 class GoogleLoginView(View):
