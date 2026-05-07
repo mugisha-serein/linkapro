@@ -35,6 +35,16 @@ class DjangoOAuthTokenRepository(IOAuthTokenRepository):
         django_token.save()
         return self._to_domain(django_token)
 
+    def get_by_user_and_provider(self, user_id: uuid.UUID, provider: OAuthProvider) -> Optional[DomainToken]:
+        token = (
+            DjangoToken.objects.filter(user_id=user_id, provider=provider.value)
+            .order_by("created_at")
+            .first()
+        )
+        if not token:
+            return None
+        return self._to_domain(token)
+
     def delete_for_user(self, user_id: uuid.UUID, provider: OAuthProvider) -> None:
         DjangoToken.objects.filter(user_id=user_id, provider=provider.value).delete()
 
