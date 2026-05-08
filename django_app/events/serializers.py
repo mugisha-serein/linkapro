@@ -61,4 +61,77 @@ class AddChecklistItemSerializer(serializers.Serializer):
             assigned_to=self.validated_data.get("assigned_to"),
         )
 
+
+class UpdateChecklistItemSerializer(serializers.Serializer):
+    description = serializers.CharField(required=False)
+    status = serializers.ChoiceField(
+        choices=["pending", "in_progress", "completed", "blocked"],
+        required=False,
+    )
+    due_date = serializers.DateField(required=False, allow_null=True)
+    assigned_to = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class AddBudgetLineSerializer(serializers.Serializer):
+    category = serializers.ChoiceField(
+        choices=["venue", "catering", "photography", "decor", "entertainment", "transportation", "attire", "other"]
+    )
+    description = serializers.CharField()
+    estimated_cost = serializers.DecimalField(max_digits=12, decimal_places=2)
+    actual_cost = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def to_command(self, event_id):
+        return AddBudgetLineCommand(
+            event_id=event_id,
+            category=self.validated_data["category"],
+            description=self.validated_data["description"],
+            estimated_cost=float(self.validated_data["estimated_cost"]),
+            actual_cost=float(self.validated_data["actual_cost"]) if self.validated_data.get("actual_cost") is not None else None,
+            notes=self.validated_data.get("notes"),
+        )
+
+
+class AddGuestSerializer(serializers.Serializer):
+    full_name = serializers.CharField(max_length=200)
+    email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
+    phone = serializers.CharField(max_length=30, required=False, allow_blank=True, allow_null=True)
+    dietary_restrictions = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        allow_empty=True,
+        default=list,
+    )
+    plus_one = serializers.BooleanField(required=False, default=False)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def to_command(self, event_id):
+        return AddGuestCommand(
+            event_id=event_id,
+            full_name=self.validated_data["full_name"],
+            email=self.validated_data.get("email"),
+            phone=self.validated_data.get("phone"),
+            dietary_restrictions=self.validated_data.get("dietary_restrictions", []),
+            plus_one=self.validated_data.get("plus_one", False),
+            notes=self.validated_data.get("notes"),
+        )
+
+
+class AddTimelineBlockSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=200)
+    start_time = serializers.DateTimeField()
+    end_time = serializers.DateTimeField()
+    description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    location = serializers.CharField(max_length=300, required=False, allow_blank=True, allow_null=True)
+
+    def to_command(self, event_id):
+        return AddTimelineBlockCommand(
+            event_id=event_id,
+            title=self.validated_data["title"],
+            start_time=self.validated_data["start_time"],
+            end_time=self.validated_data["end_time"],
+            description=self.validated_data.get("description"),
+            location=self.validated_data.get("location"),
+        )
+
 # Similar serializers for Budget, Guest, Timeline (omitted for brevity)

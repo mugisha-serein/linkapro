@@ -1,53 +1,31 @@
-FROM python:3.12-alpine
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
-# -------------------------
-# 1. Install build deps
-# -------------------------
-RUN apk add --no-cache --virtual .build-deps \
+# FastAPI is mostly pure Python, but build tools keep the image resilient if a wheel is unavailable.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     gcc \
-    musl-dev \
-    python3-dev \
-    postgresql-dev
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# -------------------------
-# 2. Install runtime deps
-# -------------------------
-RUN apk add --no-cache \
-    libpq
+COPY requirements/fastapi.txt ./requirements/fastapi.txt
 
-# -------------------------
-# 3. Install Python deps (cache optimized)
-# -------------------------
-COPY requirements/ ./requirements/
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r requirements/fastapi.txt
 
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements/fastapi.txt
-
-# -------------------------
-# 4. Remove build deps
-# -------------------------
-RUN apk del .build-deps
-
-# -------------------------
-# 5. Copy app
-# -------------------------
 COPY . .
 
-# -------------------------
-# 6. Non-root user
-# -------------------------
-RUN adduser -D -u 1000 fastapi && \
-    chown -R fastapi:fastapi /app
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin fastapi \
+    && chown -R fastapi:fastapi /app
 
 USER fastapi
 
-# -------------------------
-# 7. Run server
-# -------------------------
-CMD ["uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+EXPOSE 8001
+
+CMD ["uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers"]
