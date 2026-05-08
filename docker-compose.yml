@@ -37,31 +37,41 @@ services:
     container_name: linkapro_django
     command: >
       sh -c "python manage.py migrate &&
-             gunicorn django_app.wsgi:application --bind 0.0.0.0:8000"
+             python manage.py collectstatic --noinput &&
+             gunicorn django_app.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
     volumes:
       - .:/app
-      - ./ssl/client-cert.pem:/etc/ssl/certs/client-cert.pem:ro
-      - ./ssl/client-key.pem:/etc/ssl/private/client-key.pem:ro
-      - ./ssl/ca.pem:/etc/ssl/certs/ca.pem:ro
+      - static_volume:/app/static
+      - media_volume:/app/media
     ports:
       - "8000:8000"
     environment:
-      - DJANGO_SETTINGS_MODULE=django_app.settings.production
-      - DB_NAME=${DB_NAME:-linkapro}
-      - DB_USER=${DB_USER:-linkapro_admin}
-      - DB_PASSWORD=${DB_PASSWORD:-linkapro_password}
-      - DB_HOST=db
-      - DB_PORT=5432
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_SSL=false
-    env_file:
-      - .env
+      DJANGO_SETTINGS_MODULE: django_app.settings.production
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-production}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+      DB_NAME: ${DB_NAME:-linkapro}
+      DB_USER: ${DB_USER:-linkapro_admin}
+      DB_PASSWORD: ${DB_PASSWORD:-linkapro_password}
+      DB_HOST: db
+      DB_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_SSL: "false"
+      FASTAPI_INTERNAL_URL: http://fastapi:8001
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/admin/login/').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   celery_worker:
     build:
@@ -71,17 +81,20 @@ services:
     command: celery -A tasks worker --loglevel=info
     volumes:
       - .:/app
+      - static_volume:/app/static
+      - media_volume:/app/media
     environment:
-      - DJANGO_SETTINGS_MODULE=django_app.settings.production
-      - DB_NAME=${DB_NAME:-linkapro}
-      - DB_USER=${DB_USER:-linkapro_admin}
-      - DB_PASSWORD=${DB_PASSWORD:-linkapro_password}
-      - DB_HOST=db
-      - DB_PORT=5432
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_SSL=false
-    env_file:
-      - .env
+      DJANGO_SETTINGS_MODULE: django_app.settings.production
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-production}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+      DB_NAME: ${DB_NAME:-linkapro}
+      DB_USER: ${DB_USER:-linkapro_admin}
+      DB_PASSWORD: ${DB_PASSWORD:-linkapro_password}
+      DB_HOST: db
+      DB_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_SSL: "false"
+      FASTAPI_INTERNAL_URL: http://fastapi:8001
     depends_on:
       db:
         condition: service_healthy
@@ -97,17 +110,20 @@ services:
     command: celery -A tasks beat --loglevel=info
     volumes:
       - .:/app
+      - static_volume:/app/static
+      - media_volume:/app/media
     environment:
-      - DJANGO_SETTINGS_MODULE=django_app.settings.production
-      - DB_NAME=${DB_NAME:-linkapro}
-      - DB_USER=${DB_USER:-linkapro_admin}
-      - DB_PASSWORD=${DB_PASSWORD:-linkapro_password}
-      - DB_HOST=db
-      - DB_PORT=5432
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_SSL=false
-    env_file:
-      - .env
+      DJANGO_SETTINGS_MODULE: django_app.settings.production
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-production}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+      DB_NAME: ${DB_NAME:-linkapro}
+      DB_USER: ${DB_USER:-linkapro_admin}
+      DB_PASSWORD: ${DB_PASSWORD:-linkapro_password}
+      DB_HOST: db
+      DB_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_SSL: "false"
+      FASTAPI_INTERNAL_URL: http://fastapi:8001
     depends_on:
       db:
         condition: service_healthy
@@ -120,22 +136,26 @@ services:
       context: .
       dockerfile: Dockerfile.fastapi
     container_name: linkapro_fastapi
-    command: uvicorn fastapi_app.main:app --host 0.0.0.0 --port 8001 --reload
+    command: uvicorn fastapi_app.main:app --host 0.0.0.0 --port 8001 --proxy-headers
     volumes:
       - .:/app
     ports:
       - "8001:8001"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${DB_USER:-linkapro_admin}:${DB_PASSWORD:-linkapro_password}@db:5432/${DB_NAME:-linkapro}
-      - REDIS_URL=redis://redis:6379/0
-    env_file:
-      - .env
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-linkapro_admin}:${DB_PASSWORD:-linkapro_password}@db:5432/${DB_NAME:-linkapro}
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/openapi.json').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   nginx:
     image: nginx:alpine
@@ -149,8 +169,10 @@ services:
       - static_volume:/static:ro
       - media_volume:/media:ro
     depends_on:
-      - django
-      - fastapi
+      django:
+        condition: service_healthy
+      fastapi:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
