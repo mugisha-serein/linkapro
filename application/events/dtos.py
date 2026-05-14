@@ -17,6 +17,8 @@ class EventDTO:
     total_budget: float
     created_at: datetime
     updated_at: datetime
+    vendors_count: int = 0
+    progress_percent: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -72,3 +74,13 @@ class TimelineBlockDTO:
     description: Optional[str]
     location: Optional[str]
     order: int
+
+
+@dataclass(frozen=True)
+class DashboardSummaryDTO:
+    active_events_count: int
+    open_tasks_count: int
+    budget_usage_percent: float
+    vendors_linked_count: int
+    upcoming_events: List[EventDTO]
+    recent_tasks: List[ChecklistItemDTO]

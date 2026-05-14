@@ -9,10 +9,12 @@ from .views import (
     BudgetLineDetailView,
     GuestListCreateView,
     TimelineBlockListCreateView,
+    DashboardSummaryView,
 )
 
 urlpatterns = [
     path("", EventListCreateView.as_view(), name="event-list"),
+    path("dashboard-summary/", DashboardSummaryView.as_view(), name="dashboard-summary"),
     path("<uuid:event_id>/", EventDetailView.as_view(), name="event-detail"),
     path("<uuid:event_id>/checklists/", ChecklistListCreateView.as_view(), name="event-checklists"),
     path("<uuid:event_id>/budget-lines/", BudgetLineListCreateView.as_view(), name="event-budget-lines"),

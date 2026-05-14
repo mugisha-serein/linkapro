@@ -37,7 +37,6 @@ services:
     container_name: linkapro_django
     command: >
       sh -c "python manage.py migrate &&
-             python manage.py collectstatic --noinput &&
              gunicorn django_app.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
     volumes:
       - .:/app

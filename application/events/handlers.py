@@ -1,6 +1,6 @@
 """Command and query handlers for events."""
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List
 
 from domain.shared.utils import utc_now
@@ -24,7 +24,7 @@ from .commands import (
 )
 from .dtos import (
     EventDTO, ChecklistDTO, ChecklistItemDTO, BudgetLineDTO,
-    GuestEntryDTO, TimelineBlockDTO
+    GuestEntryDTO, TimelineBlockDTO, DashboardSummaryDTO
 )
 
 
@@ -213,11 +213,12 @@ class EventCommandHandlers:
 
     # DTO converters
     @staticmethod
-    def _to_event_dto(e: Event) -> EventDTO:
+    def _to_event_dto(e: Event, vendors_count: int = 0, progress_percent: float = 0.0) -> EventDTO:
         return EventDTO(
             id=e.id, planner_id=e.planner_id, name=e.name, event_type=e.event_type.value,
             event_date=e.event_date, venue=e.venue, expected_guests=e.expected_guests,
             total_budget=e.total_budget, created_at=e.created_at, updated_at=e.updated_at,
+            vendors_count=vendors_count, progress_percent=progress_percent
         )
 
     @staticmethod
@@ -277,11 +278,29 @@ class EventQueryHandlers:
         event = self.event_repo.get_by_id(event_id)
         if not event:
             return None
-        return EventCommandHandlers._to_event_dto(event)
+        return self._enrich_event(event)
 
     def list_events_by_planner(self, planner_id: uuid.UUID) -> List[EventDTO]:
         events = self.event_repo.list_by_planner(planner_id)
-        return [EventCommandHandlers._to_event_dto(e) for e in events]
+        return [self._enrich_event(e) for e in events]
+
+    def _enrich_event(self, e: Event) -> EventDTO:
+        # Calculate progress from checklist items
+        checklists = self.checklist_repo.list_by_event(e.id)
+        total_items = 0
+        completed_items = 0
+        for cl in checklists:
+            items = self.checklist_item_repo.list_by_checklist(cl.id)
+            total_items += len(items)
+            completed_items += len([i for i in items if i.status == ChecklistItemStatus.COMPLETED])
+        
+        progress = (completed_items / total_items * 100) if total_items > 0 else 0.0
+        
+        return EventCommandHandlers._to_event_dto(
+            e, 
+            vendors_count=0, # Placeholder
+            progress_percent=round(progress, 1)
+        )
 
     def get_checklist(self, checklist_id: uuid.UUID) -> Optional[ChecklistDTO]:
         checklist = self.checklist_repo.get_by_id(checklist_id)
@@ -308,3 +327,42 @@ class EventQueryHandlers:
     def list_timeline_blocks(self, event_id: uuid.UUID) -> List[TimelineBlockDTO]:
         blocks = self.timeline_repo.list_by_event(event_id)
         return [EventCommandHandlers._to_timeline_dto(b) for b in blocks]
+
+    def get_dashboard_summary(self, planner_id: uuid.UUID) -> DashboardSummaryDTO:
+        events = self.list_events_by_planner(planner_id)
+        active_events_count = len(events)
+        
+        open_tasks = []
+        total_estimated = 0.0
+        total_actual = 0.0
+        
+        for event in events:
+            # Tasks
+            checklists = self.list_checklists_by_event(event.id)
+            for cl in checklists:
+                items = self.list_checklist_items(cl.id)
+                open_tasks.extend([i for i in items if i.status != "completed"])
+            
+            # Budget
+            lines = self.list_budget_lines(event.id)
+            for line in lines:
+                total_estimated += float(line.estimated_cost)
+                total_actual += float(line.actual_cost) if line.actual_cost is not None else 0.0
+        
+        budget_usage = (total_actual / total_estimated * 100) if total_estimated > 0 else 0.0
+        
+        # Sort events by date
+        sorted_events = sorted(events, key=lambda x: x.event_date)
+        upcoming = sorted_events[:3]
+        
+        # Sort tasks by due date (if any) or just take first 5
+        recent_tasks = sorted(open_tasks, key=lambda x: x.due_date if x.due_date else date.max)[:5]
+        
+        return DashboardSummaryDTO(
+            active_events_count=active_events_count,
+            open_tasks_count=len(open_tasks),
+            budget_usage_percent=round(budget_usage, 1),
+            vendors_linked_count=0,
+            upcoming_events=upcoming,
+            recent_tasks=recent_tasks,
+        )

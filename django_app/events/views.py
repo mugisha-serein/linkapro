@@ -13,7 +13,7 @@ from application.events.commands import (
     DeleteEventCommand, UpdateChecklistItemCommand, UpdateBudgetLineCommand,
     AddTimelineBlockCommand,
 )
-from application.events.dtos import ChecklistDTO, ChecklistItemDTO, GuestEntryDTO
+from application.events.dtos import ChecklistDTO, ChecklistItemDTO, GuestEntryDTO, DashboardSummaryDTO
 
 
 class EventListCreateView(APIView):
@@ -275,6 +275,8 @@ def serialize_event_dto(dto):
         "total_budget": str(dto.total_budget),
         "created_at": dto.created_at.isoformat(),
         "updated_at": dto.updated_at.isoformat(),
+        "vendors_count": getattr(dto, "vendors_count", 0),
+        "progress_percent": getattr(dto, "progress_percent", 0.0),
     }
 
 
@@ -345,4 +347,22 @@ def serialize_timeline_block_dto(dto):
         "order": dto.order,
         "created_at": dto.created_at.isoformat() if dto.created_at else None,
         "updated_at": dto.updated_at.isoformat() if dto.updated_at else None,
+    }
+
+class DashboardSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        handlers = get_query_handlers()
+        summary = handlers.get_dashboard_summary(request.user.id)
+        return Response(serialize_dashboard_summary_dto(summary))
+
+def serialize_dashboard_summary_dto(dto: DashboardSummaryDTO):
+    return {
+        "active_events_count": dto.active_events_count,
+        "open_tasks_count": dto.open_tasks_count,
+        "budget_usage_percent": dto.budget_usage_percent,
+        "vendors_linked_count": dto.vendors_linked_count,
+        "upcoming_events": [serialize_event_dto(e) for e in dto.upcoming_events],
+        "recent_tasks": [serialize_checklist_item_dto(t) for t in dto.recent_tasks],
     }
