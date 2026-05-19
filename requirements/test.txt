@@ -1,6 +1,6 @@
 -r base.txt
 -r fastapi.txt
-pytest==7.4.3
+pytest==9.0.3
 pytest-django==4.7.0
 pytest-asyncio==0.21.1
 pytest-cov==4.1.0
