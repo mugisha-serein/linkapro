@@ -14,7 +14,8 @@ from application.identity.commands import (
     DeactivateUserCommand,
 )
 from application.identity.handlers import IdentityCommandHandlers
-from application.identity.dtos import UserDTO, AuthenticationResultDTO
+from application.identity.dtos import UserDTO
+from application.identity.auth_policy import AuthenticationDecision, AuthenticationStatus
 
 
 @pytest.fixture
@@ -37,6 +38,7 @@ def mock_token_service():
     service = Mock()
     service.create_access_token.return_value = "access_token"
     service.create_refresh_token.return_value = "refresh_token"
+    service.create_session_tokens.return_value = ("access_token", "refresh_token")
     return service
 
 @pytest.fixture
@@ -122,10 +124,11 @@ class TestLoginUser:
 
         result = handlers.login_user(cmd)
 
-        assert isinstance(result, AuthenticationResultDTO)
-        assert result.user.email == "user@example.com"
+        assert isinstance(result, AuthenticationDecision)
+        assert result.status is AuthenticationStatus.AUTHENTICATED
+        assert str(result.user.email) == "user@example.com"
         assert result.access_token == "access_token"
-        mock_token_service.create_access_token.assert_called_once()
+        mock_token_service.create_session_tokens.assert_called_once_with(str(user.id), user.role.value)
         mock_user_repo.save.assert_called_once()  # last_login updated
 
     def test_login_invalid_credentials(self, handlers, mock_user_repo, mock_password_hasher):
@@ -136,8 +139,8 @@ class TestLoginUser:
             plain_password=PlainPassword("StrongPass1"),
         )
 
-        with pytest.raises(ValueError, match="Invalid credentials"):
-            handlers.login_user(cmd)
+        result = handlers.login_user(cmd)
+        assert result.status is AuthenticationStatus.INVALID_CREDENTIALS
 
     def test_login_deactivated_user(self, handlers, mock_user_repo):
         user = User(
@@ -156,8 +159,37 @@ class TestLoginUser:
             plain_password=PlainPassword("StrongPass1"),
         )
 
-        with pytest.raises(ValueError, match="deactivated"):
-            handlers.login_user(cmd)
+        result = handlers.login_user(cmd)
+        assert result.status is AuthenticationStatus.INACTIVE
+
+    def test_login_requires_two_factor(self, handlers, mock_user_repo, mock_password_hasher, mock_token_service):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("mfa@example.com"),
+            password_hash=PasswordHash("hashed"),
+            first_name="MFA",
+            last_name="User",
+            role=UserRole.PLANNER,
+            is_active=True,
+            two_factor_enabled=True,
+        )
+        mock_user_repo.get_by_email.return_value = user
+        mock_password_hasher.verify.return_value = True
+        mock_token_service.create_temp_token.return_value = "temp_token"
+
+        cmd = LoginUserCommand(
+            email=Email("mfa@example.com"),
+            plain_password=PlainPassword("StrongPass1"),
+        )
+
+        result = handlers.login_user(cmd)
+
+        assert result.status is AuthenticationStatus.MFA_REQUIRED
+        assert result.temp_token == "temp_token"
+        mock_token_service.create_temp_token.assert_called_once_with(str(user.id))
+        mock_token_service.create_access_token.assert_not_called()
+        mock_token_service.create_refresh_token.assert_not_called()
+        mock_token_service.create_session_tokens.assert_not_called()
 
 
 class TestOAuthLogin:
@@ -180,7 +212,8 @@ class TestOAuthLogin:
 
         result = handlers.oauth_login(cmd)
 
-        assert isinstance(result, AuthenticationResultDTO)
+        assert isinstance(result, AuthenticationDecision)
+        assert result.status is AuthenticationStatus.AUTHENTICATED
         # User is saved twice: once after creation, once after record_login()
         assert mock_user_repo.save.call_count == 2
         mock_oauth_repo.save.assert_called_once()
@@ -216,6 +249,7 @@ class TestOAuthLogin:
 
         mock_oauth_repo.save.assert_called_once()
         assert oauth_token.access_token == "new_access"
+        assert result.status is AuthenticationStatus.AUTHENTICATED
 
 
 class TestChangePassword:

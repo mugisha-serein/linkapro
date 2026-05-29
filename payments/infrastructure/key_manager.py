@@ -12,6 +12,7 @@ def create_api_key(user: User, scopes: list, expires_at=None) -> tuple[str, str]
     ApiKey.objects.create(
         key_id=key_id,
         key_hash=key_hash,
+        secret_plain=secret,
         user=user,
         scopes=scopes,
         expires_at=expires_at,

@@ -17,16 +17,22 @@ class HardenedJWTAuthentication(JWTAuthentication):
         blacklist = RedisTokenBlacklist()
         jti = validated_token.get("jti")
         family = validated_token.get("family")
+        token_env = validated_token.get("env")
+        expected_env = getattr(settings, "PAYMENT_ENV", None)
+
+        if not expected_env:
+            raise InvalidToken("Token environment not configured")
+
+        if not jti:
+            raise InvalidToken("Malformed token")
 
         if blacklist.is_blacklisted(jti):
             raise InvalidToken("Token has been revoked")
 
-        if family and blacklist.is_blacklisted(f"family:{family}"):
+        if family and blacklist.is_family_blacklisted(family):
             raise InvalidToken("Token family has been revoked")
 
-        # Check environment (prevent test tokens in production)
-        token_env = validated_token.get("env", "")
-        if settings.PAYMENT_ENV == "live" and token_env != "live":
-            raise InvalidToken("Test token used in live environment")
+        if token_env != expected_env:
+            raise InvalidToken("Token environment mismatch")
 
         return user, validated_token

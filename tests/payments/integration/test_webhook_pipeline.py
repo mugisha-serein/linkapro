@@ -27,9 +27,14 @@ class TestWebhookE2E:
     ):
         # --- Mock key provider and Redis ---
         mock_key_provider = MagicMock()
-        test_dek = secrets.token_bytes(32)
-        mock_key_provider.wrap_dek.return_value = b"fake_wrapped_dek"
-        mock_key_provider.unwrap_dek.return_value = test_dek
+        last_dek = {}
+
+        def wrap_dek(dek):
+            last_dek["value"] = dek
+            return b"fake_wrapped_dek"
+
+        mock_key_provider.wrap_dek.side_effect = wrap_dek
+        mock_key_provider.unwrap_dek.side_effect = lambda encrypted: last_dek["value"]
 
         mock_redis = MagicMock()
         mock_redis.set.return_value = True   # lock acquisition succeeds

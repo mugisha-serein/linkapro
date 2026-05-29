@@ -1,4 +1,3 @@
-import datetime
 import json
 import secrets
 import uuid
@@ -7,10 +6,10 @@ import hashlib
 import hmac
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import transaction
 from typing import Optional, List
+from datetime import datetime, timedelta
 from django.utils import timezone
-from django.contrib.auth.hashers import make_password, check_password
+from django.db.models import Sum
 
 from payments.application.ports import IApiKeyRepository, IKeyProvider, IPaymentRepository, IWebhookEventRepository
 from payments.domain.entities import Payment as DomainPayment, AuditEvent
@@ -20,12 +19,14 @@ from django_app.payments.models import Payment as DjangoPayment, WebhookEvent, A
 from django_app.identity.models import User
 from django_app.payments.models import ApiKey
 from payments.domain.velocity import VelocityContext
-from payments.helpers.encryption import encrypted_field_to_json
-from payments.infrastructure.crypto import encrypt_field
+from payments.helpers.encryption import encrypted_field_from_json, encrypted_field_to_json
+from payments.infrastructure.crypto import decrypt_field, encrypt_field
 
 
 class DjangoPaymentRepository(IPaymentRepository):
     def __init__(self, key_provider: IKeyProvider, redis_client: Optional[redis.Redis] = None):
+        if key_provider is None:
+            raise ValueError("key_provider is required")
         self.key_provider = key_provider
         self._redis_client = redis_client
         # Keep backward compatibility with environments where a dedicated
@@ -57,20 +58,7 @@ class DjangoPaymentRepository(IPaymentRepository):
         dek = secrets.token_bytes(32)
         wrapped_dek = self.key_provider.wrap_dek(dek)
 
-        # Encrypt metadata
-        if payment.metadata:
-            plain_bytes = json.dumps(payment.metadata).encode('utf-8')
-            ef_temp = encrypt_field(plain_bytes, dek)
-            ef = EncryptedField(
-                ciphertext=ef_temp.ciphertext,
-                iv=ef_temp.iv,
-                tag=ef_temp.tag,
-                dek_encrypted=wrapped_dek,
-            )
-            payment.metadata = encrypted_field_to_json(ef)
-
-        # provider_reference/context_reference are lookup keys used in webhook processing.
-        # Keep them in plaintext so repository queries remain functional.
+        encrypted_metadata = self._encrypt_json_field(payment.metadata, dek, wrapped_dek)
 
         # Persist to Django model
         django_payment, _ = DjangoPayment.objects.update_or_create(
@@ -84,16 +72,14 @@ class DjangoPaymentRepository(IPaymentRepository):
                 "environment": payment.environment.value,
                 "status": payment.status.value,
                 "provider_reference": payment.provider_reference,
+                "provider_reference_hash": self._compute_provider_hash(payment.provider_reference),
+                "context_reference": payment.context_reference,
+                "metadata": encrypted_metadata,
                 "created_at": payment.created_at,
                 "expires_at": payment.expires_at,
-                "dek_encrypted": secrets.token_bytes(32),
+                "dek_encrypted": wrapped_dek,
             },
         )
-        
-        if payment.provider_reference:
-            django_payment.provider_reference_hash = self._compute_provider_hash(payment.provider_reference)
-        else:
-            django_payment.provider_reference_hash = None
 
         django_payment.save()
         return self._to_domain(django_payment)
@@ -124,8 +110,8 @@ class DjangoPaymentRepository(IPaymentRepository):
         
     def get_velocity_context(self, user_id: uuid.UUID, now: datetime) -> VelocityContext:
         # Use database filtering for efficient aggregation
-        one_hour_ago = now - datetime.timedelta(hours=1)
-        one_day_ago = now - datetime.timedelta(days=1)
+        one_hour_ago = now - timedelta(hours=1)
+        one_day_ago = now - timedelta(days=1)
 
         # Payments in last hour
         payments_last_hour = DjangoPayment.objects.filter(
@@ -143,7 +129,7 @@ class DjangoPaymentRepository(IPaymentRepository):
         amount_day = DjangoPayment.objects.filter(
             user_id=user_id,
             created_at__gte=one_day_ago
-        ).aggregate(total=sum('amount_minor'))['total'] or 0
+        ).aggregate(total=Sum('amount_minor'))['total'] or 0
 
         # Failed payments in last hour
         failed_last_hour = DjangoPayment.objects.filter(
@@ -189,6 +175,7 @@ class DjangoPaymentRepository(IPaymentRepository):
     def _to_domain(self, model: DjangoPayment) -> DomainPayment:
         currency = Currency(model.currency)
         money = Money(minor_units=model.amount_minor, currency=currency)
+        metadata = self._decrypt_json_field(model.metadata, model.dek_encrypted)
         return DomainPayment(
             id=model.id,
             user_id=model.user_id,
@@ -200,14 +187,39 @@ class DjangoPaymentRepository(IPaymentRepository):
             status=PaymentStatus(model.status),
             provider_reference=model.provider_reference,
             context_reference=model.context_reference,
-            metadata=model.metadata,
+            metadata=metadata,
             created_at=model.created_at,
             expires_at=model.expires_at,
         )
 
+    def _encrypt_json_field(self, value: dict, dek: bytes, wrapped_dek: bytes) -> dict:
+        plain_bytes = json.dumps(value or {}).encode("utf-8")
+        ef = encrypt_field(plain_bytes, dek)
+        encrypted = EncryptedField(
+            ciphertext=ef.ciphertext,
+            iv=ef.iv,
+            tag=ef.tag,
+            dek_encrypted=wrapped_dek,
+        )
+        return encrypted_field_to_json(encrypted)
+
+    def _decrypt_json_field(self, value, wrapped_dek: Optional[bytes]) -> dict:
+        if not value:
+            return {}
+        if not wrapped_dek:
+            return value if isinstance(value, dict) else {}
+        if isinstance(value, dict) and {"ciphertext", "iv", "tag", "dek_encrypted"}.issubset(value.keys()):
+            ef = encrypted_field_from_json(value)
+            dek = self.key_provider.unwrap_dek(wrapped_dek)
+            plain_bytes = decrypt_field(ef, dek)
+            return json.loads(plain_bytes.decode("utf-8"))
+        return value if isinstance(value, dict) else {}
+
 
 class DjangoWebhookEventRepository(IWebhookEventRepository):
     def __init__(self, key_provider: IKeyProvider):
+        if key_provider is None:
+            raise ValueError("key_provider is required")
         self.key_provider = key_provider
 
     def exists(self, event_id: str) -> bool:
@@ -243,6 +255,8 @@ class DjangoApiKeyRepository(IApiKeyRepository):
             if not key.is_active:
                 return None
             if key.expires_at and key.expires_at < timezone.now():
+                return None
+            if not key.secret_plain:
                 return None
             return {
                 "key_id": key.key_id,

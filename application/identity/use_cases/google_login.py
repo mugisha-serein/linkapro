@@ -7,6 +7,8 @@ from domain.identity.entities import OAuthToken, User, UserRole
 from domain.identity.events import UserLoggedIn, UserOAuthLinked, UserRegistered
 from domain.identity.value_objects import Email, OAuthProvider
 from domain.shared.utils import utc_now
+from application.identity.auth_policy import AuthenticationStatus, IdentityAuthenticationPolicy
+from application.identity.dtos import SessionBootstrapDTO
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,7 @@ class GoogleLoginResult:
     temp_token: Optional[str] = None
     access: Optional[str] = None
     refresh: Optional[str] = None
+    bootstrap_user: Optional[dict] = None
 
 
 class GoogleLoginUseCase:
@@ -23,6 +26,7 @@ class GoogleLoginUseCase:
         self.oauth_repo = oauth_repo
         self.token_service = token_service
         self.event_dispatcher = event_dispatcher
+        self.auth_policy = IdentityAuthenticationPolicy(token_service)
 
     def execute(self, user_data: dict, token_data: Optional[dict] = None) -> GoogleLoginResult:
         google_id = (user_data.get("google_id") or "").strip()
@@ -43,6 +47,7 @@ class GoogleLoginUseCase:
         oauth_by_google_id = self.oauth_repo.get_by_provider_and_user(provider, google_id)
         linked_now = False
         created_now = False
+        oauth_token_to_save = None
 
         if user:
             existing_user_link = self.oauth_repo.get_by_user_and_provider(user.id, provider)
@@ -58,7 +63,7 @@ class GoogleLoginUseCase:
                     refresh_token=refresh_token,
                     expires_in=expires_in,
                 )
-                self.oauth_repo.save(oauth_by_google_id)
+                oauth_token_to_save = oauth_by_google_id
                 linked_now = True
             elif existing_user_link:
                 self._update_oauth_token(
@@ -68,7 +73,7 @@ class GoogleLoginUseCase:
                     refresh_token=refresh_token,
                     expires_in=expires_in,
                 )
-                self.oauth_repo.save(existing_user_link)
+                oauth_token_to_save = existing_user_link
             else:
                 oauth_token = oauth_by_google_id or OAuthToken(
                     id=uuid.uuid4(),
@@ -86,7 +91,7 @@ class GoogleLoginUseCase:
                     refresh_token=refresh_token,
                     expires_in=expires_in,
                 )
-                self.oauth_repo.save(oauth_token)
+                oauth_token_to_save = oauth_token
                 linked_now = True
         else:
             first_name, last_name = self._split_name(user_data)
@@ -132,19 +137,30 @@ class GoogleLoginUseCase:
                 )
             )
 
-        if user.two_factor_enabled:
-            temp_token = self.token_service.create_temp_token(str(user.id))
-            return GoogleLoginResult(requires_2fa=True, temp_token=temp_token)
+        decision = self.auth_policy.evaluate_oauth_login(user)
+        if oauth_token_to_save and decision.status in (
+            AuthenticationStatus.AUTHENTICATED,
+            AuthenticationStatus.MFA_REQUIRED,
+        ):
+            self.oauth_repo.save(oauth_token_to_save)
+
+        if decision.status is AuthenticationStatus.MFA_REQUIRED:
+            return GoogleLoginResult(requires_2fa=True, temp_token=decision.temp_token)
+        if decision.status is not AuthenticationStatus.AUTHENTICATED:
+            raise ValueError(f"Authentication failed: {decision.status.value}")
 
         user.record_login()
         self.user_repo.save(user)
 
-        access = self.token_service.create_access_token(str(user.id), user.role.value)
-        refresh = self.token_service.create_refresh_token(str(user.id))
         self.event_dispatcher.dispatch(
             UserLoggedIn(user_id=user.id, occurred_at=utc_now())
         )
-        return GoogleLoginResult(requires_2fa=False, access=access, refresh=refresh)
+        return GoogleLoginResult(
+            requires_2fa=False,
+            access=decision.access_token,
+            refresh=decision.refresh_token,
+            bootstrap_user=decision.bootstrap_user or SessionBootstrapDTO.from_user(user).to_dict(),
+        )
 
     @staticmethod
     def _split_name(user_data: dict) -> tuple[str, str]:

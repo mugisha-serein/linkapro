@@ -1,3 +1,4 @@
+import json
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -15,6 +16,7 @@ from application.identity.commands import (
     LoginTwoFactorCommand,
     VerifyTwoFactorSetupCommand,
 )
+from application.identity.auth_policy import AuthenticationStatus
 from application.identity.queries import GetUserByIdQuery
 
 from .serializers import (
@@ -26,9 +28,10 @@ from .serializers import (
 from .services import (
     get_command_handlers,
     get_query_handlers,
-    get_google_login_use_case,
     get_google_oauth_adapter,
+    get_auth_session_facade,
 )
+from .cookies import clear_auth_cookies, set_refresh_cookie
 
 
 def _frontend_url() -> str:
@@ -43,6 +46,35 @@ def _frontend_url() -> str:
 def _redirect_error(reason: str):
     params = urlencode({"reason": reason})
     return redirect(f"{_frontend_url()}/auth/error?{params}")
+
+
+def _extract_refresh_token(request) -> str | None:
+    return request.data.get("refresh") or request.COOKIES.get("refresh_token")
+
+
+def _bootstrap_user_payload(source) -> dict:
+    if source is None:
+        return {}
+    if hasattr(source, "to_dict"):
+        return source.to_dict()
+    if isinstance(source, dict):
+        return source
+    return {
+        "id": str(source.id),
+        "email": str(source.email),
+        "role": source.role.value,
+        "first_name": source.first_name,
+        "last_name": source.last_name,
+        "display_name": f"{source.first_name} {source.last_name}".strip() or str(source.email),
+        "avatar": None,
+        "is_active": source.is_active,
+        "is_verified": source.is_verified,
+        "has_password": bool(getattr(source, "password_hash", None)),
+        "requires_password_setup": not bool(getattr(source, "password_hash", None)),
+        "two_factor_enabled": getattr(source, "two_factor_enabled", False),
+        "is_authenticated": True,
+        "onboarding_complete": bool(source.is_verified and getattr(source, "password_hash", None)),
+    }
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -78,54 +110,37 @@ class LoginView(APIView):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         cmd = serializer.to_command()
-        handlers = get_command_handlers()
-
-        domain_user = handlers.user_repo.get_by_email(cmd.email)
-        if not domain_user or not handlers.password_hasher.verify(
-            cmd.plain_password, domain_user.password_hash
-        ):
-            return Response(
-                {"error": "Invalid credentials"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        if not domain_user.is_active:
-            return Response(
-                {"error": "Account is deactivated"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        if domain_user.two_factor_enabled:
-            temp_token = handlers.token_service.create_temp_token(str(domain_user.id))
-            return Response(
+        session = get_auth_session_facade()
+        auth_result = session.login(cmd)
+        if auth_result.status is AuthenticationStatus.MFA_REQUIRED:
+            response = Response(
                 {
                     "requires_2fa": True,
-                    "temp_token": temp_token,
+                    "temp_token": auth_result.temp_token,
                     "expires_in": 180,
                 }
             )
+            clear_auth_cookies(response)
+            return response
 
-        try:
-            auth_result = handlers.login_user(cmd)
-            return Response(
-                {
-                    "access_token": auth_result.access_token,
-                    "refresh_token": auth_result.refresh_token,
-                    "token_type": auth_result.token_type,
-                    "user": {
-                        "id": str(auth_result.user.id),
-                        "email": auth_result.user.email,
-                        "first_name": auth_result.user.first_name,
-                        "last_name": auth_result.user.last_name,
-                        "role": auth_result.user.role,
-                    },
-                }
+        if auth_result.status is not AuthenticationStatus.AUTHENTICATED:
+            response = Response(
+                {"error": auth_result.status.value},
+                status=status.HTTP_401_UNAUTHORIZED,
             )
-        except ValueError as e:
-            error_msg = str(e).lower()
-            if "invalid credentials" in error_msg or "deactivated" in error_msg:
-                return Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            clear_auth_cookies(response)
+            return response
+
+        user = auth_result.user
+        response = Response(
+            {
+                "access_token": auth_result.access_token,
+                "token_type": "Bearer",
+                "user": auth_result.bootstrap_user or _bootstrap_user_payload(user),
+            }
+        )
+        set_refresh_cookie(response, auth_result.refresh_token)
+        return response
 
 
 class LoginTwoFactorView(APIView):
@@ -138,26 +153,81 @@ class LoginTwoFactorView(APIView):
             temp_token=serializer.validated_data["temp_token"],
             token=serializer.validated_data["token"],
         )
-        handlers = get_command_handlers()
-        try:
-            auth_result = handlers.login_two_factor(cmd)
-            return Response(
-                {
-                    "access_token": auth_result.access_token,
-                    "refresh_token": auth_result.refresh_token,
-                    "token_type": auth_result.token_type,
-                    "user": {
-                        "id": str(auth_result.user.id),
-                        "email": auth_result.user.email,
-                        "first_name": auth_result.user.first_name,
-                        "last_name": auth_result.user.last_name,
-                        "role": auth_result.user.role,
-                    },
-                },
-                status=status.HTTP_200_OK,
+        session = get_auth_session_facade()
+        auth_result = session.login_two_factor(cmd)
+        if auth_result.status is not AuthenticationStatus.AUTHENTICATED:
+            response = Response(
+                {"error": auth_result.status.value},
+                status=status.HTTP_401_UNAUTHORIZED,
             )
+            clear_auth_cookies(response)
+            return response
+
+        user = auth_result.user
+        response = Response(
+            {
+                "access_token": auth_result.access_token,
+                "token_type": "Bearer",
+                "user": auth_result.bootstrap_user or _bootstrap_user_payload(user),
+            },
+            status=status.HTTP_200_OK,
+        )
+        set_refresh_cookie(response, auth_result.refresh_token)
+        return response
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class TokenRefreshView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        refresh_token = _extract_refresh_token(request)
+        if not refresh_token:
+            response = Response({"error": "Missing refresh token"}, status=status.HTTP_401_UNAUTHORIZED)
+            clear_auth_cookies(response)
+            return response
+
+        session = get_auth_session_facade()
+        try:
+            result = session.refresh_session(refresh_token)
         except ValueError as e:
-            return Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+            response = Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+            clear_auth_cookies(response)
+            return response
+
+        response = Response(
+            {
+                "access": result.access_token,
+                "user": result.bootstrap_user,
+            },
+            status=status.HTTP_200_OK,
+        )
+        set_refresh_cookie(response, result.refresh_token)
+        return response
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class TokenRevokeView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        refresh_token = _extract_refresh_token(request)
+        if not refresh_token:
+            response = Response({"error": "Missing refresh token"}, status=status.HTTP_401_UNAUTHORIZED)
+            clear_auth_cookies(response)
+            return response
+
+        session = get_auth_session_facade()
+        try:
+            session.revoke_session(refresh_token)
+        except ValueError as e:
+            response = Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+            clear_auth_cookies(response)
+            return response
+
+        response = Response({"status": "revoked"}, status=status.HTTP_200_OK)
+        clear_auth_cookies(response)
+        return response
 
 
 class EnableTwoFactorView(APIView):
@@ -235,26 +305,34 @@ class GoogleCallbackView(View):
     def get(self, request):
         code = request.GET.get("code")
         if not code:
-            return _redirect_error("missing_code")
+            response = _redirect_error("missing_code")
+            clear_auth_cookies(response)
+            return response
         frontend_url = _frontend_url()
 
         adapter = get_google_oauth_adapter()
-        use_case = get_google_login_use_case()
         try:
             token_data = adapter.exchange_code(code)
             user_data = adapter.get_user_info(token_data["access_token"])
-            result = use_case.execute(user_data, token_data)
+            result = get_auth_session_facade().oauth_login(user_data, token_data)
         except Exception:
-            return _redirect_error("oauth_failed")
+            response = _redirect_error("oauth_failed")
+            clear_auth_cookies(response)
+            return response
 
         if result.requires_2fa:
             params = urlencode({"temp_token": result.temp_token or ""})
-            return redirect(f"{frontend_url}/2fa/verify?{params}")
+            response = redirect(f"{frontend_url}/2fa/verify?{params}")
+            clear_auth_cookies(response)
+            return response
 
         params = urlencode(
             {
                 "access": result.access or "",
-                "refresh": result.refresh or "",
+                "user": json.dumps(result.bootstrap_user or {}),
             }
         )
-        return redirect(f"{frontend_url}/auth/success?{params}")
+        response = redirect(f"{frontend_url}/auth/success?{params}")
+        if result.refresh:
+            set_refresh_cookie(response, result.refresh)
+        return response

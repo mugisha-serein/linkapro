@@ -24,6 +24,7 @@ from domain.identity.events import (
     UserOAuthLinked,
     UserDeactivated,
 )
+from .auth_policy import AuthenticationDecision, AuthenticationStatus, IdentityAuthenticationPolicy
 from .commands import (
     EnableTwoFactorCommand,
     LoginTwoFactorCommand,
@@ -38,7 +39,7 @@ from .commands import (
     DeactivateUserCommand,
     VerifyTwoFactorSetupCommand,
 )
-from .dtos import TwoFactorSetupDTO, UserDTO, AuthenticationResultDTO
+from .dtos import TwoFactorSetupDTO, UserDTO
 from .queries import GetUserByIdQuery, GetUserByEmailQuery
 
 
@@ -60,6 +61,7 @@ class IdentityCommandHandlers:
         self.password_hasher = password_hasher
         self.token_service = token_service
         self.event_dispatcher = event_dispatcher
+        self.auth_policy = IdentityAuthenticationPolicy(token_service)
 
     def register_user(self, cmd: RegisterUserCommand) -> UserDTO:
         # Check if email already exists
@@ -95,40 +97,27 @@ class IdentityCommandHandlers:
 
         return self._to_dto(saved_user)
 
-    def login_user(self, cmd: LoginUserCommand) -> AuthenticationResultDTO:
-        # Fetch user
+    def login_user(self, cmd: LoginUserCommand) -> AuthenticationDecision:
         user = self.user_repo.get_by_email(cmd.email)
-        if not user:
-            raise ValueError("Invalid credentials")
-
-        if not user.is_active:
-            raise ValueError("Account is deactivated")
-
-        if not user.password_hash:
-            raise ValueError("Account uses social login only")
-
-        # Verify password
-        if not self.password_hasher.verify(cmd.plain_password, user.password_hash):
-            raise ValueError("Invalid credentials")
-
-        # Record login
-        user.record_login()
-        self.user_repo.save(user)
-
-        # Generate tokens
-        access_token = self.token_service.create_access_token(str(user.id), user.role.value)
-        refresh_token = self.token_service.create_refresh_token(str(user.id))
-
-        # Dispatch event
-        self.event_dispatcher.dispatch(UserLoggedIn(user_id=user.id, occurred_at=utc_now()))
-
-        return AuthenticationResultDTO(
-            user=self._to_dto(user),
-            access_token=access_token,
-            refresh_token=refresh_token,
+        decision = self.auth_policy.evaluate_password_login(
+            user=user,
+            plain_password=cmd.plain_password,
+            password_hasher=self.password_hasher,
         )
 
-    def oauth_login(self, cmd: OAuthLoginCommand) -> AuthenticationResultDTO:
+        if decision.status is not AuthenticationStatus.AUTHENTICATED:
+            return decision
+
+        if user:
+            user.record_login()
+            self.user_repo.save(user)
+            self.event_dispatcher.dispatch(
+                UserLoggedIn(user_id=user.id, occurred_at=utc_now())
+            )
+
+        return decision
+
+    def oauth_login(self, cmd: OAuthLoginCommand) -> AuthenticationDecision:
         # Try to find existing OAuth link
         oauth_token = self.oauth_repo.get_by_provider_and_user(
             cmd.provider, cmd.provider_user_id
@@ -138,11 +127,6 @@ class IdentityCommandHandlers:
             user = self.user_repo.get_by_id(oauth_token.user_id)
             if not user:
                 raise ValueError("User not found")
-            # Update token (new access token)
-            oauth_token.access_token = cmd.access_token
-            oauth_token.refresh_token = cmd.refresh_token
-            oauth_token.expires_at = utc_now() + timedelta(seconds=cmd.expires_in)
-            self.oauth_repo.save(oauth_token)
         else:
             # New OAuth user: check if email exists
             user = self.user_repo.get_by_email(cmd.email)
@@ -192,21 +176,27 @@ class IdentityCommandHandlers:
                     )
                 )
 
-        # Record login
+        decision = self.auth_policy.evaluate_oauth_login(user)
+        if oauth_token and decision.status in (
+            AuthenticationStatus.AUTHENTICATED,
+            AuthenticationStatus.MFA_REQUIRED,
+        ):
+            oauth_token.access_token = cmd.access_token
+            oauth_token.refresh_token = cmd.refresh_token
+            oauth_token.expires_at = utc_now() + timedelta(seconds=cmd.expires_in)
+            self.oauth_repo.save(oauth_token)
+
+        if decision.status is not AuthenticationStatus.AUTHENTICATED:
+            return decision
+
         user.record_login()
         self.user_repo.save(user)
 
-        # Generate tokens
-        access_token = self.token_service.create_access_token(str(user.id), user.role.value)
-        refresh_token = self.token_service.create_refresh_token(str(user.id))
-
-        self.event_dispatcher.dispatch(UserLoggedIn(user_id=user.id, occurred_at=utc_now()))
-
-        return AuthenticationResultDTO(
-            user=self._to_dto(user),
-            access_token=access_token,
-            refresh_token=refresh_token,
+        self.event_dispatcher.dispatch(
+            UserLoggedIn(user_id=user.id, occurred_at=utc_now())
         )
+
+        return decision
 
     def change_password(self, cmd: ChangePasswordCommand) -> None:
         user = self.user_repo.get_by_id(cmd.user_id)
@@ -349,40 +339,42 @@ class IdentityCommandHandlers:
         self.user_repo.set_totp_secret(user.id, secret)
         cache.delete(f"totp_setup_{user.id}")
 
-    def login_two_factor(self, cmd: LoginTwoFactorCommand) -> AuthenticationResultDTO:
+    def login_two_factor(self, cmd: LoginTwoFactorCommand) -> AuthenticationDecision:
         # Decode temp token to get user_id and check it's not expired
         payload = self.token_service.verify_temp_token(cmd.temp_token)
         if not payload:
-            raise ValueError("Invalid or expired temporary token")
+            return AuthenticationDecision(
+                status=AuthenticationStatus.INVALID_TEMP_TOKEN
+            )
 
         user_id = uuid.UUID(payload["user_id"])
         user = self.user_repo.get_by_id(user_id)
         if not user or not user.is_active:
-            raise ValueError("User not found or inactive")
+            return AuthenticationDecision(
+                status=AuthenticationStatus.INACTIVE if user and not user.is_active else AuthenticationStatus.INVALID_TEMP_TOKEN
+            )
 
         # Verify TOTP
         secret = self.user_repo.get_totp_secret(user.id)
         if not secret:
-            raise ValueError("2FA not enabled for this user")
+            return AuthenticationDecision(
+                status=AuthenticationStatus.INVALID_TEMP_TOKEN
+            )
 
         totp = pyotp.TOTP(secret)
         if not totp.verify(cmd.token):
-            raise ValueError("Invalid TOTP token")
-
-        # Generate real tokens
-        access_token = self.token_service.create_access_token(str(user.id), user.role.value)
-        refresh_token = self.token_service.create_refresh_token(str(user.id))
+            return AuthenticationDecision(
+                status=AuthenticationStatus.INVALID_MFA_CODE
+            )
 
         user.record_login()
         self.user_repo.save(user)
 
-        self.event_dispatcher.dispatch(UserLoggedIn(user_id=user.id, occurred_at=utc_now()))
-
-        return AuthenticationResultDTO(
-            user=self._to_dto(user),
-            access_token=access_token,
-            refresh_token=refresh_token,
+        self.event_dispatcher.dispatch(
+            UserLoggedIn(user_id=user.id, occurred_at=utc_now())
         )
+
+        return self.auth_policy.issue_authenticated_login(user)
 
     def _to_dto(self, user: User) -> UserDTO:
         return UserDTO(

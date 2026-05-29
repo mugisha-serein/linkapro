@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 import structlog
 
 
@@ -13,13 +14,9 @@ def _csv_env(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in raw_value.split(",") if item.strip()]
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "False").lower() == "true"
-# SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
-    if DEBUG:
-        SECRET_KEY = "*5f*tl1v=p0v=(l9f6e)*c7a-bq6mr=sl-!ub3hn42cq0m3br5"
-    else:
-        pass
+    raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set")
 
 ALLOWED_HOSTS = ["*"] 
 
@@ -141,8 +138,6 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
-SECRET_KEY = "*5f*tl1v=p0v=(l9f6e)*c7a-bq6mr=sl-!ub3hn42cq0m3br5"
-
 JWE_PRIVATE_KEY = os.environ.get("JWE_PRIVATE_KEY", "")
 
 PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
@@ -154,7 +149,7 @@ CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 
 CELERY_BEAT_SCHEDULE = {
     "expire-stale-payments": {
-        "task": "evplan.payments.tasks.expire_stale_payments_task",
+        "task": "payments.tasks.expire_stale_payments_task",
         "schedule": crontab(minute="*/5"),  # Every 5 minutes
     },
 }

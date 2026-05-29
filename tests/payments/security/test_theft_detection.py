@@ -12,19 +12,23 @@ TEST_SECRET = "test-secret-key-for-jwt-32bytes!"  # 32 characters
 class TestTheftDetection:
     @pytest.fixture
     def blacklist(self):
-        return MagicMock()
+        mock = MagicMock()
+        mock.is_blacklisted.return_value = False
+        mock.is_family_blacklisted.return_value = False
+        return mock
 
     @pytest.fixture
     def handler(self, blacklist):
         return TokenCommandHandlers(blacklist)
 
-    def _create_refresh_token_str(self, jti=None, family=None):
+    def _create_refresh_token_str(self, jti=None, family=None, env="test"):
         from rest_framework_simplejwt.tokens import RefreshToken
         token = RefreshToken()
         token["user_id"] = str(uuid.uuid4())
         token["jti"] = jti or str(uuid.uuid4())
         if family is not None:
             token["family"] = family
+        token["env"] = env
         return str(token)
 
     def test_reused_token_blacklists_family(self, handler, blacklist, settings):
@@ -39,12 +43,12 @@ class TestTheftDetection:
 
         blacklist.blacklist_family.assert_called_once_with(family)
 
-    def test_reused_token_does_not_blacklist_if_no_family(self, handler, blacklist, settings):
+    def test_reused_token_rejects_missing_family(self, handler, blacklist, settings):
         settings.SECRET_KEY = TEST_SECRET
         settings.SIMPLE_JWT = {"SIGNING_KEY": TEST_SECRET, "ALGORITHM": "HS256"}
 
         blacklist.is_blacklisted.return_value = True
-        with pytest.raises(ValueError, match="revoked"):
+        with pytest.raises(ValueError, match="family"):
             handler.refresh_access_token(self._create_refresh_token_str(family=None))
 
         blacklist.blacklist_family.assert_not_called()

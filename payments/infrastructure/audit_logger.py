@@ -1,6 +1,8 @@
 import json
 import secrets
 import uuid
+
+from django.db import transaction
 from payments.application.ports import IAuditLogger, IKeyProvider
 from payments.domain.entities import AuditEvent
 from django_app.payments.models import AuditLog, Payment as DjangoPayment
@@ -14,32 +16,36 @@ class DjangoAuditLogger(IAuditLogger):
         self.key_provider = key_provider
 
     def log(self, audit_event: AuditEvent) -> None:
-        payment = None
-        if audit_event.payment_id:
-            try:
-                payment = DjangoPayment.objects.get(id=audit_event.payment_id)
-            except DjangoPayment.DoesNotExist:
-                pass
+        def _write() -> None:
+            payment = None
+            if audit_event.payment_id:
+                try:
+                    payment = DjangoPayment.objects.get(id=audit_event.payment_id)
+                except DjangoPayment.DoesNotExist:
+                    pass
 
-        # Encrypt details
-        dek = secrets.token_bytes(32)
-        wrapped_dek = self.key_provider.wrap_dek(dek)
-        plain_bytes = json.dumps(audit_event.details).encode('utf-8')
-        ef = encrypt_field(plain_bytes, dek)
-        ef_with_dek = EncryptedField(
-            ciphertext=ef.ciphertext,
-            iv=ef.iv,
-            tag=ef.tag,
-            dek_encrypted=wrapped_dek,
-        )
-        encrypted_details = encrypted_field_to_json(ef_with_dek)
+            dek = secrets.token_bytes(32)
+            wrapped_dek = self.key_provider.wrap_dek(dek)
+            plain_bytes = json.dumps(audit_event.details).encode('utf-8')
+            ef = encrypt_field(plain_bytes, dek)
+            ef_with_dek = EncryptedField(
+                ciphertext=ef.ciphertext,
+                iv=ef.iv,
+                tag=ef.tag,
+                dek_encrypted=wrapped_dek,
+            )
+            encrypted_details = encrypted_field_to_json(ef_with_dek)
 
-        AuditLog.objects.create(
-            id=audit_event.id,
-            payment=payment,
-            action=audit_event.action,
-            actor=audit_event.actor,
-            details=encrypted_details,
-            dek_encrypted=wrapped_dek,
-            created_at=audit_event.created_at,
-        )
+            AuditLog.objects.create(
+                id=audit_event.id,
+                payment=payment,
+                action=audit_event.action,
+                actor=audit_event.actor,
+                details=encrypted_details,
+                dek_encrypted=wrapped_dek,
+                created_at=audit_event.created_at,
+            )
+
+        # Keep the append-only write transaction-consistent with the caller.
+        with transaction.atomic():
+            _write()

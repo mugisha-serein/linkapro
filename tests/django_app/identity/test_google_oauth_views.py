@@ -11,6 +11,7 @@ class _UseCaseResult:
     temp_token: str | None = None
     access: str | None = None
     refresh: str | None = None
+    bootstrap_user: dict | None = None
 
 
 class _AdapterStub:
@@ -32,11 +33,11 @@ class _AdapterStub:
         }
 
 
-class _UseCaseStub:
+class _AuthSessionFacadeStub:
     def __init__(self, result):
         self._result = result
 
-    def execute(self, user_data, token_data):
+    def oauth_login(self, user_data, token_data):
         return self._result
 
 
@@ -74,8 +75,8 @@ class TestGoogleOAuthViews:
         monkeypatch.setattr(views, "get_google_oauth_adapter", lambda: _AdapterStub())
         monkeypatch.setattr(
             views,
-            "get_google_login_use_case",
-            lambda: _UseCaseStub(
+            "get_auth_session_facade",
+            lambda: _AuthSessionFacadeStub(
                 _UseCaseResult(requires_2fa=True, temp_token="temp-abc")
             ),
         )
@@ -92,22 +93,40 @@ class TestGoogleOAuthViews:
         monkeypatch.setattr(views, "get_google_oauth_adapter", lambda: _AdapterStub())
         monkeypatch.setattr(
             views,
-            "get_google_login_use_case",
-            lambda: _UseCaseStub(
+            "get_auth_session_facade",
+            lambda: _AuthSessionFacadeStub(
                 _UseCaseResult(
                     requires_2fa=False,
                     access="access-token",
                     refresh="refresh-token",
+                    bootstrap_user={
+                        "id": "user-123",
+                        "email": "oauth@example.com",
+                        "first_name": "OAuth",
+                        "last_name": "User",
+                        "role": "planner",
+                        "display_name": "OAuth User",
+                        "avatar": None,
+                        "is_active": True,
+                        "is_verified": True,
+                        "is_authenticated": True,
+                        "two_factor_enabled": False,
+                        "has_password": False,
+                        "requires_password_setup": True,
+                        "onboarding_complete": False,
+                        "created_at": "2026-05-28T00:00:00.000Z",
+                        "last_login": None,
+                    },
                 )
             ),
         )
 
         response = self.client.get(reverse("google-callback"), {"code": "oauth-code"})
         assert response.status_code == 302
-        assert (
-            response.url
-            == "http://localhost:3000/auth/success?access=access-token&refresh=refresh-token"
-        )
+        assert response.url.startswith("http://localhost:3000/auth/success?access=access-token")
+        assert "user=" in response.url
+        assert "OAuth" in response.url
+        assert "refresh_token" in response.cookies
 
     def test_google_callback_rejects_non_https_frontend_in_production(self, settings):
         settings.DEBUG = False

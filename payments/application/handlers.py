@@ -2,6 +2,10 @@ from datetime import timedelta
 import uuid
 from typing import Optional
 
+import logging
+
+from django.db import transaction
+
 from payments.domain.entities import Payment, AuditEvent
 from payments.domain.enums import PaymentStatus, PaymentMethod, PaymentEnv
 from payments.domain.step_up_policy import StepUpPolicy
@@ -35,6 +39,8 @@ from payments.domain.velocity import VelocityContext, FraudContext, VelocityPoli
 from payments.application.exceptions import VelocityLimitExceededError, FraudFlaggedError
 from domain.shared.utils import utc_now
 
+logger = logging.getLogger(__name__)
+
 class PaymentCommandHandlers:
     def __init__(
         self,
@@ -53,6 +59,34 @@ class PaymentCommandHandlers:
         self.retry_scheduler = retry_scheduler
         self.expiry_scanner = expiry_scanner
         self.event_dispatcher = event_dispatcher
+
+    def _dispatch_after_commit(self, event) -> None:
+        if hasattr(self.event_dispatcher, "dispatch_after_commit"):
+            self.event_dispatcher.dispatch_after_commit(event)
+            return
+
+        def _dispatch() -> None:
+            try:
+                self.event_dispatcher.dispatch(event)
+            except Exception:
+                logger.exception(
+                    "Failed to dispatch payment domain event after commit",
+                    extra={"event_type": type(event).__name__},
+                )
+
+        transaction.on_commit(_dispatch)
+
+    def _schedule_retry_after_commit(self, provider_reference: str, delay_seconds: int) -> None:
+        def _schedule() -> None:
+            try:
+                self.retry_scheduler.schedule_webhook_retry(provider_reference, delay_seconds)
+            except Exception:
+                logger.exception(
+                    "Failed to schedule webhook retry after commit",
+                    extra={"provider_reference": provider_reference, "delay_seconds": delay_seconds},
+                )
+
+        transaction.on_commit(_schedule)
 
     def initiate_payment(self, cmd: InitiatePaymentCommand) -> PaymentInitiationDTO:
         # 1. Check idempotency
@@ -128,17 +162,16 @@ class PaymentCommandHandlers:
         payment.provider_reference = provider_ref
         payment.transition_to(PaymentStatus.PENDING, now)
 
-        # 7. Persist
-        self.payment_repo.save(payment)
-
-        # 8. Audit log
-        self.audit_logger.log(AuditEvent(
-            id=uuid.uuid4(),
-            payment_id=payment.id,
-            action="INITIATE",
-            actor=f"user:{cmd.user_id}",
-            details={"idempotency_key": cmd.idempotency_key},
-        ))
+        # 7. Persist and audit atomically so the payment never outlives its audit trail.
+        with transaction.atomic():
+            self.payment_repo.save(payment)
+            self.audit_logger.log(AuditEvent(
+                id=uuid.uuid4(),
+                payment_id=payment.id,
+                action="INITIATE",
+                actor=f"user:{cmd.user_id}",
+                details={"idempotency_key": cmd.idempotency_key},
+            ))
 
         return PaymentInitiationDTO(
             reference=payment.reference,
@@ -147,25 +180,26 @@ class PaymentCommandHandlers:
         )
 
     def process_webhook(self, cmd: ProcessWebhookCommand) -> None:
-        # Stage 1: Idempotency check (infrastructure already did? We'll re-check)
-        if self.webhook_repo.exists(cmd.event_id):
-            return  # Already processed
+        self._process_webhook(cmd, allow_existing_event=False)
 
-        # Store event as PROCESSING
-        self.webhook_repo.save_event(cmd.event_id, "PROCESSING", cmd.payload)
+    def _process_webhook(self, cmd: ProcessWebhookCommand, allow_existing_event: bool) -> None:
+        # Stage 1: Idempotency check (infrastructure already did? We'll re-check)
+        if not allow_existing_event and self.webhook_repo.exists(cmd.event_id):
+            return  # Already processed
 
         # Extract provider_reference from payload
         provider_ref = self._extract_provider_reference(cmd.payload)
         if not provider_ref:
-            self.webhook_repo.save_event(cmd.event_id, "REJECTED_MISSING_REF", cmd.payload)
+            with transaction.atomic():
+                self.webhook_repo.save_event(cmd.event_id, "REJECTED_MISSING_REF", cmd.payload)
             return
 
         # Stage 3: Acquire lock
         lock_acquired = self.payment_repo.acquire_lock(provider_ref, ttl_seconds=30)
         if not lock_acquired:
-            # Schedule retry
-            self.retry_scheduler.schedule_webhook_retry(provider_ref, 30)
-            self.webhook_repo.save_event(cmd.event_id, "LOCK_FAILED_RETRY", cmd.payload)
+            with transaction.atomic():
+                self.webhook_repo.save_event(cmd.event_id, "LOCK_FAILED_RETRY", cmd.payload)
+                self._schedule_retry_after_commit(provider_ref, 30)
             return
 
         try:
@@ -173,29 +207,30 @@ class PaymentCommandHandlers:
             try:
                 verification = self.provider_gateway.verify_transaction(provider_ref)
             except Exception as e:
-                # Schedule retry with exponential backoff
-                self.retry_scheduler.schedule_webhook_retry(provider_ref, 30)
-                self.webhook_repo.save_event(cmd.event_id, "VERIFY_FAILED_RETRY", cmd.payload)
+                with transaction.atomic():
+                    self.webhook_repo.save_event(cmd.event_id, "VERIFY_FAILED_RETRY", cmd.payload)
+                    self._schedule_retry_after_commit(provider_ref, 30)
                 return
 
             if not verification:
-                # Provider couldn't verify; schedule retry
-                self.retry_scheduler.schedule_webhook_retry(provider_ref, 30)
-                self.webhook_repo.save_event(cmd.event_id, "VERIFY_FAILED_RETRY", cmd.payload)
+                with transaction.atomic():
+                    self.webhook_repo.save_event(cmd.event_id, "VERIFY_FAILED_RETRY", cmd.payload)
+                    self._schedule_retry_after_commit(provider_ref, 30)
                 return
 
             # Stage 5: Fetch payment by provider_reference
             payment = self.payment_repo.find_by_provider_reference(provider_ref)
             if not payment:
-                # Log unknown payment
-                self.audit_logger.log(AuditEvent(
-                    id=uuid.uuid4(),
-                    payment_id=None,
-                    action="UNKNOWN_PAYMENT",
-                    actor="webhook",
-                    details={"provider_reference": provider_ref, "event_id": cmd.event_id},
-                ))
-                self.webhook_repo.save_event(cmd.event_id, "REJECTED_UNKNOWN", cmd.payload)
+                with transaction.atomic():
+                    # Log unknown payment and keep the webhook record in the same commit.
+                    self.audit_logger.log(AuditEvent(
+                        id=uuid.uuid4(),
+                        payment_id=None,
+                        action="UNKNOWN_PAYMENT",
+                        actor="webhook",
+                        details={"provider_reference": provider_ref, "event_id": cmd.event_id},
+                    ))
+                    self.webhook_repo.save_event(cmd.event_id, "REJECTED_UNKNOWN", cmd.payload)
                 return
 
             # Stage 6: Apply policy
@@ -209,50 +244,56 @@ class PaymentCommandHandlers:
             policy_result = PaymentPolicy.apply(payment, "CONFIRM_SUCCESS", context, cmd.now)
 
             if policy_result.fraud_signal:
-                # Emit fraud signal event, do NOT transition
-                self.event_dispatcher.dispatch(FraudSignalEvent(
-                    payment_id=payment.id,
-                    provider_reference=provider_ref,
-                    reason=policy_result.reason,
-                    occurred_at=cmd.now,
-                ))
-                self.audit_logger.log(AuditEvent(
-                    id=uuid.uuid4(),
-                    payment_id=payment.id,
-                    action="FRAUD_SIGNAL",
-                    actor="webhook",
-                    details={"reason": policy_result.reason, "event_id": cmd.event_id},
-                ))
-                self.webhook_repo.save_event(cmd.event_id, "FRAUD_DETECTED", cmd.payload)
+                # Emit fraud signal only after the database commit succeeds.
+                with transaction.atomic():
+                    self.webhook_repo.save_event(cmd.event_id, "PROCESSING", cmd.payload)
+                    self.audit_logger.log(AuditEvent(
+                        id=uuid.uuid4(),
+                        payment_id=payment.id,
+                        action="FRAUD_SIGNAL",
+                        actor="webhook",
+                        details={"reason": policy_result.reason, "event_id": cmd.event_id},
+                    ))
+                    self.webhook_repo.save_event(cmd.event_id, "FRAUD_DETECTED", cmd.payload)
+                    self._dispatch_after_commit(FraudSignalEvent(
+                        payment_id=payment.id,
+                        provider_reference=provider_ref,
+                        reason=policy_result.reason,
+                        occurred_at=cmd.now,
+                    ))
             elif policy_result.allowed:
-                # Transition to SUCCESS
-                payment.transition_to(PaymentStatus.SUCCESS, cmd.now)
-                self.payment_repo.save(payment)
-                self.audit_logger.log(AuditEvent(
-                    id=uuid.uuid4(),
-                    payment_id=payment.id,
-                    action="SUCCESS",
-                    actor="webhook",
-                    details={"event_id": cmd.event_id},
-                ))
-                self.event_dispatcher.dispatch(PaymentCompleted(
-                    payment_id=payment.id,
-                    user_id=payment.user_id,
-                    amount_minor=payment.amount.minor_units,
-                    currency=payment.amount.currency.code,
-                    occurred_at=cmd.now,
-                ))
-                self.webhook_repo.save_event(cmd.event_id, "PROCESSED_SUCCESS", cmd.payload)
+                with transaction.atomic():
+                    self.webhook_repo.save_event(cmd.event_id, "PROCESSING", cmd.payload)
+                    # Transition, audit, and webhook persistence commit together.
+                    payment.transition_to(PaymentStatus.SUCCESS, cmd.now)
+                    self.payment_repo.save(payment)
+                    self.audit_logger.log(AuditEvent(
+                        id=uuid.uuid4(),
+                        payment_id=payment.id,
+                        action="SUCCESS",
+                        actor="webhook",
+                        details={"event_id": cmd.event_id},
+                    ))
+                    self.webhook_repo.save_event(cmd.event_id, "PROCESSED_SUCCESS", cmd.payload)
+                    self._dispatch_after_commit(PaymentCompleted(
+                        payment_id=payment.id,
+                        user_id=payment.user_id,
+                        amount_minor=payment.amount.minor_units,
+                        currency=payment.amount.currency.code,
+                        occurred_at=cmd.now,
+                    ))
             else:
-                # Not allowed, log but don't modify payment
-                self.audit_logger.log(AuditEvent(
-                    id=uuid.uuid4(),
-                    payment_id=payment.id,
-                    action="WEBHOOK_REJECTED",
-                    actor="webhook",
-                    details={"reason": policy_result.reason, "event_id": cmd.event_id},
-                ))
-                self.webhook_repo.save_event(cmd.event_id, "REJECTED_POLICY", cmd.payload)
+                with transaction.atomic():
+                    self.webhook_repo.save_event(cmd.event_id, "PROCESSING", cmd.payload)
+                    # Rejections are still persisted atomically for deterministic retries.
+                    self.audit_logger.log(AuditEvent(
+                        id=uuid.uuid4(),
+                        payment_id=payment.id,
+                        action="WEBHOOK_REJECTED",
+                        actor="webhook",
+                        details={"reason": policy_result.reason, "event_id": cmd.event_id},
+                    ))
+                    self.webhook_repo.save_event(cmd.event_id, "REJECTED_POLICY", cmd.payload)
 
         finally:
             self.payment_repo.release_lock(provider_ref)
@@ -264,19 +305,20 @@ class PaymentCommandHandlers:
         for payment in expired_payments:
             policy_result = PaymentPolicy.apply(payment, "EXPIRE", None, cmd.now)
             if policy_result.allowed:
-                payment.transition_to(PaymentStatus.EXPIRED, cmd.now)
-                self.payment_repo.save(payment)
-                self.audit_logger.log(AuditEvent(
-                    id=uuid.uuid4(),
-                    payment_id=payment.id,
-                    action="EXPIRE",
-                    actor="system",
-                    details={"expires_at": payment.expires_at.isoformat()},
-                ))
-                self.event_dispatcher.dispatch(PaymentExpired(
-                    payment_id=payment.id,
-                    occurred_at=cmd.now,
-                ))
+                with transaction.atomic():
+                    payment.transition_to(PaymentStatus.EXPIRED, cmd.now)
+                    self.payment_repo.save(payment)
+                    self.audit_logger.log(AuditEvent(
+                        id=uuid.uuid4(),
+                        payment_id=payment.id,
+                        action="EXPIRE",
+                        actor="system",
+                        details={"expires_at": payment.expires_at.isoformat()},
+                    ))
+                    self._dispatch_after_commit(PaymentExpired(
+                        payment_id=payment.id,
+                        occurred_at=cmd.now,
+                    ))
                 count += 1
         return count
 
@@ -294,15 +336,16 @@ class PaymentCommandHandlers:
         if (now - payment.created_at).days > refund_window_days:
             raise PaymentNotAllowedError("Refund window expired")
 
-        payment.transition_to(PaymentStatus.REFUND_REQUESTED, now)
-        self.payment_repo.save(payment)
-        self.audit_logger.log(AuditEvent(
-            id=uuid.uuid4(),
-            payment_id=payment.id,
-            action="REFUND_REQUESTED",
-            actor=f"user:{cmd.requested_by}",
-            details={"reason": cmd.reason},
-        ))
+        with transaction.atomic():
+            payment.transition_to(PaymentStatus.REFUND_REQUESTED, now)
+            self.payment_repo.save(payment)
+            self.audit_logger.log(AuditEvent(
+                id=uuid.uuid4(),
+                payment_id=payment.id,
+                action="REFUND_REQUESTED",
+                actor=f"user:{cmd.requested_by}",
+                details={"reason": cmd.reason},
+            ))
         # Actual refund processing would be handled by a separate process
 
     def _generate_reference(self) -> str:
