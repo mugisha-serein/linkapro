@@ -26,6 +26,7 @@ def mock_token_service():
     service.create_temp_token.return_value = "temp_token"
     service.create_access_token.return_value = "access_token"
     service.create_refresh_token.return_value = "refresh_token"
+    service.create_session_tokens.return_value = ("access_token", "refresh_token")
     return service
 
 
@@ -73,10 +74,13 @@ class TestGoogleLoginUseCase:
         assert result.requires_2fa is False
         assert result.access == "access_token"
         assert result.refresh == "refresh_token"
+        assert result.bootstrap_user is not None
+        assert result.bootstrap_user["email"] == "new.oauth@example.com"
         assert mock_user_repo.save.call_count == 2
         mock_oauth_repo.save.assert_called_once()
-        mock_token_service.create_access_token.assert_called_once()
-        mock_token_service.create_refresh_token.assert_called_once()
+        mock_token_service.create_session_tokens.assert_called_once()
+        mock_token_service.create_access_token.assert_not_called()
+        mock_token_service.create_refresh_token.assert_not_called()
 
     def test_existing_user_with_2fa_gets_temp_token(
         self,
@@ -113,6 +117,7 @@ class TestGoogleLoginUseCase:
         mock_token_service.create_temp_token.assert_called_once_with(str(user.id))
         mock_token_service.create_access_token.assert_not_called()
         mock_token_service.create_refresh_token.assert_not_called()
+        mock_token_service.create_session_tokens.assert_not_called()
 
     def test_blocks_identity_mismatch_for_existing_link(
         self,

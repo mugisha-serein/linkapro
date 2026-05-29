@@ -6,6 +6,9 @@ from infrastructure.adapters.google_oauth_adapter import GoogleOAuthAdapter
 from infrastructure.adapters.django_event_dispatcher import DjangoEventDispatcher
 from application.identity.handlers import IdentityCommandHandlers, IdentityQueryHandlers
 from application.identity.use_cases.google_login import GoogleLoginUseCase
+from application.identity.session_facade import IdentitySessionFacade
+from payments.application.token_handlers import TokenCommandHandlers
+from payments.infrastructure.redis_blacklist import RedisTokenBlacklist
 
 def get_command_handlers():
     return IdentityCommandHandlers(
@@ -32,4 +35,17 @@ def get_google_login_use_case() -> GoogleLoginUseCase:
         oauth_repo=DjangoOAuthTokenRepository(),
         token_service=JWTTokenService(),
         event_dispatcher=DjangoEventDispatcher(),
+    )
+
+
+def get_token_handlers() -> TokenCommandHandlers:
+    return TokenCommandHandlers(blacklist=RedisTokenBlacklist())
+
+
+def get_auth_session_facade() -> IdentitySessionFacade:
+    command_handlers = get_command_handlers()
+    return IdentitySessionFacade(
+        command_handlers=command_handlers,
+        google_login_use_case=get_google_login_use_case(),
+        token_handlers=get_token_handlers(),
     )

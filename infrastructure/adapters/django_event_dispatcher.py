@@ -1,4 +1,9 @@
+import logging
+
+from django.db import transaction
 from django.dispatch import Signal
+
+logger = logging.getLogger(__name__)
 
 # Define signals for each domain event
 user_registered = Signal()
@@ -49,3 +54,12 @@ class DjangoEventDispatcher:
         signal = signal_map.get(event_type)
         if signal:
             signal.send(sender=self.__class__, event=event)
+
+    def dispatch_after_commit(self, event) -> None:
+        def _dispatch() -> None:
+            try:
+                self.dispatch(event)
+            except Exception:
+                logger.exception("Failed to dispatch payment domain event after commit", extra={"event_type": type(event).__name__})
+
+        transaction.on_commit(_dispatch)

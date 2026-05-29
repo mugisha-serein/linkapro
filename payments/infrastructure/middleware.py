@@ -86,8 +86,13 @@ class HmacRequestValidator:
         canonical = self._build_canonical(request, timestamp_str, nonce)
 
         # Verify HMAC
+        secret = key_data.get("secret")
+        if not secret:
+            self._record_failure(request)
+            return JsonResponse({"error": "Invalid API key"}, status=401)
+
         expected_signature = hmac.new(
-            key_data["secret"].encode(),
+            secret.encode(),
             canonical.encode(),
             hashlib.sha256
         ).hexdigest()

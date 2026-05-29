@@ -87,7 +87,11 @@ class TestIdentityViews:
         )
         assert login_response.status_code == 200
         assert "access_token" in login_response.data
-        assert "refresh_token" in login_response.data
+        assert "refresh_token" not in login_response.data
+        assert "user" in login_response.data
+        assert login_response.data["user"]["display_name"] == "Fresh User"
+        assert login_response.data["user"]["requires_password_setup"] is False
+        assert "refresh_token" in login_response.cookies
 
     def test_login_success(self):
         plain = PlainPassword("StrongPass1")
@@ -156,9 +160,57 @@ class TestIdentityViews:
             {"email": "refresh@example.com", "password": "StrongPass1"},
             format="json",
         )
-        refresh_token = login_response.data["refresh_token"]
+        refresh_token = login_response.cookies["refresh_token"].value
 
         self.client.credentials()
         response = self.client.post(reverse("token-refresh"), {"refresh": refresh_token}, format="json")
         assert response.status_code == 200
         assert "access" in response.data
+        assert "user" in response.data
+        assert "refresh_token" in response.cookies
+
+    def test_refresh_token_can_use_cookie(self):
+        user = DjangoUser.objects.create_user(
+            email="cookie-refresh@example.com",
+            password="StrongPass1",
+            first_name="Cookie",
+            last_name="Refresh",
+            role="planner",
+        )
+        login_response = self.client.post(
+            reverse("login"),
+            {"email": "cookie-refresh@example.com", "password": "StrongPass1"},
+            format="json",
+        )
+        refresh_token = login_response.cookies["refresh_token"].value
+
+        self.client.cookies["refresh_token"] = refresh_token
+        response = self.client.post(reverse("token-refresh"), format="json")
+        assert response.status_code == 200
+        assert "access" in response.data
+        assert "user" in response.data
+
+    def test_revoke_token_clears_cookies(self):
+        user = DjangoUser.objects.create_user(
+            email="revoke@example.com",
+            password="StrongPass1",
+            first_name="Revoke",
+            last_name="User",
+            role="planner",
+        )
+        login_response = self.client.post(
+            reverse("login"),
+            {"email": "revoke@example.com", "password": "StrongPass1"},
+            format="json",
+        )
+        refresh_token = login_response.cookies["refresh_token"].value
+
+        response = self.client.post(reverse("token-revoke"), {"refresh": refresh_token}, format="json")
+        assert response.status_code == 200
+        assert response.data["status"] == "revoked"
+        assert "access_token" in response.cookies
+        assert response.cookies["access_token"].value == ""
+        assert response.cookies["access_token"]["max-age"] == 0
+        assert "refresh_token" in response.cookies
+        assert response.cookies["refresh_token"].value == ""
+        assert response.cookies["refresh_token"]["max-age"] == 0

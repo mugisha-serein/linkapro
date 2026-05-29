@@ -35,9 +35,6 @@ SIMPLE_JWT = {
 PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
 EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
 
-# Use a fast, insecure secret key for tests
-SECRET_KEY = "*5f*tl1v=p0v=(l9f6e)*c7a-bq6mr=sl-!ub3hn42cq0m3br5"
-
 # Celery always eager for tests (tasks run synchronously)
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
