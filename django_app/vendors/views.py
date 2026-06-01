@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from django_app.common.permissions import IsVendor, IsAdmin
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .serializers import (
@@ -36,7 +37,7 @@ from application.vendors.dtos import (
 
 
 class VendorProfileView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsVendor]
 
     def get(self, request):
         """Get the current user's vendor profile."""
@@ -123,7 +124,7 @@ class VendorProfileView(APIView):
 
 
 class VendorSubmitForReviewView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsVendor]
 
     def post(self, request):
         """Submit the vendor profile for admin review."""
@@ -148,7 +149,7 @@ class VendorSubmitForReviewView(APIView):
 
 
 class PortfolioImageView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsVendor]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
@@ -236,7 +237,7 @@ class PortfolioImageView(APIView):
 
 
 class PortfolioImageReorderView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsVendor]
 
     def post(self, request):
         """Reorder portfolio images."""
@@ -263,7 +264,7 @@ class PortfolioImageReorderView(APIView):
 
 
 class ServicePackageListView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsVendor]
 
     def get(self, request):
         """List service packages for the current vendor."""
@@ -316,7 +317,7 @@ class ServicePackageListView(APIView):
 
 
 class ServicePackageDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsVendor]
 
     def patch(self, request, package_id):
         """Update a service package."""
@@ -377,7 +378,7 @@ class ServicePackageDetailView(APIView):
 
 
 class ServicePackageActivateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsVendor]
 
     def post(self, request, package_id):
         """Reactivate a deactivated service package."""
@@ -404,7 +405,7 @@ class ServicePackageActivateView(APIView):
 
 
 class InquiryListView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsVendor]
 
     def get(self, request):
         """List inquiries for the current vendor."""
@@ -459,3 +460,46 @@ class PublicInquiryView(APIView):
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class VendorDashboardSummaryView(APIView):
+    permission_classes = [IsAuthenticated, IsVendor]
+
+    def get(self, request):
+        query_handlers = get_query_handlers()
+        profile = query_handlers.get_vendor_by_user(request.user.id)
+        if not profile:
+            return Response({"detail": "No vendor profile found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(query_handlers.get_dashboard_summary(profile.id))
+
+
+class VendorAnalyticsView(APIView):
+    permission_classes = [IsAuthenticated, IsVendor]
+
+    def get(self, request):
+        query_handlers = get_query_handlers()
+        profile = query_handlers.get_vendor_by_user(request.user.id)
+        if not profile:
+            return Response({"detail": "No vendor profile found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(query_handlers.get_analytics(profile.id))
+
+
+class VendorActivityView(APIView):
+    permission_classes = [IsAuthenticated, IsVendor]
+
+    def get(self, request):
+        query_handlers = get_query_handlers()
+        profile = query_handlers.get_vendor_by_user(request.user.id)
+        if not profile:
+            return Response({"detail": "No vendor profile found."}, status=status.HTTP_404_NOT_FOUND)
+        limit = int(request.query_params.get("limit", 10))
+        return Response(query_handlers.get_recent_activity(profile.id, limit=limit))
+
+
+class AdminPendingVendorListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        query_handlers = get_query_handlers()
+        pending = query_handlers.list_pending_approvals()
+        return Response([VendorProfileView()._serialize_profile(profile) for profile in pending])

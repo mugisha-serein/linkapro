@@ -9,6 +9,10 @@ from .views import (
     ServicePackageActivateView,
     InquiryListView,
     PublicInquiryView,
+    VendorDashboardSummaryView,
+    VendorAnalyticsView,
+    VendorActivityView,
+    AdminPendingVendorListView,
 )
 
 urlpatterns = [
@@ -21,5 +25,9 @@ urlpatterns = [
     path("packages/<uuid:package_id>/", ServicePackageDetailView.as_view(), name="package-detail"),
     path("packages/<uuid:package_id>/activate/", ServicePackageActivateView.as_view(), name="package-activate"),
     path("inquiries/", InquiryListView.as_view(), name="inquiry-list"),
+    path("dashboard-summary/", VendorDashboardSummaryView.as_view(), name="vendor-dashboard-summary"),
+    path("analytics/", VendorAnalyticsView.as_view(), name="vendor-analytics"),
+    path("activity/", VendorActivityView.as_view(), name="vendor-activity"),
+    path("pending/", AdminPendingVendorListView.as_view(), name="admin-pending-vendors"),
     path("public/<uuid:vendor_id>/inquiry/", PublicInquiryView.as_view(), name="public-inquiry"),
 ]

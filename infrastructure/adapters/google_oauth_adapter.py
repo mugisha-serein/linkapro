@@ -16,11 +16,15 @@ class GoogleOAuthAdapter:
     USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
     VALID_ISSUERS = {"accounts.google.com", "https://accounts.google.com"}
 
-    def build_auth_url(self) -> str:
+    def build_auth_url(self, state: str | None = None) -> str:
         client_id = settings.GOOGLE_CLIENT_ID
         redirect_uri = settings.GOOGLE_REDIRECT_URI
         if not client_id or not redirect_uri:
             raise GoogleOAuthAdapterError("Google OAuth is not configured")
+        if redirect_uri.rstrip("/") == self.AUTH_URL.rstrip("/"):
+            raise GoogleOAuthAdapterError(
+                "GOOGLE_REDIRECT_URI must be your backend callback URL, not Google's authorization URL"
+            )
         self._enforce_https_in_production(redirect_uri, "GOOGLE_REDIRECT_URI")
 
         params = {
@@ -31,6 +35,8 @@ class GoogleOAuthAdapter:
             "access_type": "offline",
             "prompt": "consent",
         }
+        if state:
+            params["state"] = state
         return f"{self.AUTH_URL}?{urlencode(params)}"
 
     def exchange_code(self, code: str) -> dict:

@@ -24,8 +24,13 @@ class IdentitySessionFacade:
     def login_two_factor(self, cmd: LoginTwoFactorCommand) -> AuthenticationDecision:
         return self.command_handlers.login_two_factor(cmd)
 
-    def oauth_login(self, user_data: dict, token_data: Optional[dict] = None):
-        return self.google_login_use_case.execute(user_data, token_data)
+    def oauth_login(
+        self,
+        user_data: dict,
+        token_data: Optional[dict] = None,
+        signup_role: Optional[str] = None,
+    ):
+        return self.google_login_use_case.execute(user_data, token_data, signup_role=signup_role)
 
     def refresh_session(self, refresh_token: str) -> SessionRefreshResult:
         access_token, new_refresh_token, bootstrap_user = self.token_handlers.refresh_access_token(refresh_token)

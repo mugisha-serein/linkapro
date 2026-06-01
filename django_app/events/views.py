@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from django_app.common.permissions import IsPlanner
 
 from .serializers import (
     CreateEventSerializer, UpdateEventSerializer, CreateChecklistSerializer,
@@ -17,7 +18,7 @@ from application.events.dtos import ChecklistDTO, ChecklistItemDTO, GuestEntryDT
 
 
 class EventListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlanner]
 
     def get(self, request):
         handlers = get_query_handlers()
@@ -37,7 +38,7 @@ class EventListCreateView(APIView):
 
 
 class EventDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlanner]
 
     def get(self, request, event_id):
         handlers = get_query_handlers()
@@ -71,7 +72,7 @@ class EventDetailView(APIView):
 
 
 class ChecklistListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlanner]
 
     def get(self, request, event_id):
         query_handlers = get_query_handlers()
@@ -97,7 +98,7 @@ class ChecklistListCreateView(APIView):
 
 
 class ChecklistItemListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlanner]
 
     def get(self, request, checklist_id):
         query_handlers = get_query_handlers()
@@ -131,7 +132,7 @@ class ChecklistItemListCreateView(APIView):
 
 
 class ChecklistItemDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlanner]
 
     def patch(self, request, item_id):
         query_handlers = get_query_handlers()
@@ -160,7 +161,7 @@ class ChecklistItemDetailView(APIView):
 
 
 class BudgetLineListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlanner]
 
     def get(self, request, event_id):
         query_handlers = get_query_handlers()
@@ -186,7 +187,7 @@ class BudgetLineListCreateView(APIView):
 
 
 class BudgetLineDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlanner]
 
     def patch(self, request, line_id):
         query_handlers = get_query_handlers()
@@ -212,7 +213,7 @@ class BudgetLineDetailView(APIView):
 
 
 class GuestListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlanner]
 
     def get(self, request, event_id):
         query_handlers = get_query_handlers()
@@ -238,7 +239,7 @@ class GuestListCreateView(APIView):
 
 
 class TimelineBlockListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlanner]
 
     def get(self, request, event_id):
         query_handlers = get_query_handlers()
@@ -350,7 +351,7 @@ def serialize_timeline_block_dto(dto):
     }
 
 class DashboardSummaryView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsPlanner]
 
     def get(self, request):
         handlers = get_query_handlers()
