@@ -28,7 +28,12 @@ class GoogleLoginUseCase:
         self.event_dispatcher = event_dispatcher
         self.auth_policy = IdentityAuthenticationPolicy(token_service)
 
-    def execute(self, user_data: dict, token_data: Optional[dict] = None) -> GoogleLoginResult:
+    def execute(
+        self,
+        user_data: dict,
+        token_data: Optional[dict] = None,
+        signup_role: Optional[str] = None,
+    ) -> GoogleLoginResult:
         google_id = (user_data.get("google_id") or "").strip()
         email_raw = (user_data.get("email") or "").strip().lower()
         if not google_id or not email_raw:
@@ -101,7 +106,7 @@ class GoogleLoginUseCase:
                 password_hash=None,
                 first_name=first_name,
                 last_name=last_name,
-                role=UserRole.PLANNER,
+                role=self._resolve_signup_role(signup_role),
                 is_verified=True,
             )
             user = self.user_repo.save(user)
@@ -161,6 +166,15 @@ class GoogleLoginUseCase:
             refresh=decision.refresh_token,
             bootstrap_user=decision.bootstrap_user or SessionBootstrapDTO.from_user(user).to_dict(),
         )
+
+    @staticmethod
+    def _resolve_signup_role(signup_role: Optional[str]) -> UserRole:
+        normalized = (signup_role or "").strip().lower()
+        if normalized == UserRole.VENDOR.value:
+            return UserRole.VENDOR
+        if normalized == UserRole.PLANNER.value:
+            return UserRole.PLANNER
+        return UserRole.PLANNER
 
     @staticmethod
     def _split_name(user_data: dict) -> tuple[str, str]:

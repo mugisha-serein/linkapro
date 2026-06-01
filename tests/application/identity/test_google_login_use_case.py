@@ -82,6 +82,34 @@ class TestGoogleLoginUseCase:
         mock_token_service.create_access_token.assert_not_called()
         mock_token_service.create_refresh_token.assert_not_called()
 
+    def test_creates_vendor_when_signup_role_is_vendor(
+        self,
+        use_case,
+        mock_user_repo,
+        mock_oauth_repo,
+    ):
+        mock_user_repo.get_by_email.return_value = None
+        saved_users = []
+
+        def _save(user):
+            saved_users.append(user)
+            return user
+
+        mock_user_repo.save.side_effect = _save
+        mock_oauth_repo.get_by_provider_and_user.return_value = None
+
+        use_case.execute(
+            {
+                "email": "vendor.oauth@example.com",
+                "name": "Vendor OAuth",
+                "google_id": "google-vendor",
+            },
+            {"access_token": "google_access", "expires_in": 3600},
+            signup_role="vendor",
+        )
+
+        assert saved_users[0].role is UserRole.VENDOR
+
     def test_existing_user_with_2fa_gets_temp_token(
         self,
         use_case,

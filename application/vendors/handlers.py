@@ -256,3 +256,88 @@ class VendorQueryHandlers:
     def list_inquiries(self, vendor_id: uuid.UUID) -> List[InquiryDTO]:
         inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
         return [VendorCommandHandlers._to_inquiry_dto(i) for i in inquiries]
+
+    def get_dashboard_summary(self, vendor_id: uuid.UUID) -> dict:
+        profile = self.vendor_repo.get_by_id(vendor_id)
+        inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
+        packages = self.package_repo.list_by_vendor(vendor_id)
+        images = self.image_repo.list_by_vendor(vendor_id)
+
+        unread = sum(1 for inquiry in inquiries if not inquiry.is_read)
+        active_packages = sum(1 for package in packages if package.is_active)
+
+        return {
+            "profile_score": self._profile_completion_score(profile, images, packages),
+            "total_views": 0,
+            "planner_requests": len(inquiries),
+            "unread_inquiries": unread,
+            "active_packages": active_packages,
+            "portfolio_count": len(images),
+            "account_status": profile.status.value if profile else "draft",
+        }
+
+    def get_analytics(self, vendor_id: uuid.UUID) -> dict:
+        inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
+        packages = self.package_repo.list_by_vendor(vendor_id)
+        images = self.image_repo.list_by_vendor(vendor_id)
+        profile = self.vendor_repo.get_by_id(vendor_id)
+
+        unread = sum(1 for inquiry in inquiries if not inquiry.is_read)
+        active_packages = sum(1 for package in packages if package.is_active)
+
+        return {
+            "total_views": 0,
+            "views_trend": 0,
+            "total_inquiries": len(inquiries),
+            "inquiries_mtd": len(inquiries),
+            "unresponded_inquiries": unread,
+            "avg_response_time_hours": 0,
+            "conversion_rate": 0,
+            "earnings_mtd": "0",
+            "pending_payments": "0",
+            "profile_completion": self._profile_completion_score(profile, images, packages),
+            "active_packages": active_packages,
+            "portfolio_count": len(images),
+            "account_status": profile.status.value if profile else "draft",
+            "service_area": profile.service_area if profile else "",
+        }
+
+    def get_recent_activity(self, vendor_id: uuid.UUID, limit: int = 10) -> List[dict]:
+        inquiries = sorted(
+            self.inquiry_repo.list_by_vendor(vendor_id),
+            key=lambda inquiry: inquiry.created_at,
+            reverse=True,
+        )[:limit]
+
+        activity = []
+        for inquiry in inquiries:
+            activity.append(
+                {
+                    "id": str(inquiry.id),
+                    "type": "inquiry_received",
+                    "title": f"New inquiry from {inquiry.client_name}",
+                    "description": inquiry.message[:120],
+                    "timestamp": inquiry.created_at.isoformat(),
+                    "metadata": {"is_read": inquiry.is_read},
+                }
+            )
+        return activity
+
+    @staticmethod
+    def _profile_completion_score(profile, images, packages) -> int:
+        if not profile:
+            return 0
+        fields = [
+            profile.business_name,
+            profile.description,
+            profile.service_area,
+            profile.contact_email,
+            profile.contact_phone,
+        ]
+        filled = sum(1 for value in fields if value)
+        if images:
+            filled += 1
+        if packages:
+            filled += 1
+        total = len(fields) + 2
+        return round((filled / total) * 100)

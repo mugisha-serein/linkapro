@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from application.identity.commands import (
     EnableTwoFactorCommand,
     LoginTwoFactorCommand,
+    UpdateProfileCommand,
     VerifyTwoFactorSetupCommand,
 )
 from application.identity.auth_policy import AuthenticationStatus
@@ -24,6 +25,7 @@ from .serializers import (
     RegisterSerializer,
     TwoFactorLoginSerializer,
     TwoFactorSetupVerifySerializer,
+    UpdateProfileSerializer,
 )
 from .services import (
     get_command_handlers,
@@ -31,6 +33,7 @@ from .services import (
     get_google_oauth_adapter,
     get_auth_session_facade,
 )
+from application.identity.oauth_state import build_oauth_state, parse_oauth_state, ALLOWED_OAUTH_SIGNUP_ROLES
 from .cookies import clear_auth_cookies, set_refresh_cookie
 
 
@@ -59,21 +62,35 @@ def _bootstrap_user_payload(source) -> dict:
         return source.to_dict()
     if isinstance(source, dict):
         return source
+    role = source.role.value if hasattr(source.role, "value") else source.role
+    has_password = getattr(source, "has_password", None)
+    if has_password is None:
+        has_password = bool(getattr(source, "password_hash", None))
+    requires_password_setup = getattr(source, "requires_password_setup", None)
+    if requires_password_setup is None:
+        requires_password_setup = not has_password
+
     return {
         "id": str(source.id),
         "email": str(source.email),
-        "role": source.role.value,
+        "role": role,
         "first_name": source.first_name,
         "last_name": source.last_name,
-        "display_name": f"{source.first_name} {source.last_name}".strip() or str(source.email),
-        "avatar": None,
+        "display_name": getattr(source, "display_name", None)
+        or f"{source.first_name} {source.last_name}".strip()
+        or str(source.email),
+        "avatar": getattr(source, "avatar", None),
         "is_active": source.is_active,
         "is_verified": source.is_verified,
-        "has_password": bool(getattr(source, "password_hash", None)),
-        "requires_password_setup": not bool(getattr(source, "password_hash", None)),
+        "has_password": has_password,
+        "requires_password_setup": requires_password_setup,
         "two_factor_enabled": getattr(source, "two_factor_enabled", False),
         "is_authenticated": True,
-        "onboarding_complete": bool(source.is_verified and getattr(source, "password_hash", None)),
+        "onboarding_complete": getattr(
+            source,
+            "onboarding_complete",
+            bool(source.is_verified and has_password),
+        ),
     }
 
 
@@ -267,6 +284,17 @@ class VerifyTwoFactorSetupView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+def _serialize_user_profile(user_dto) -> dict:
+    return _bootstrap_user_payload(user_dto) | {
+        "created_at": user_dto.created_at.isoformat() if hasattr(user_dto.created_at, "isoformat") else user_dto.created_at,
+        "last_login": (
+            user_dto.last_login.isoformat()
+            if user_dto.last_login and hasattr(user_dto.last_login, "isoformat")
+            else user_dto.last_login
+        ),
+    }
+
+
 class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -276,26 +304,35 @@ class ProfileView(APIView):
         if not user_dto:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        return Response(
-            {
-                "id": str(user_dto.id),
-                "email": user_dto.email,
-                "first_name": user_dto.first_name,
-                "last_name": user_dto.last_name,
-                "role": user_dto.role,
-                "is_active": user_dto.is_active,
-                "is_verified": user_dto.is_verified,
-                "created_at": user_dto.created_at,
-                "last_login": user_dto.last_login,
-            }
-        )
+        return Response(_serialize_user_profile(user_dto))
+
+    def patch(self, request):
+        serializer = UpdateProfileSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        handlers = get_command_handlers()
+        try:
+            user_dto = handlers.update_profile(
+                UpdateProfileCommand(
+                    user_id=request.user.id,
+                    first_name=serializer.validated_data.get("first_name"),
+                    last_name=serializer.validated_data.get("last_name"),
+                )
+            )
+            return Response(_serialize_user_profile(user_dto))
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class GoogleLoginView(View):
     def get(self, request):
+        signup_role = (request.GET.get("role") or "").strip().lower()
+        if signup_role not in ALLOWED_OAUTH_SIGNUP_ROLES:
+            return _redirect_error("invalid_role")
+
         adapter = get_google_oauth_adapter()
         try:
-            auth_url = adapter.build_auth_url()
+            state = build_oauth_state(signup_role)
+            auth_url = adapter.build_auth_url(state=state)
         except Exception:
             return _redirect_error("oauth_not_configured")
         return redirect(auth_url)
@@ -303,6 +340,12 @@ class GoogleLoginView(View):
 
 class GoogleCallbackView(View):
     def get(self, request):
+        oauth_error = request.GET.get("error")
+        if oauth_error:
+            response = _redirect_error(oauth_error)
+            clear_auth_cookies(response)
+            return response
+
         code = request.GET.get("code")
         if not code:
             response = _redirect_error("missing_code")
@@ -310,11 +353,17 @@ class GoogleCallbackView(View):
             return response
         frontend_url = _frontend_url()
 
+        signup_role = parse_oauth_state(request.GET.get("state"))
+
         adapter = get_google_oauth_adapter()
         try:
             token_data = adapter.exchange_code(code)
             user_data = adapter.get_user_info(token_data["access_token"])
-            result = get_auth_session_facade().oauth_login(user_data, token_data)
+            result = get_auth_session_facade().oauth_login(
+                user_data,
+                token_data,
+                signup_role=signup_role,
+            )
         except Exception:
             response = _redirect_error("oauth_failed")
             clear_auth_cookies(response)
@@ -322,16 +371,12 @@ class GoogleCallbackView(View):
 
         if result.requires_2fa:
             params = urlencode({"temp_token": result.temp_token or ""})
-            response = redirect(f"{frontend_url}/2fa/verify?{params}")
+            response = redirect(f"{frontend_url}/auth/2fa?{params}")
             clear_auth_cookies(response)
             return response
 
-        params = urlencode(
-            {
-                "access": result.access or "",
-                "user": json.dumps(result.bootstrap_user or {}),
-            }
-        )
+        user_json = json.dumps(result.bootstrap_user or {})
+        params = urlencode({"access": result.access or "", "user": user_json})
         response = redirect(f"{frontend_url}/auth/success?{params}")
         if result.refresh:
             set_refresh_cookie(response, result.refresh)

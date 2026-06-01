@@ -18,7 +18,7 @@ class _AdapterStub:
     def __init__(self, auth_url="https://accounts.google.com/fake-auth"):
         self._auth_url = auth_url
 
-    def build_auth_url(self):
+    def build_auth_url(self, state=None):
         return self._auth_url
 
     def exchange_code(self, code):
@@ -37,7 +37,7 @@ class _AuthSessionFacadeStub:
     def __init__(self, result):
         self._result = result
 
-    def oauth_login(self, user_data, token_data):
+    def oauth_login(self, user_data, token_data, signup_role=None):
         return self._result
 
 
@@ -56,9 +56,16 @@ class TestGoogleOAuthViews:
             lambda: _AdapterStub(auth_url="https://accounts.google.com/fake-auth"),
         )
 
-        response = self.client.get(reverse("google-login"))
+        response = self.client.get(reverse("google-login"), {"role": "planner"})
         assert response.status_code == 302
         assert response.url == "https://accounts.google.com/fake-auth"
+
+    def test_google_login_requires_role(self, settings):
+        settings.DEBUG = True
+        settings.FRONTEND_URL = "http://localhost:3000"
+        response = self.client.get(reverse("google-login"))
+        assert response.status_code == 302
+        assert "reason=invalid_role" in response.url
 
     def test_google_callback_missing_code_redirects_error(self, settings):
         settings.DEBUG = True
@@ -83,7 +90,7 @@ class TestGoogleOAuthViews:
 
         response = self.client.get(reverse("google-callback"), {"code": "oauth-code"})
         assert response.status_code == 302
-        assert response.url == "http://localhost:3000/2fa/verify?temp_token=temp-abc"
+        assert response.url == "http://localhost:3000/auth/2fa?temp_token=temp-abc"
 
     def test_google_callback_redirects_success_with_tokens(self, monkeypatch, settings):
         from django_app.identity import views

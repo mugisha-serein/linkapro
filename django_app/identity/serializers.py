@@ -49,3 +49,8 @@ class TwoFactorLoginSerializer(serializers.Serializer):
 
 class TwoFactorSetupVerifySerializer(serializers.Serializer):
     token = serializers.CharField(min_length=6, max_length=6)
+
+
+class UpdateProfileSerializer(serializers.Serializer):
+    first_name = serializers.CharField(max_length=150, required=False)
+    last_name = serializers.CharField(max_length=150, required=False)
