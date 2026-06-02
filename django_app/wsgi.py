@@ -10,7 +10,6 @@ try:
 except ImportError:
     pass
 
-settings_module = 'django_app.settings.production' if 'RENDER_EXTERNAL_HOSTNAME' in os.environ else 'django_app.settings.development'
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', settings_module)
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django_app.settings.production')
 
 application = get_wsgi_application()
