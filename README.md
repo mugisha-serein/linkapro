@@ -2,7 +2,7 @@
   <h1>Linkapro</h1>
   <h3>Event Planning & Vendor Marketplace Backend</h3>
   <p>
-    <img src="https://img.shields.io/badge/Django-5.0-092E20?style=for-the-badge&logo=django&logoColor=white" alt="Django">
+    <img src="https://img.shields.io/badge/Django-5.1-092E20?style=for-the-badge&logo=django&logoColor=white" alt="Django">
     <img src="https://img.shields.io/badge/FastAPI-0.110-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL">
     <img src="https://img.shields.io/badge/Celery-5.4-37814A?style=for-the-badge&logo=celery&logoColor=white" alt="Celery">
@@ -25,7 +25,8 @@
 - [7. Getting Started](#-getting-started)
 - [8. Configuration & Environment](#-configuration--environment)
 - [9. Testing Strategy](#-testing-strategy)
-- [10. Test Evidence](#-test-evidence)
+- [10. Troubleshooting](#-troubleshooting)
+- [11. Test Evidence](#-test-evidence)
 <!-- - [11. Deployment Architecture](#-deployment-architecture) -->
 
 ---
@@ -56,7 +57,7 @@ Core design constraints:
 - Authentication via email/password and social OAuth2 (Google)
 - Role-based access control (Event Planner / Vendor / Admin)
 - Hardened JWT management with **Refresh Token Rotation**, **Family-based Blacklisting**, and **Step-up Authentication** for sensitive actions.
-- 2FA (2 Factor Authentication) improves security for users
+- **TOTP-based 2FA** (Two-Factor Authentication) for enhanced account security.
 - Profile lifecycle management (update, recovery, reset)
 
 ---
@@ -90,6 +91,7 @@ Core design constraints:
 - Support for Mobile Money (MTN, Airtel, M-Pesa), Cards, and Bank Transfers.
 - **Race condition protection** via Redis distributed locking.
 - Idempotent webhook processing and strict domain-driven state machine.
+- **JWE (JSON Web Encryption)** for secure request/response payloads using `jwcrypto`.
 - Multi-currency support (RWF, USD, EUR, KES, GHS, NGN).
 
 ---
