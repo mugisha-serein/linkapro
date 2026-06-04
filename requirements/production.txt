@@ -3,3 +3,4 @@ gunicorn==22.0.0
 asyncpg==0.29.0
 requests==2.33.1
 structlog==25.5.0
+dj-database-url==3.1.2
