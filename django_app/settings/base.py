@@ -4,7 +4,7 @@ from datetime import timedelta
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 import structlog
-
+import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -76,16 +76,22 @@ TEMPLATES = [
 WSGI_APPLICATION = "django_app.wsgi.application"
 
 # Database
+# DATABASES = {
+#     "default": {
+#         "ENGINE": "django.db.backends.postgresql",
+#         "NAME": os.environ.get("DB_NAME"),
+#         "USER": os.environ.get("DB_USER"),
+#         "PASSWORD": os.environ.get("DB_PASSWORD"),
+#         "HOST": os.environ.get("DB_HOST"),
+#         "PORT": os.environ.get("DB_PORT"),
+#         'OPTIONS': {},
+#     }
+# }
+
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.environ.get("DB_NAME", "linkapro"),
-        "USER": os.environ.get("DB_USER", "linkapro_admin"),
-        "PASSWORD": os.environ.get("DB_PASSWORD", ""),
-        "HOST": os.environ.get("DB_HOST", "localhost"),
-        "PORT": os.environ.get("DB_PORT", "5432"),
-        'OPTIONS': {},
-    }
+    "default": dj_database_url.config(
+        default=os.getenv("DATABASE_URL")
+    )
 }
 
 if os.environ.get('DATABASE_SSL', 'false').lower() == 'true':
