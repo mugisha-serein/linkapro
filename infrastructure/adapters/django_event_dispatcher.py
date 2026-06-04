@@ -13,6 +13,15 @@ user_oauth_linked = Signal()
 user_deactivated = Signal()
 
 # Define events signals
+
+# Define signals for each domain event
+user_registered = Signal()
+user_logged_in = Signal()
+user_password_changed = Signal()
+user_oauth_linked = Signal()
+user_deactivated = Signal()
+
+# Define events signals
 event_created = Signal()
 checklist_created = Signal()
 budget_line_added = Signal()
@@ -25,6 +34,7 @@ vendor_approved = Signal()
 vendor_rejected = Signal()
 vendor_suspended = Signal()
 inquiry_received = Signal()
+export_requested = Signal()
 
 class DjangoEventDispatcher:
     def dispatch(self, event) -> None:
@@ -50,6 +60,9 @@ class DjangoEventDispatcher:
             "VendorRejected": vendor_rejected,
             "VendorSuspended": vendor_suspended,
             "InquiryReceived": inquiry_received,
+
+            # documents
+            "ExportRequested": export_requested,
         }
         signal = signal_map.get(event_type)
         if signal:
