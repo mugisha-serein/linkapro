@@ -1,7 +1,11 @@
 from .base import *
+import dj_database_url
 
 DEBUG = False
 ALLOWED_HOSTS = ["*"]
+
+DATABASES["default"] = dj_database_url.config()
+
 # Celery settings
 CELERY_BROKER_URL = os.environ.get('REDIS_URL')
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
