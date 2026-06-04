@@ -4,7 +4,10 @@ import dj_database_url
 DEBUG = False
 ALLOWED_HOSTS = ["*"]
 
-DATABASES["default"] = dj_database_url.config()
+DATABASES["default"] = dj_database_url.config(
+    conn_max_age=600,
+    ssl_require=True
+)
 
 # Celery settings
 CELERY_BROKER_URL = os.environ.get('REDIS_URL')
