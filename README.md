@@ -17,16 +17,14 @@
 ## 📖 Table of Contents
 
 - [1. Overview](#-overview)
-- [2. System Architecture](#-system-architecture)
-- [3. Domain Design (Core Logic)](#-domain-design-core-logic)
-- [4. Key Features (Use Cases)](#-key-features-use-cases)
-- [5. Technology Stack](#-technology-stack)
-- [6. Project Structure](#-project-structure)
-- [7. Getting Started](#-getting-started)
-- [8. Configuration & Environment](#-configuration--environment)
-- [9. Testing Strategy](#-testing-strategy)
-- [10. Troubleshooting](#-troubleshooting)
-- [11. Test Evidence](#-test-evidence)
+- [2. Key Features](#-key-features-application-capabilities)
+- [3. System Architecture](#-system-architecture)
+- [4. Technology Stack](#-technology-stack)
+- [5. Project Structure & Deep Dive](#-project-structure--component-deep-dive)
+- [6. Getting Started](#-getting-started)
+- [7. Testing Strategy](#-running-tests)
+- [8. Troubleshooting](#-troubleshooting)
+- [9. Test Evidence & Verification](#-test-evidence--verification)
 <!-- - [11. Deployment Architecture](#-deployment-architecture) -->
 
 ---
@@ -253,56 +251,141 @@ The technology stack is organized by **system responsibility layers**. Each comp
 
 ---
 
-## 📂 Project Structure
+## 📂 Project Structure & Component Deep Dive
+
+Linkapro follows a strict Clean Architecture pattern. Below is the complete project directory structure mapped out with the exact role and responsibility of each folder, subfolder, and file.
 
 ```
 linkapro/
-├── domain/                    # Core business logic (Entities, Value Objects, Interfaces)
-│   ├── identity/
-│   ├── events/
-│   ├── vendors/
-│   ├── marketplace/
-│   ├── documents/
-│   └── governance/
+├── domain/                         # Layer 1: Core Bounded Contexts (Pure Python)
+│   ├── identity/                   #   - Identity & Access Entities, Value Objects, Interfaces
+│   ├── events/                     #   - Event, Checklist, Budget, Guest Entities & Interfaces
+│   ├── vendors/                    #   - Vendor Profile, Portfolio, Packages Entities & Interfaces
+│   ├── marketplace/                #   - Search, Review, Rating Entities & Interfaces
+│   ├── documents/                  #   - ExportJob and Document Export Interfaces
+│   ├── governance/                 #   - Content Flag, Audit Log, Platform Metric Interfaces
+│   └── shared/                     #   - Shared domain utilities and dispatch interfaces
 │
-├── application/               # Use case orchestration (Commands, Handlers, DTOs)
-│   ├── identity/
-│   ├── events/
-│   ├── vendors/
-│   ├── marketplace/
-│   ├── documents/
-│   └── governance/
+├── application/                    # Layer 2: Core Workflows (Commands, Queries, Handlers)
+│   ├── identity/                   #   - Register/Login commands, TOTP and OAuth handlers, JWT/Session DTOs
+│   ├── events/                     #   - CreateEvent, Checklist transitions, Budget & Guest trackers
+│   ├── vendors/                    #   - Profile registration, portfolio uploading, package creations
+│   ├── marketplace/                #   - Review submissions, discovery and search query orchestration
+│   ├── documents/                  #   - Triggering PDF/Excel export commands and state handshakes
+│   └── governance/                 #   - Moderation actions, vendor approvals, suspensions, analytics queries
 │
-├── payments/                  # Payment Domain & Application logic
-│   ├── domain/                # State machine, Money value objects, Policies
-│   ├── application/           # Token handlers, Payment commands
-│   └── infrastructure/        # Flutterwave adapters, Redis locks
+├── payments/                       # Bounded Context: Payments (Self-contained DDD Slice)
+│   ├── domain/                     #   - State machine, velocity policy, JWE encryption, webhook decrypters
+│   ├── application/                #   - Initiate payment commands, webhook handlers, rotation commands, ports
+│   ├── infrastructure/             #   - Flutterwave API adapters, Redis blacklists, Vault key providers, middleware
+│   ├── helpers/                    #   - Payload structures, cryptographic utilities
+│   └── tasks.py                    #   - Celery tasks for expiration and webhook retries
 │
-├── django_app/                # Django configuration, Admin, and CRUD endpoints
-│   ├── identity/
-│   ├── events/
-│   ├── vendors/
-│   ├── documents/
-│   ├── governance/
-│   └── settings/
+├── django_app/                     # Layer 3: Django Web Framework Interface (Commands & Operations)
+│   ├── settings/                   #   - Settings configurations (base.py, test.py, production.py)
+│   ├── identity/                   #   - Models, views, DRF serializers, custom cookies & OAuth state
+│   ├── events/                     #   - Event dashboard views, Django serializers, model definitions
+│   ├── vendors/                    #   - Vendor profile models, portfolio uploads, packages management views
+│   ├── documents/                  #   - Export jobs model, download views, signal handlers
+│   ├── governance/                 #   - Admin portal customizations, approval workflows
+│   ├── payments/                   #   - Payment state database models, webhook ingress views
+│   ├── common/                     #   - Shared views, base serializers, common middleware
+│   ├── urls.py                     #   - Django main routing table
+│   └── wsgi.py                     #   - WSGI application gate
 │
-├── fastapi_app/               # High-performance Marketplace endpoints
-│   ├── marketplace/
-│   ├── dependencies.py
-│   └── main.py
+├── fastapi_app/                    # Layer 3: FastAPI Web Framework Interface (Read/Search Optimization)
+│   ├── marketplace/                #   - Marketplace SQLAlchemy models
+│   ├── routers/                    #   - Async endpoints for search, vendor profiles, and reviews
+│   ├── main.py                     #   - App initialization, router mounts, middleware registrations
+│   ├── dependencies.py             #   - Depends() dependency injection factories
+│   ├── database.py                 #   - Async SQLAlchemy session setup
+│   ├── repositories.py             #   - Async repos (Vendor listing search, reviews)
+│   └── schemas.py                  #   - Pydantic models for request validation/response serialization
 │
-├── infrastructure/            # Concrete repositories and external adapters
-│   ├── repos/
-│   └── adapters/
+├── infrastructure/                 # Layer 3: Concrete Shared Repositories and Adapters
+│   ├── repos/                      #   - Django repositories implementing Domain interfaces
+│   └── adapters/                   #   - Adapters (Cloudinary, SendGrid, JWTToken, Google OAuth)
 │
-├── tasks/                     # Celery background tasks (PDF, Excel, email)
-├── templates/                 # Jinja2 templates for PDF generation
+├── tasks/                          # Layer 3: Celery Workers (Asynchronous tasks)
+│   ├── celery.py                   #   - Celery application settings & config
+│   ├── document_tasks.py           #   - PDF briefs (WeasyPrint) & Excel exports (OpenPyXL) tasks
+│   ├── image_tasks.py              #   - Async portfolio image uploads (Cloudinary)
+│   └── marketplace_sync.py         #   - Syncs Django vendor edits to FastAPI database views
 │
-├── docker-compose.yml
-├── Dockerfile.django
-├── Dockerfile.fastapi
-└── nginx.conf
+├── templates/                      # Jinja2 and HTML templates
+│   └── exports/                    #   - event_brief.html and timeline.html styled for WeasyPrint
+│
+├── tests/                          # Automated Tests (Structured by Clean Architecture layers)
+│   ├── domain/                     #   - Pure unit tests of core domain entities and invariants
+│   ├── application/                #   - Mock-based unit tests of use cases and command handlers
+│   ├── infrastructure/             #   - Tests for repositories and adapters
+│   ├── django_app/                 #   - Django client views, endpoint, and serializer tests
+│   ├── fastapi_app/                #   - FastAPI async router and database repos tests
+│   ├── payments/                   #   - Self-contained security, token rotation, and payment handler tests
+│   └── tasks/                      #   - Celery async worker logic tests
+│
+├── docker-compose.yml              # Multi-container local orchestration (Nginx, Django, FastAPI, Celery, Postgres, Redis)
+├── Dockerfile.django               # Production-grade Django base container (includes WeasyPrint system deps)
+├── Dockerfile.fastapi              # Production-grade FastAPI base container
+├── nginx.conf                      # Gateway router separating Django (/api/django, /admin) and FastAPI (/api/v1)
+├── manage.py                       # Django administrative CLI script
+├── pyproject.toml                  # Linting, formatting, and python configurations
+├── pytest.ini                      # Pytest configurations and settings overrides
+└── requirements/                   # Package requirements folder (base, production, fastapi, test)
 ```
+
+---
+
+### 🔍 Architectural Layer Breakdown
+
+#### 🧠 1. The Domain Layer (`/domain`)
+The Domain Layer is the **heart of the platform**, representing core business rules. It contains:
+- **Entities**: Python dataclasses with unique UUID identifiers (e.g., [User](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/domain/identity/entities.py) in `domain/identity/entities.py`, [Event](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/domain/events/entities.py) in `domain/events/entities.py`).
+- **Value Objects**: Immutable classes encapsulating concepts with self-validation logic (e.g., `Email`, `PasswordHash`, `TOTP` secrets in [value_objects.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/domain/identity/value_objects.py)).
+- **Domain Services**: Stateless services for coordinating logic between entities (e.g., policy execution, TOTP checks).
+- **Repository Interfaces**: Abstract Base Classes (ABCs) defining database operations (e.g., [IUserRepository](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/domain/identity/interfaces.py), `IExportJobRepository`).
+- **Domain Events**: Named event objects emitted when state modifications occur (e.g., `UserRegistered`, `EventCreated`, `ExportRequested`).
+- **Constraint**: *Pure Python.* Absolutely no dependencies on Django, FastAPI, SQLAlchemy, or third-party web frameworks.
+
+#### ⚙️ 2. The Application Layer (`/application`)
+The Application Layer implements the use cases of the platform, orchestrating Domain Entities:
+- **Commands**: Simple DTO dataclasses carrying inputs for mutations (e.g., `RegisterUserCommand`, `InitiatePaymentCommand` in [commands.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/application/identity/commands.py)).
+- **Command Handlers**: Use-case orchestration classes containing a method per command. They retrieve entities from repositories, trigger business logic, save changes, and publish domain events (e.g., [handlers.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/application/identity/handlers.py)).
+- **Queries**: DTO dataclasses carrying read-operation parameters (e.g., `SearchVendorsQuery`).
+- **Query Handlers**: Perform queries and return DTO response payloads.
+- **Data Transfer Objects (DTOs)**: Simple dataclasses representing response models returning data across the layer boundaries.
+- **Constraint**: *No direct database access.* The Application layer depends entirely on Domain repository interfaces and fires events.
+
+#### 🔌 3. The Infrastructure & Interface Layer (`/infrastructure`, `/django_app`, `/fastapi_app`, `/tasks`)
+Everything that interacts with filesystems, networks, databases, or frameworks:
+- **Repositories (`infrastructure/repos/`)**: Implement the interfaces defined in the Domain layer using Django models or SQLAlchemy (e.g., [DjangoUserRepository](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/repos/django_user_repository.py) maps between Django models and Domain entities).
+- **Adapters (`infrastructure/adapters/`)**: Concrete wrappers around external services (e.g., [CloudinaryAdapter](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/adapters/cloudinary_adapter.py) for uploads, [GoogleOAuthAdapter](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/adapters/google_oauth_adapter.py) for OAuth authentication, [JWTTokenService](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/adapters/jwt_token_service.py) for token generation, [DjangoPasswordHasher](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/adapters/password_hasher.py) for password hashes).
+- **Interface Adapters**:
+  - **Django (`django_app/`)**: Exposes REST API views, Django REST Framework serializers, routes, signals, and the administrative console (`django_app/governance/admin.py`).
+  - **FastAPI (`fastapi_app/`)**: High-performance, async API endpoints optimized for read-heavy operations, including the public vendor search, ratings/reviews, and CAPTCHA checking.
+  - **Celery Tasks (`tasks/`)**: Offloaded async processing for WeasyPrint PDFs, OpenPyXL spreadsheets, Cloudinary uploads, and webhook retries.
+
+---
+
+### 📦 Self-Contained Context: The Payments Module (`/payments`)
+Unlike other modules that share directories inside the global layers, the `payments/` module is designed as a **completely self-contained architectural slice** representing the Financial Bounded Context. 
+
+It replicates the entire 3-layer architecture internally:
+1. **Payments Domain (`payments/domain/`)**:
+   - [entities.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/domain/entities.py): Defines the `Payment` aggregate and transactional states.
+   - [policy.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/domain/policy.py) & [velocity.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/domain/velocity.py): Encapsulates validation and velocity checking rules (hourly limit, daily limit, fraud detection).
+   - [webhook_crypto.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/domain/webhook_crypto.py) & [step_up_policy.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/domain/step_up_policy.py): Manages payment authentication rules.
+2. **Payments Application (`payments/application/`)**:
+   - [commands.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/application/commands.py) & [dtos.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/application/dtos.py): Input/output structures for payment creation.
+   - [handlers.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/application/handlers.py): State transition rules, initiating checkouts, processing provider callbacks.
+   - [ports.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/application/ports.py): Outbound ports (gateways, logging, caching interfaces).
+3. **Payments Infrastructure (`payments/infrastructure/`)**:
+   - [flutterwave_gateway.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/infrastructure/flutterwave_gateway.py): Concrete adapter for Flutterwave API integration.
+   - [jwe_adapter.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/infrastructure/jwe_adapter.py) & [jwe_middleware.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/infrastructure/jwe_middleware.py): Handles JSON Web Encryption (JWE) payloads using `jwcrypto` to secure webhooks and internal payment queries.
+   - [vault_key_provider.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/infrastructure/vault_key_provider.py): Retrieves encryption keys from HashiCorp Vault to secure transactions.
+   - [repositories.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/infrastructure/repositories.py): Maps payment aggregates to database tables.
+   - [middleware.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/infrastructure/middleware.py): HMAC signature verification and webhook authentication hooks.
+   - [tasks.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/payments/tasks.py): Asynchronous payment workflows (expiring stale checkouts, retry schedulers).
 
 ---
 
@@ -457,7 +540,56 @@ Tasks Tests
 
 ---
 
+## 🔧 Troubleshooting
+
+This section lists known development issues and how to resolve them when working locally.
+
+---
+
+### 🔑 1. `ImproperlyConfigured: DJANGO_SECRET_KEY must be set`
+Django settings require a secret key. In production and local development, it is loaded from `.env`. However, when executing `pytest` directly in your local environment, the environment variables might not be loaded.
+
+**Solution**:
+Set the variable inline when running your tests:
+- **Windows (PowerShell)**:
+  ```powershell
+  $env:DJANGO_SECRET_KEY="test-secret-key-here"; .\env\Scripts\pytest
+  ```
+- **macOS / Linux**:
+  ```bash
+  DJANGO_SECRET_KEY="test-secret-key-here" pytest
+  ```
+
+---
+
+### 📄 2. `OSError: cannot load library 'libgobject-2.0-0'` (WeasyPrint on Windows)
+If you attempt to run the document or task tests (`pytest tests/tasks/`) directly on a Windows host outside of Docker, WeasyPrint will fail to load, raising an `OSError` because it depends on GTK+ library binaries (like Pango and GObject) which are not present on Windows by default.
+
+> [!TIP]
+> **Solution**:
+> - **Option A (Recommended)**: Run your services and tests within the provided Docker container where all system dependencies are pre-configured:
+>   ```bash
+>   docker-compose exec django pytest
+>   ```
+> - **Option B**: Download and install the GTK+ libraries for Windows by following the [WeasyPrint installation guide](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows). Add the GTK installation path (e.g., `C:\Program Files\GTK3-Runtime\bin`) to your Windows User or System `PATH` variable, and restart your IDE or terminal.
+> - **Option C**: Run only specific non-task layers locally (e.g., domain, application, or web routers) to bypass loading WeasyPrint:
+>   ```bash
+>   pytest tests/domain/ tests/application/ tests/django_app/ tests/fastapi_app/
+>   ```
+
+---
+
+### 🔗 3. `ImportError: cannot import name 'export_requested'`
+Previously, `django_app/documents/signals.py` attempted to load `export_requested` from `infrastructure/adapters/django_event_dispatcher.py` which had not been defined, leading to application crashes during start-up.
+
+> [!NOTE]
+> **Status**: **RESOLVED**.
+> The `export_requested` signal is now properly declared as a Django `Signal` in [django_event_dispatcher.py](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/adapters/django_event_dispatcher.py) and mapped to the `"ExportRequested"` domain event type in `DjangoEventDispatcher.dispatch()`. No action is required.
+
+---
+
 ## 📄 Test Evidence & Verification
+
 
 This section provides structured proof of test execution across architectural layers. Each artifact represents validation of isolated system boundaries.
 
