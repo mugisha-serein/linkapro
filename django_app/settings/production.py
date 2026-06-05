@@ -1,6 +1,10 @@
 from .base import *
 import dj_database_url
 
+def _csv_env(name: str, default: str = "") -> list[str]:
+    raw_value = os.environ.get(name, default)
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
 DEBUG = False
 ALLOWED_HOSTS = ["*"]
 
@@ -11,7 +15,7 @@ DATABASES["default"] = dj_database_url.config(
 
 CORS_ALLOWED_ORIGINS = _csv_env(
     "CORS_ALLOWED_ORIGINS",
-    f"{os.environ.get('FRONTEND_URL', 'https://linkapro-frontend.vercel.app')}",
+    f"{os.environ.get('FRONTEND_URL')}",
     # fallbacks for local / container dev
     "http://localhost:3000",
     "http://127.0.0.1:3000",
