@@ -9,6 +9,14 @@ DATABASES["default"] = dj_database_url.config(
     ssl_require=True
 )
 
+CORS_ALLOWED_ORIGINS = _csv_env(
+    "CORS_ALLOWED_ORIGINS",
+    f"{os.environ.get('FRONTEND_URL', 'https://linkapro-frontend.vercel.app')}",
+    # fallbacks for local / container dev
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+)
+
 # Celery settings
 CELERY_BROKER_URL = os.environ.get('REDIS_URL')
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
