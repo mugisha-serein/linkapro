@@ -2,7 +2,8 @@ import os
 from celery import Celery
 
 # Set the default Django settings module for the 'celery' program.
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django_app.settings.production')
+# Use development as default; production is set via DJANGO_SETTINGS_MODULE env var
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django_app.settings.development')
 
 app = Celery('linkapro')
 

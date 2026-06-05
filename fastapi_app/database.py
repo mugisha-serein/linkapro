@@ -9,7 +9,7 @@ import os
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/evplan"
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/linkapro"
 )
 
 # Convert Render's DATABASE_URL into an async SQLAlchemy URL
