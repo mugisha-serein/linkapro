@@ -220,7 +220,7 @@ FLW_SECRET_KEY = os.environ.get("FLW_SECRET_KEY", "")
 FLW_SECRET_HASH = os.environ.get("FLW_SECRET_HASH", "")
 PAYMENT_ENV = os.environ.get("PAYMENT_ENV", "test")
 
-REDIS_URL = "redis://localhost:6379/0"
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 # HashiCorp Vault
 VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://localhost:8200")

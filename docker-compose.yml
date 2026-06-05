@@ -45,9 +45,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DJANGO_SETTINGS_MODULE: django_app.settings.production
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-django_app.settings.development}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-production}
-      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-True}
       DB_NAME: ${DB_NAME:-linkapro}
       DB_USER: ${DB_USER:-linkapro_admin}
       DB_PASSWORD: ${DB_PASSWORD:-linkapro_password}
