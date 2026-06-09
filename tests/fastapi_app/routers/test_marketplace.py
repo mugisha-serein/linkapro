@@ -46,7 +46,8 @@ async def test_post_review_success(test_app, mock_command_handlers):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
             f"/api/v1/marketplace/vendors/{vendor_id}/reviews",
-            json={"author_user_id": author_id, "rating": 5, "comment": "Nice"},
+            json={"rating": 5, "comment": "Nice"},
+            headers={"X-Author-User-Id": author_id},
         )
     
     assert response.status_code == 201

@@ -86,3 +86,31 @@ class Inquiry(models.Model):
 
     def __str__(self):
         return f"Inquiry from {self.client_name} to {self.vendor.business_name}"
+
+
+class VerificationDocument(models.Model):
+    class DocumentType(models.TextChoices):
+        BUSINESS_REGISTRATION = "business_registration", "Business Registration"
+        TAX_CERTIFICATE = "tax_certificate", "Tax Certificate"
+        TRADE_LICENSE = "trade_license", "Trade License"
+        OWNER_ID = "owner_id", "Owner ID"
+        OTHER = "other", "Other"
+
+    class FraudStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PASSED = "passed", "Passed"
+        REVIEW_REQUIRED = "review_required", "Review Required"
+        REJECTED = "rejected", "Rejected"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="verification_documents")
+    document_type = models.CharField(max_length=40, choices=DocumentType.choices)
+    original_filename = models.CharField(max_length=255)
+    secure_url = models.URLField()
+    fraud_status = models.CharField(max_length=20, choices=FraudStatus.choices, default=FraudStatus.PENDING)
+    fraud_score = models.PositiveSmallIntegerField(default=0)
+    fraud_reasons = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f"{self.document_type} for {self.vendor.business_name}"

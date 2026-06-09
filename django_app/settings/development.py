@@ -34,6 +34,9 @@ CSRF_TRUSTED_ORIGINS = _csv_env(
     ",".join(CORS_ALLOWED_ORIGINS),
 )
 
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+FASTAPI_INTERNAL_URL = os.environ.get("FASTAPI_INTERNAL_URL", "http://localhost:8001")
+
 # Cache Configuration for Local Development
 CACHES = {
     'default': {

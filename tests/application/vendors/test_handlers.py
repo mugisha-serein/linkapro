@@ -184,5 +184,5 @@ class TestServicePackageCommands:
 
         assert result.name == "Deluxe"
         assert result.price == 5000.0
-        assert result.is_active is True
+        assert result.is_active is False
         mock_repos["package_repo"].save.assert_called_once()

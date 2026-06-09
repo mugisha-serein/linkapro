@@ -1,0 +1,49 @@
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+
+async def apply_marketplace_search_schema(connection: AsyncConnection) -> None:
+    await connection.execute(text(
+        "ALTER TABLE marketplace_vendorlisting "
+        "ADD COLUMN IF NOT EXISTS tags TEXT"
+    ))
+    await connection.execute(text(
+        "ALTER TABLE marketplace_vendorlisting "
+        "ADD COLUMN IF NOT EXISTS external_id VARCHAR(128)"
+    ))
+    await connection.execute(text(
+        "ALTER TABLE marketplace_vendorlisting "
+        "ADD COLUMN IF NOT EXISTS search_rank_score DOUBLE PRECISION DEFAULT 0.0"
+    ))
+    await connection.execute(text(
+        "ALTER TABLE marketplace_vendorlisting "
+        "ADD COLUMN IF NOT EXISTS search_vector TSVECTOR "
+        "GENERATED ALWAYS AS ("
+        "to_tsvector('simple', "
+        "coalesce(business_name, '') || ' ' || "
+        "coalesce(description, '') || ' ' || "
+        "coalesce(category, '') || ' ' || "
+        "coalesce(tags, '') || ' ' || "
+        "coalesce(service_area, '')"
+        ")) STORED"
+    ))
+    await connection.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_marketplace_vendorlisting_external_id "
+        "ON marketplace_vendorlisting (external_id)"
+    ))
+    await connection.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_marketplace_vendorlisting_category "
+        "ON marketplace_vendorlisting (category)"
+    ))
+    await connection.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_marketplace_vendorlisting_service_area "
+        "ON marketplace_vendorlisting (service_area)"
+    ))
+    await connection.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_marketplace_vendorlisting_average_rating "
+        "ON marketplace_vendorlisting (average_rating)"
+    ))
+    await connection.execute(text(
+        "CREATE INDEX IF NOT EXISTS idx_marketplace_search_vector "
+        "ON marketplace_vendorlisting USING GIN (search_vector)"
+    ))

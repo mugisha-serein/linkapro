@@ -1,12 +1,13 @@
 import uuid
 from typing import Optional, List, Tuple
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import text
 
 from domain.marketplace.entities import VendorListing, Review
 from domain.marketplace.interfaces import IVendorListingRepository, IReviewRepository
 from fastapi_app.marketplace.models import VendorListingModel, ReviewModel
+
+MAX_PAGE_SIZE = 50
 
 
 class AsyncVendorListingRepository(IVendorListingRepository):
@@ -25,43 +26,18 @@ class AsyncVendorListingRepository(IVendorListingRepository):
         category: Optional[str] = None,
         location: Optional[str] = None,
         min_rating: Optional[float] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> Tuple[List[VendorListing], int]:
-        stmt = select(VendorListingModel)
-        conditions = []
-        if query:
-            # Full-text search using pg_trgm similarity
-            conditions.append(
-                or_(
-                    VendorListingModel.business_name.op('%%')(query),
-                    VendorListingModel.description.op('%%')(query)
-                )
-            )
-        if category:
-            conditions.append(VendorListingModel.category == category)
-        if location:
-            conditions.append(VendorListingModel.service_area.ilike(f"%{location}%"))
-        if min_rating is not None:
-            conditions.append(VendorListingModel.average_rating >= min_rating)
-        if conditions:
-            stmt = stmt.where(and_(*conditions))
-        
-        # Count total
-        count_stmt = select(func.count()).select_from(stmt.subquery())
-        total_result = await self.session.execute(count_stmt)
-        total = total_result.scalar_one()
-
-        # Pagination
-        stmt = stmt.limit(limit).offset(offset).order_by(VendorListingModel.average_rating.desc())
-        result = await self.session.execute(stmt)
-        models = result.scalars().all()
-        return [self._to_domain(m) for m in models], total
+        raise RuntimeError("Legacy marketplace search path is disabled.")
 
     async def save(self, listing: VendorListing) -> VendorListing:
         model = VendorListingModel(
             id=listing.id,
             vendor_id=listing.vendor_id,
+            external_id=getattr(listing, "external_id", None),
             business_name=listing.business_name,
             category=listing.category,
             description=listing.description,
@@ -70,12 +46,13 @@ class AsyncVendorListingRepository(IVendorListingRepository):
             average_rating=listing.average_rating,
             total_reviews=listing.total_reviews,
             is_verified=listing.is_verified,
+            search_rank_score=getattr(listing, "search_rank_score", 0.0),
             created_at=listing.created_at,
             updated_at=listing.updated_at,
         )
-        await self.session.merge(model)
+        merged = await self.session.merge(model)
         await self.session.commit()
-        return self._to_domain(model)
+        return self._to_domain(merged)
 
     async def delete(self, vendor_id: uuid.UUID) -> None:
         stmt = select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_id)
@@ -100,6 +77,20 @@ class AsyncVendorListingRepository(IVendorListingRepository):
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
+
+    @staticmethod
+    def _sanitize_query(query: Optional[str]) -> Optional[str]:
+        if not query:
+            return None
+        normalized = " ".join(query.strip().split()).lower()
+        return normalized[:128] or None
+
+    @staticmethod
+    def _sanitize_filter(value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        normalized = " ".join(value.strip().split()).lower()
+        return normalized[:64] or None
 
 
 class AsyncReviewRepository(IReviewRepository):

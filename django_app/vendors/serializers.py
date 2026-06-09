@@ -36,3 +36,14 @@ class InquirySerializer(serializers.Serializer):
     client_phone = serializers.CharField(max_length=30, required=False, allow_blank=True)
     message = serializers.CharField()
     event_date = serializers.DateField(required=False, allow_null=True)
+
+
+class VerificationDocumentUploadSerializer(serializers.Serializer):
+    document_type = serializers.ChoiceField(choices=[
+        "business_registration",
+        "tax_certificate",
+        "trade_license",
+        "owner_id",
+        "other",
+    ])
+    document = serializers.FileField()

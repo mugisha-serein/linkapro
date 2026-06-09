@@ -1,11 +1,16 @@
 import uuid
+import logging
 from typing import Optional, List
 from django.core.exceptions import ObjectDoesNotExist
+import httpx
 
 from domain.vendors.entities import VendorProfile as DomainProfile, VendorStatus, ServiceCategory
 from domain.vendors.interfaces import IVendorProfileRepository
 from django_app.vendors.models import VendorProfile as DjangoProfile
 from django_app.identity.models import User
+from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 
 class DjangoVendorProfileRepository(IVendorProfileRepository):
@@ -47,10 +52,46 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         obj.rejected_at = domain.rejected_at
         obj.rejection_reason = domain.rejection_reason
         obj.save()
+        self._sync_marketplace_projection(obj)
         return self._to_domain(obj)
 
     def delete(self, vendor_id: uuid.UUID) -> None:
         DjangoProfile.objects.filter(id=vendor_id).delete()
+        self._delete_marketplace_projection(vendor_id)
+
+    def _sync_marketplace_projection(self, obj: DjangoProfile) -> None:
+        from tasks.marketplace_sync import sync_vendor_listing_to_fastapi
+
+        try:
+            sync_vendor_listing_to_fastapi(
+                str(obj.id),
+                obj.business_name,
+                obj.category,
+                obj.description,
+                obj.service_area,
+                None,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to sync vendor profile to FastAPI marketplace",
+                extra={"vendor_id": str(obj.id)},
+            )
+            raise
+
+    def _delete_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
+        try:
+            response = httpx.delete(
+                f"{settings.FASTAPI_INTERNAL_URL}/internal/listings/{vendor_id}",
+                timeout=10,
+                headers={"X-Internal-Secret": settings.FASTAPI_INTERNAL_SHARED_SECRET},
+            )
+            response.raise_for_status()
+        except Exception:
+            logger.exception(
+                "Failed to delete vendor projection from FastAPI marketplace",
+                extra={"vendor_id": str(vendor_id)},
+            )
+            raise
 
     def _to_domain(self, model: DjangoProfile) -> DomainProfile:
         return DomainProfile(

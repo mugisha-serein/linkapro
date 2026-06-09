@@ -97,24 +97,7 @@ class MarketplaceQueryHandlers:
         self.review_repo = review_repo
 
     async def search_vendors(self, query: SearchVendorsQuery) -> SearchResultDTO:
-        offset = (query.page - 1) * query.page_size
-        items, total = await self.listing_repo.search(
-            query=query.query,
-            category=query.category,
-            location=query.location,
-            min_rating=query.min_rating,
-            limit=query.page_size,
-            offset=offset,
-        )
-        dtos = [MarketplaceCommandHandlers._to_listing_dto(item) for item in items]
-        total_pages = (total + query.page_size - 1) // query.page_size
-        return SearchResultDTO(
-            items=dtos,
-            total=total,
-            page=query.page,
-            page_size=query.page_size,
-            total_pages=total_pages,
-        )
+        raise RuntimeError("Legacy marketplace search handler is disabled.")
 
     async def get_vendor_listing(self, query: GetVendorListingQuery) -> Optional[VendorListingDTO]:
         vendor_id = uuid.UUID(query.vendor_id)

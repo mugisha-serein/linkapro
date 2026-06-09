@@ -1,33 +1,67 @@
+import logging
+import os
+import uuid
+
 import cloudinary
+import cloudinary.exceptions
 import cloudinary.uploader
 from django.conf import settings
+from django.core.files.storage import default_storage
+
+logger = logging.getLogger(__name__)
+
 
 class CloudinaryAdapter:
     def __init__(self):
-        cloudinary.config(
-            cloud_name=settings.CLOUDINARY_CLOUD_NAME,
-            api_key=settings.CLOUDINARY_API_KEY,
-            api_secret=settings.CLOUDINARY_API_SECRET,
-            secure=True
+        self._cloudinary_configured = bool(
+            settings.CLOUDINARY_CLOUD_NAME
+            and settings.CLOUDINARY_API_KEY
+            and settings.CLOUDINARY_API_SECRET
         )
+        if self._cloudinary_configured:
+            cloudinary.config(
+                cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+                api_key=settings.CLOUDINARY_API_KEY,
+                api_secret=settings.CLOUDINARY_API_SECRET,
+                secure=True,
+            )
 
     def upload_image(self, file, folder: str = "vendor_portfolio") -> dict:
-        result = cloudinary.uploader.upload(
-            file,
-            folder=folder,
-            resource_type="image",
-            allowed_formats=["jpg", "jpeg", "png", "webp"],
-            max_file_size=10_000_000  # 10MB
-        )
+        if not self._cloudinary_configured:
+            logger.warning("Cloudinary credentials are not configured. Saving portfolio image locally instead.")
+            return self._store_locally(file, folder)
+
+        try:
+            result = cloudinary.uploader.upload(
+                file,
+                folder=folder,
+                resource_type="image",
+                allowed_formats=["jpg", "jpeg", "png", "webp"],
+                max_file_size=10_000_000,  # 10MB
+            )
+        except cloudinary.exceptions.Error as exc:
+            logger.exception("Cloudinary upload failed; falling back to local storage: %s", exc)
+            return self._store_locally(file, folder)
+
         return {
             "public_id": result["public_id"],
-            "secure_url": result["secure_url"]
+            "secure_url": result["secure_url"],
+        }
+
+    def _store_locally(self, file, folder: str = "vendor_portfolio") -> dict:
+        extension = os.path.splitext(getattr(file, "name", "upload"))[1] or ""
+        filename = f"{uuid.uuid4().hex}{extension}"
+        relative_path = os.path.join(folder, filename).replace("\\", "/")
+        saved_path = default_storage.save(relative_path, file)
+        return {
+            "public_id": saved_path,
+            "secure_url": default_storage.url(saved_path),
         }
 
     def delete_image(self, public_id: str) -> bool:
         result = cloudinary.uploader.destroy(public_id)
         return result.get("result") == "ok"
-    
+
     def upload_file(self, file_obj, folder: str = "exports", public_id: str = None, resource_type: str = "raw") -> dict:
         result = cloudinary.uploader.upload(
             file_obj,

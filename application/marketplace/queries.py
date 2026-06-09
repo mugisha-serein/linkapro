@@ -7,6 +7,8 @@ class SearchVendorsQuery:
     category: Optional[str] = None
     location: Optional[str] = None
     min_rating: Optional[float] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
     page: int = 1
     page_size: int = 20
 

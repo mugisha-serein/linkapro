@@ -1,8 +1,15 @@
 import uuid
+import json
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from django.conf import settings
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
+from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from django_app.common.permissions import IsVendor, IsAdmin
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
@@ -13,6 +20,7 @@ from .serializers import (
     InquirySerializer,
     SubmitForReviewSerializer,
     ReorderImagesSerializer,
+    VerificationDocumentUploadSerializer,
 )
 from .services import get_command_handlers, get_query_handlers
 from application.vendors.commands import (
@@ -25,7 +33,6 @@ from application.vendors.commands import (
     CreateServicePackageCommand,
     UpdateServicePackageCommand,
     DeactivateServicePackageCommand,
-    ActivateServicePackageCommand,
     SendInquiryCommand,
 )
 from application.vendors.dtos import (
@@ -36,6 +43,7 @@ from application.vendors.dtos import (
 )
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class VendorProfileView(APIView):
     permission_classes = [IsAuthenticated, IsVendor]
 
@@ -188,8 +196,15 @@ class PortfolioImageView(APIView):
         # For simplicity, we'll assume synchronous upload here, but note the spec requires async.
 
         from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
+
         adapter = CloudinaryAdapter()
-        result = adapter.upload_image(request.FILES["image"])
+        try:
+            result = adapter.upload_image(request.FILES["image"])
+        except Exception:
+            return Response(
+                {"detail": "Image upload service is currently unavailable. Please try again later."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         caption = request.data.get("caption")
         cmd = AddPortfolioImageCommand(
@@ -381,27 +396,11 @@ class ServicePackageActivateView(APIView):
     permission_classes = [IsAuthenticated, IsVendor]
 
     def post(self, request, package_id):
-        """Reactivate a deactivated service package."""
-        query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        packages = query_handlers.list_service_packages(profile.id)
-        pkg = next((p for p in packages if str(p.id) == package_id), None)
-        if not pkg:
-            return Response(
-                {"detail": "Package not found or does not belong to this vendor."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        cmd = ActivateServicePackageCommand(package_id=uuid.UUID(package_id))
-        command_handlers = get_command_handlers()
-        activated = command_handlers.activate_package(cmd)
-        return Response(ServicePackageListView._serialize_package(None, activated))
+        """Vendor packages must be approved by an administrator before publication."""
+        return Response(
+            {"detail": "Package publication requires admin approval."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
 
 class InquiryListView(APIView):
@@ -431,6 +430,112 @@ class InquiryListView(APIView):
             "is_read": dto.is_read,
             "created_at": dto.created_at.isoformat(),
         }
+
+
+class VendorVerificationDocumentView(APIView):
+    permission_classes = [IsAuthenticated, IsVendor]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        query_handlers = get_query_handlers()
+        profile = query_handlers.get_vendor_by_user(request.user.id)
+        if not profile:
+            return Response(
+                {"detail": "No vendor profile found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        documents = self._load_documents(profile.id)
+        return Response(documents)
+
+    def post(self, request):
+        query_handlers = get_query_handlers()
+        profile = query_handlers.get_vendor_by_user(request.user.id)
+        if not profile:
+            return Response(
+                {"detail": "No vendor profile found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = VerificationDocumentUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        uploaded_document = request.FILES.get("document")
+        if not uploaded_document:
+            return Response(
+                {"detail": "No document file provided."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        secure_url = None
+        cloudinary_ready = bool(
+            settings.CLOUDINARY_CLOUD_NAME
+            and settings.CLOUDINARY_API_KEY
+            and settings.CLOUDINARY_API_SECRET
+        )
+
+        if cloudinary_ready:
+            try:
+                from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
+
+                adapter = CloudinaryAdapter()
+                result = adapter.upload_file(
+                    uploaded_document,
+                    folder="vendor_verification_documents",
+                    resource_type="raw",
+                )
+                secure_url = result["secure_url"]
+            except Exception:
+                secure_url = None
+
+        if not secure_url:
+            try:
+                uploaded_document.seek(0)
+            except Exception:
+                pass
+
+            saved_path = default_storage.save(
+                f"vendor_verification_documents/{profile.id}/{uploaded_document.name}",
+                uploaded_document,
+            )
+            secure_url = request.build_absolute_uri(f"/{settings.MEDIA_URL.lstrip('/')}{saved_path}")
+
+        document = {
+            "id": str(uuid.uuid4()),
+            "document_type": serializer.validated_data["document_type"],
+            "original_filename": uploaded_document.name,
+            "secure_url": secure_url,
+            "fraud_status": "pending",
+            "fraud_score": 0,
+            "fraud_reasons": [],
+            "created_at": timezone.now().isoformat(),
+        }
+        documents = self._load_documents(profile.id)
+        documents.insert(0, document)
+        self._save_documents(profile.id, documents)
+        return Response(document, status=status.HTTP_201_CREATED)
+
+    def _index_path(self, vendor_id) -> str:
+        return f"vendor_verification_documents/{vendor_id}/index.json"
+
+    def _load_documents(self, vendor_id) -> list[dict]:
+        index_path = self._index_path(vendor_id)
+        if not default_storage.exists(index_path):
+            return []
+
+        try:
+            with default_storage.open(index_path, "r") as handle:
+                data = json.load(handle)
+                return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    def _save_documents(self, vendor_id, documents: list[dict]) -> None:
+        index_path = self._index_path(vendor_id)
+        payload = json.dumps(documents).encode("utf-8")
+        if default_storage.exists(index_path):
+            default_storage.delete(index_path)
+        default_storage.save(index_path, ContentFile(payload))
 
 
 class PublicInquiryView(APIView):

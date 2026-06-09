@@ -18,7 +18,7 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set")
 
-ALLOWED_HOSTS = ["*"] 
+ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -150,7 +150,7 @@ PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
 EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
 
 # Celery
-CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+CELERY_BROKER_URL = os.environ.get("REDIS_URL")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 
 CELERY_BEAT_SCHEDULE = {
@@ -185,14 +185,8 @@ LOGGING = {
 # CORS
 CORS_ALLOW_ALL_ORIGINS = os.environ.get("CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = _csv_env(
-    "CORS_ALLOWED_ORIGINS",
-    f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')},http://localhost:3000,http://127.0.0.1:3000",
-)
-CSRF_TRUSTED_ORIGINS = _csv_env(
-    "CSRF_TRUSTED_ORIGINS",
-    ",".join(CORS_ALLOWED_ORIGINS),
-)
+CORS_ALLOWED_ORIGINS = _csv_env("CORS_ALLOWED_ORIGINS")
+CSRF_TRUSTED_ORIGINS = _csv_env("CSRF_TRUSTED_ORIGINS")
 
 # Cloudinary
 CLOUDINARY_CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
@@ -206,30 +200,31 @@ SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "")
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+FRONTEND_URL = os.environ.get("FRONTEND_URL")
 
 # reCAPTCHA
 RECAPTCHA_SITE_KEY = os.environ.get("RECAPTCHA_SITE_KEY", "")
 RECAPTCHA_SECRET_KEY = os.environ.get("RECAPTCHA_SECRET_KEY", "")
 
 # FastAPI internal URL (for Celery tasks)
-FASTAPI_INTERNAL_URL = os.environ.get("FASTAPI_INTERNAL_URL", "http://localhost:8001")
+FASTAPI_INTERNAL_URL = os.environ.get("FASTAPI_INTERNAL_URL")
+FASTAPI_INTERNAL_SHARED_SECRET = os.environ.get("FASTAPI_INTERNAL_SHARED_SECRET")
 
 # Flutterwave
 FLW_SECRET_KEY = os.environ.get("FLW_SECRET_KEY", "")
 FLW_SECRET_HASH = os.environ.get("FLW_SECRET_HASH", "")
 PAYMENT_ENV = os.environ.get("PAYMENT_ENV", "test")
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL = os.environ.get("REDIS_URL")
 
 # HashiCorp Vault
-VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://localhost:8200")
+VAULT_ADDR = os.environ.get("VAULT_ADDR")
 VAULT_ROLE_ID = os.environ.get("VAULT_ROLE_ID", "")
 VAULT_SECRET_ID = os.environ.get("VAULT_SECRET_ID", "")
 VAULT_TRANSIT_KEY_NAME = os.environ.get("VAULT_TRANSIT_KEY_NAME", "linkapro-payments-kek")
 
 # HMAC Key
-PROVIDER_REFERENCE_HMAC_KEY = os.environ.get("PROVIDER_REFERENCE_HMAC_KEY", "change-me-in-production")
+PROVIDER_REFERENCE_HMAC_KEY = os.environ.get("PROVIDER_REFERENCE_HMAC_KEY")
 
 # Flutterwave Webhook Decryptor
 FLW_ENCRYPTION_KEY = os.environ.get("FLW_ENCRYPTION_KEY", "")

@@ -117,6 +117,24 @@ class AddGuestSerializer(serializers.Serializer):
         )
 
 
+class UpdateGuestSerializer(serializers.Serializer):
+    full_name = serializers.CharField(max_length=200, required=False)
+    email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
+    phone = serializers.CharField(max_length=30, required=False, allow_blank=True, allow_null=True)
+    rsvp_status = serializers.ChoiceField(
+        choices=["pending", "accepted", "declined", "maybe"],
+        required=False,
+    )
+    dietary_restrictions = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        allow_empty=True,
+    )
+    plus_one = serializers.BooleanField(required=False)
+    table_assignment = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
 class AddTimelineBlockSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=200)
     start_time = serializers.DateTimeField()
@@ -134,4 +152,10 @@ class AddTimelineBlockSerializer(serializers.Serializer):
             location=self.validated_data.get("location"),
         )
 
-# Similar serializers for Budget, Guest, Timeline (omitted for brevity)
+class UpdateTimelineBlockSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=200, required=False)
+    start_time = serializers.DateTimeField(required=False)
+    end_time = serializers.DateTimeField(required=False)
+    description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    location = serializers.CharField(max_length=300, required=False, allow_blank=True, allow_null=True)
+    order = serializers.IntegerField(min_value=0, required=False)

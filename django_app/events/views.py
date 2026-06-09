@@ -3,16 +3,17 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django_app.common.permissions import IsPlanner
+from .models import GuestEntry, TimelineBlock
 
 from .serializers import (
     CreateEventSerializer, UpdateEventSerializer, CreateChecklistSerializer,
     AddChecklistItemSerializer, UpdateChecklistItemSerializer, AddBudgetLineSerializer,
-    AddGuestSerializer, AddTimelineBlockSerializer
+    AddGuestSerializer, UpdateGuestSerializer, AddTimelineBlockSerializer, UpdateTimelineBlockSerializer
 )
 from .services import get_command_handlers, get_query_handlers
 from application.events.commands import (
     DeleteEventCommand, UpdateChecklistItemCommand, UpdateBudgetLineCommand,
-    AddTimelineBlockCommand,
+    UpdateGuestCommand,
 )
 from application.events.dtos import ChecklistDTO, ChecklistItemDTO, GuestEntryDTO, DashboardSummaryDTO
 
@@ -238,6 +239,37 @@ class GuestListCreateView(APIView):
         return Response(serialize_guest_dto(guest), status=status.HTTP_201_CREATED)
 
 
+class GuestDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsPlanner]
+
+    def patch(self, request, guest_id):
+        query_handlers = get_query_handlers()
+        guest = GuestEntry.objects.filter(id=guest_id).first()
+        if not guest:
+            return Response({"error": "Not found"}, status=404)
+
+        event = query_handlers.get_event(guest.event_id)
+        if not event or event.planner_id != request.user.id:
+            return Response({"error": "Not found"}, status=404)
+
+        serializer = UpdateGuestSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        cmd = UpdateGuestCommand(
+            guest_id=guest.id,
+            full_name=data.get("full_name"),
+            email=data.get("email"),
+            phone=data.get("phone"),
+            rsvp_status=data.get("rsvp_status"),
+            dietary_restrictions=data.get("dietary_restrictions"),
+            plus_one=data.get("plus_one"),
+            table_assignment=data.get("table_assignment"),
+            notes=data.get("notes"),
+        )
+        updated = get_command_handlers().update_guest(cmd)
+        return Response(serialize_guest_dto(updated))
+
+
 class TimelineBlockListCreateView(APIView):
     permission_classes = [IsAuthenticated, IsPlanner]
 
@@ -262,6 +294,28 @@ class TimelineBlockListCreateView(APIView):
         command_handlers = get_command_handlers()
         block = command_handlers.add_timeline_block(cmd)
         return Response(serialize_timeline_block_dto(block), status=status.HTTP_201_CREATED)
+
+
+class TimelineBlockDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsPlanner]
+
+    def patch(self, request, block_id):
+        query_handlers = get_query_handlers()
+        block = TimelineBlock.objects.filter(id=block_id).first()
+        if not block:
+            return Response({"error": "Not found"}, status=404)
+
+        event = query_handlers.get_event(block.event_id)
+        if not event or event.planner_id != request.user.id:
+            return Response({"error": "Not found"}, status=404)
+
+        serializer = UpdateTimelineBlockSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        for field, value in serializer.validated_data.items():
+            setattr(block, field, value)
+        block.save()
+
+        return Response(serialize_timeline_block_dto(block))
 
 
 def serialize_event_dto(dto):
