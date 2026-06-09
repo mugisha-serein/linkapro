@@ -1,5 +1,6 @@
 import uuid
 import pytest
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -130,6 +131,16 @@ class TestPortfolioImageViews:
             response = self.client.post(url, data, format="multipart")
         assert response.status_code == 201
         assert response.data["secure_url"] == "https://fake.url/img.jpg"
+        assert self.profile.images.count() == 1
+
+    @override_settings(CLOUDINARY_CLOUD_NAME="", CLOUDINARY_API_KEY="", CLOUDINARY_API_SECRET="")
+    def test_upload_image_falls_back_to_local_storage_when_cloudinary_unavailable(self):
+        url = reverse("portfolio-list")
+        with open(__file__, "rb") as f:
+            response = self.client.post(url, {"image": f, "caption": "My photo"}, format="multipart")
+
+        assert response.status_code == 201
+        assert response.data["secure_url"].startswith("/media/")
         assert self.profile.images.count() == 1
 
     def test_delete_image_not_found(self):

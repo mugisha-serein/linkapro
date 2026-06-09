@@ -1,17 +1,21 @@
 from .base import *
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
+from .base import _csv_env
 
 DEBUG = False
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS")
+if not ALLOWED_HOSTS:
+    raise ImproperlyConfigured("ALLOWED_HOSTS must be set.")
 
 DATABASES["default"] = dj_database_url.config(
     conn_max_age=600,
     ssl_require=True
 )
 
-CORS_ALLOWED_ORIGINS = [
-    "https://linkapro-frontend.vercel.app",
-]
+CORS_ALLOWED_ORIGINS = _csv_env("CORS_ALLOWED_ORIGINS")
+if not CORS_ALLOWED_ORIGINS:
+    raise ImproperlyConfigured("CORS_ALLOWED_ORIGINS must be set.")
 
 # Celery settings
 CELERY_BROKER_URL = os.environ.get('REDIS_URL')

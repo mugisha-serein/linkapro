@@ -16,6 +16,8 @@ class IVendorListingRepository(ABC):
         category: Optional[str] = None,
         location: Optional[str] = None,
         min_rating: Optional[float] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> Tuple[List[VendorListing], int]: ...   # returns (items, total_count)

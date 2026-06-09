@@ -1,5 +1,6 @@
 import uuid
 import pytest
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi_app.repositories import (
@@ -28,6 +29,35 @@ class TestAsyncVendorListingRepository:
         retrieved = await repo.get_by_vendor_id(listing.vendor_id)
         assert retrieved is not None
         assert retrieved.business_name == "Test Biz"
+
+    @pytest.mark.asyncio
+    async def test_save_is_idempotent_by_vendor_id(self, session: AsyncSession):
+        repo = AsyncVendorListingRepository(session)
+        vendor_id = uuid.uuid4()
+
+        await repo.save(VendorListing(
+            id=uuid.uuid4(),
+            vendor_id=vendor_id,
+            business_name="Original",
+            category="photography",
+            description="desc",
+            service_area="Kigali",
+            cover_image_url=None,
+        ))
+
+        await repo.save(VendorListing(
+            id=uuid.uuid4(),
+            vendor_id=vendor_id,
+            business_name="Updated",
+            category="photography",
+            description="desc",
+            service_area="Kigali",
+            cover_image_url=None,
+        ))
+
+        items, total = await repo.search(query="Updated")
+        assert total == 1
+        assert items[0].business_name == "Updated"
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="Full-text search requires PostgreSQL pg_trgm")
@@ -61,6 +91,37 @@ class TestAsyncVendorListingRepository:
         items, total = await repo.search(category="photography", min_rating=4.0)
         assert total == 1
         assert items[0].category == "photography"
+
+    @pytest.mark.asyncio
+    async def test_search_ranking_and_stable_order(self, session: AsyncSession):
+        repo = AsyncVendorListingRepository(session)
+        vendor_a = uuid.uuid4()
+        vendor_b = uuid.uuid4()
+
+        await repo.save(VendorListing(
+            id=uuid.uuid4(),
+            vendor_id=vendor_a,
+            business_name="Photo Studio",
+            category="photography",
+            description="Exact match studio",
+            service_area="Kigali",
+            cover_image_url=None,
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        ))
+        await repo.save(VendorListing(
+            id=uuid.uuid4(),
+            vendor_id=vendor_b,
+            business_name="Photo Works",
+            category="photography",
+            description="Prefix match",
+            service_area="Kigali",
+            cover_image_url=None,
+            created_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+        ))
+
+        items, total = await repo.search(query="Photo Studio")
+        assert total == 1
+        assert items[0].business_name == "Photo Studio"
 
 
 class TestAsyncReviewRepository:

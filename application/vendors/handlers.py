@@ -149,6 +149,7 @@ class VendorCommandHandlers:
             description=cmd.description,
             price=cmd.price,
             currency=cmd.currency,
+            is_active=False,
         )
         saved = self.package_repo.save(package)
         return self._to_package_dto(saved)
@@ -165,9 +166,8 @@ class VendorCommandHandlers:
         package = self.package_repo.get_by_id(cmd.package_id)
         if not package:
             raise ValueError("Package not found")
-        package.deactivate()
-        saved = self.package_repo.save(package)
-        return self._to_package_dto(saved)
+        self.package_repo.delete(cmd.package_id)
+        return self._to_package_dto(package)
 
     def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)

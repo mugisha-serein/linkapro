@@ -1,11 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import Optional
 import uuid
 
-from application.marketplace.queries import SearchVendorsQuery, GetVendorListingQuery, GetVendorReviewsQuery
+from application.marketplace.search_service import MarketplaceSearchCriteria, MarketplaceSearchService
+from application.marketplace.queries import GetVendorListingQuery, GetVendorReviewsQuery
 from application.marketplace.commands import PostReviewCommand
-from application.marketplace.dtos import SearchResultDTO, VendorListingDTO, ReviewDTO
-from fastapi_app.dependencies import get_command_handlers, get_query_handlers
+from fastapi_app.dependencies import (
+    get_command_handlers,
+    get_marketplace_client_identifier,
+    get_marketplace_search_params,
+    get_marketplace_search_service,
+    get_query_handlers,
+)
 from fastapi_app.schemas import (
     SearchResponse, VendorListingResponse, ReviewResponse, PostReviewRequest
 )
@@ -14,30 +19,20 @@ router = APIRouter()
 
 @router.get("/search", response_model=SearchResponse)
 async def search_vendors(
-    q: Optional[str] = Query(None, description="Search query"),
-    category: Optional[str] = None,
-    location: Optional[str] = None,
-    min_rating: Optional[float] = None,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    handlers = Depends(get_query_handlers),
+    search_params: MarketplaceSearchCriteria = Depends(get_marketplace_search_params),
+    client_id: str = Depends(get_marketplace_client_identifier),
+    service: MarketplaceSearchService = Depends(get_marketplace_search_service),
 ):
-    query = SearchVendorsQuery(
-        query=q,
-        category=category,
-        location=location,
-        min_rating=min_rating,
-        page=page,
-        page_size=page_size,
-    )
-    result = await handlers.search_vendors(query)
-    return SearchResponse(
-        items=[VendorListingResponse.from_dto(item) for item in result.items],
-        total=result.total,
-        page=result.page,
-        page_size=result.page_size,
-        total_pages=result.total_pages,
-    )
+    try:
+        result = await service.search(search_params, client_id=client_id)
+        return SearchResponse.from_dto(result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        message = str(exc).lower()
+        if "rate limit" in message:
+            raise HTTPException(status_code=429, detail=str(exc))
+        raise
 
 @router.get("/vendors/{vendor_id}", response_model=VendorListingResponse)
 async def get_vendor(
