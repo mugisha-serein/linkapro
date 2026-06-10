@@ -2,13 +2,11 @@ import uuid
 import logging
 from typing import Optional, List
 from django.core.exceptions import ObjectDoesNotExist
-import httpx
 
 from domain.vendors.entities import VendorProfile as DomainProfile, VendorStatus, ServiceCategory
 from domain.vendors.interfaces import IVendorProfileRepository
 from django_app.vendors.models import VendorProfile as DjangoProfile
 from django_app.identity.models import User
-from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +50,10 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         obj.rejected_at = domain.rejected_at
         obj.rejection_reason = domain.rejection_reason
         obj.save()
-        self._sync_marketplace_projection(obj)
+        if obj.status == DjangoProfile.Status.APPROVED:
+            self._sync_marketplace_projection(obj)
+        else:
+            self._delete_marketplace_projection(obj.id)
         return self._to_domain(obj)
 
     def delete(self, vendor_id: uuid.UUID) -> None:
@@ -70,6 +71,7 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
                 obj.description,
                 obj.service_area,
                 None,
+                obj.status,
             )
         except Exception:
             logger.exception(
@@ -79,13 +81,10 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
             raise
 
     def _delete_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
+        from tasks.marketplace_sync import delete_vendor_listing_from_fastapi
+
         try:
-            response = httpx.delete(
-                f"{settings.FASTAPI_INTERNAL_URL}/internal/listings/{vendor_id}",
-                timeout=10,
-                headers={"X-Internal-Secret": settings.FASTAPI_INTERNAL_SHARED_SECRET},
-            )
-            response.raise_for_status()
+            delete_vendor_listing_from_fastapi(str(vendor_id))
         except Exception:
             logger.exception(
                 "Failed to delete vendor projection from FastAPI marketplace",

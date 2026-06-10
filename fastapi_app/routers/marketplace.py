@@ -52,6 +52,9 @@ async def get_vendor_reviews(
     page_size: int = Query(10, ge=1, le=50),
     handlers = Depends(get_query_handlers),
 ):
+    listing = await handlers.get_vendor_listing(GetVendorListingQuery(vendor_id=vendor_id))
+    if not listing:
+        raise HTTPException(status_code=404, detail="Vendor not found")
     query = GetVendorReviewsQuery(vendor_id=vendor_id, page=page, page_size=page_size)
     reviews, _ = await handlers.get_vendor_reviews(query)
     return [ReviewResponse.from_dto(r) for r in reviews]

@@ -26,6 +26,7 @@ class VendorListingModel(Base):
     average_rating = Column(Float, default=0.0)
     total_reviews = Column(Integer, default=0)
     is_verified = Column(Boolean, default=False)
+    approval_status = Column(String(20), nullable=True, index=True)
     search_rank_score = Column(Float, default=0.0)
     search_vector = Column(
         TSVECTOR,

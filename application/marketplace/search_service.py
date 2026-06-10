@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Optional
 
 from redis.asyncio import Redis
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from application.marketplace.dtos import SearchResultDTO, VendorListingDTO
@@ -220,7 +220,7 @@ class MarketplaceSearchService:
             VendorListingModel.created_at.label("created_at"),
         ]
 
-        conditions = []
+        conditions = [VendorListingModel.approval_status == "approved"]
         ts_query = None
         if normalized_query:
             ts_query = func.plainto_tsquery("simple", normalized_query)
@@ -241,11 +241,7 @@ class MarketplaceSearchService:
                 },
             )
 
-        where_clause = conditions[0] if len(conditions) == 1 else None
-        if len(conditions) > 1:
-            from sqlalchemy import and_
-
-            where_clause = and_(*conditions)
+        where_clause = and_(*conditions)
 
         rank_expression = self._rank_expression(
             query_text=normalized_query,
