@@ -17,6 +17,10 @@ async def apply_marketplace_search_schema(connection: AsyncConnection) -> None:
     ))
     await connection.execute(text(
         "ALTER TABLE marketplace_vendorlisting "
+        "ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20)"
+    ))
+    await connection.execute(text(
+        "ALTER TABLE marketplace_vendorlisting "
         "ADD COLUMN IF NOT EXISTS search_vector TSVECTOR "
         "GENERATED ALWAYS AS ("
         "to_tsvector('simple', "
@@ -42,6 +46,10 @@ async def apply_marketplace_search_schema(connection: AsyncConnection) -> None:
     await connection.execute(text(
         "CREATE INDEX IF NOT EXISTS ix_marketplace_vendorlisting_average_rating "
         "ON marketplace_vendorlisting (average_rating)"
+    ))
+    await connection.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_marketplace_vendorlisting_approval_status "
+        "ON marketplace_vendorlisting (approval_status)"
     ))
     await connection.execute(text(
         "CREATE INDEX IF NOT EXISTS idx_marketplace_search_vector "

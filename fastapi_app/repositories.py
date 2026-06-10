@@ -16,6 +16,7 @@ class AsyncVendorListingRepository(IVendorListingRepository):
 
     async def get_by_vendor_id(self, vendor_id: uuid.UUID) -> Optional[VendorListing]:
         stmt = select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_id)
+        stmt = stmt.where(VendorListingModel.approval_status == "approved")
         result = await self.session.execute(stmt)
         model = result.scalar_one_or_none()
         return self._to_domain(model) if model else None
@@ -46,6 +47,7 @@ class AsyncVendorListingRepository(IVendorListingRepository):
             average_rating=listing.average_rating,
             total_reviews=listing.total_reviews,
             is_verified=listing.is_verified,
+            approval_status="approved",
             search_rank_score=getattr(listing, "search_rank_score", 0.0),
             created_at=listing.created_at,
             updated_at=listing.updated_at,

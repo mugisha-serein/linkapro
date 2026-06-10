@@ -52,6 +52,9 @@ class MarketplaceCommandHandlers:
         return self._to_listing_dto(saved)
 
     async def post_review(self, cmd: PostReviewCommand) -> ReviewDTO:
+        listing = await self.listing_repo.get_by_vendor_id(cmd.vendor_id)
+        if not listing:
+            raise ValueError("Vendor not found")
         review = Review(
             id=uuid.uuid4(),
             vendor_id=cmd.vendor_id,

@@ -173,6 +173,11 @@ class AdminVendorApproveView(APIView):
             vendor = VendorProfile.objects.get(id=vendor_id)
         except VendorProfile.DoesNotExist:
             return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+        if vendor.status != VendorProfile.Status.PENDING_REVIEW:
+            return Response(
+                {"detail": "Vendor must be submitted for review before approval."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         from django.utils import timezone
 
@@ -181,6 +186,17 @@ class AdminVendorApproveView(APIView):
         vendor.rejected_at = None
         vendor.rejection_reason = None
         vendor.save(update_fields=["status", "approved_at", "rejected_at", "rejection_reason", "updated_at"])
+        from tasks.marketplace_sync import sync_vendor_listing_to_fastapi
+
+        sync_vendor_listing_to_fastapi(
+            str(vendor.id),
+            vendor.business_name,
+            vendor.category,
+            vendor.description,
+            vendor.service_area,
+            None,
+            vendor.status,
+        )
         _audit(request.user, AuditLog.ActionType.APPROVE_VENDOR, "vendor_profile", vendor.id)
         return Response({"id": str(vendor.id), "status": vendor.status})
 
@@ -194,6 +210,11 @@ class AdminVendorRejectView(APIView):
             vendor = VendorProfile.objects.get(id=vendor_id)
         except VendorProfile.DoesNotExist:
             return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+        if vendor.status != VendorProfile.Status.PENDING_REVIEW:
+            return Response(
+                {"detail": "Only vendors waiting for review can be rejected."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         from django.utils import timezone
 
@@ -201,6 +222,9 @@ class AdminVendorRejectView(APIView):
         vendor.rejected_at = timezone.now()
         vendor.rejection_reason = reason
         vendor.save(update_fields=["status", "rejected_at", "rejection_reason", "updated_at"])
+        from tasks.marketplace_sync import delete_vendor_listing_from_fastapi
+
+        delete_vendor_listing_from_fastapi(str(vendor.id))
         _audit(request.user, AuditLog.ActionType.REJECT_VENDOR, "vendor_profile", vendor.id, {"reason": reason})
         return Response({"id": str(vendor.id), "status": vendor.status, "rejection_reason": reason})
 

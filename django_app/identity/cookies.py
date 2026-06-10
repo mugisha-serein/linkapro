@@ -17,4 +17,9 @@ def set_refresh_cookie(response, refresh_token: str) -> None:
 
 def clear_auth_cookies(response) -> None:
     response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/")
+    response.delete_cookie(
+        "refresh_token",
+        path="/",
+        secure=not settings.DEBUG,
+        samesite="None" if not settings.DEBUG else "Lax",
+    )

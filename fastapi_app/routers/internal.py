@@ -23,6 +23,8 @@ def _verify_internal_secret(x_internal_secret: str | None) -> None:
 async def _upsert_listing_payload(payload: dict, session: AsyncSession) -> dict:
     vendor_id_value = payload.get("vendor_id")
     external_id_value = payload.get("external_id")
+    approval_status = str(payload.get("approval_status") or payload.get("status") or "").strip().lower()
+    is_approved = payload.get("is_approved") is True or approval_status == "approved"
 
     if not vendor_id_value and not external_id_value:
         raise HTTPException(
@@ -45,6 +47,13 @@ async def _upsert_listing_payload(payload: dict, session: AsyncSession) -> dict:
         )
         listing = result.scalar_one_or_none()
 
+    if not is_approved:
+        if listing is not None:
+            await session.delete(listing)
+            await session.commit()
+            await get_marketplace_search_cache().invalidate()
+        return {"status": "ok", "listed": False}
+
     listing_data = {
         "business_name": payload.get("business_name") or "",
         "category": payload.get("category") or "other",
@@ -55,6 +64,7 @@ async def _upsert_listing_payload(payload: dict, session: AsyncSession) -> dict:
         "average_rating": payload.get("average_rating", 0.0),
         "total_reviews": payload.get("total_reviews", 0),
         "is_verified": payload.get("is_verified", False),
+        "approval_status": "approved",
         "search_rank_score": payload.get("search_rank_score", 0.0),
     }
 
