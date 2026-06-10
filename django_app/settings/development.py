@@ -5,12 +5,19 @@ DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
 # Database Configuration for Local Development
-# Ensure localhost is the default host for development database
-DATABASES["default"]["HOST"] = os.environ.get("DB_HOST")
-DATABASES["default"]["PORT"] = os.environ.get("DB_PORT")
-DATABASES["default"]["NAME"] = os.environ.get("DB_NAME")
-DATABASES["default"]["USER"] = os.environ.get("DB_USER")
-DATABASES["default"]["PASSWORD"] = os.environ.get("DB_PASSWORD")
+# Uses DATABASE_URL when present. Falls back to DB_* only when all required
+# values are provided. Otherwise base.py uses local SQLite for a no-friction boot.
+if not os.environ.get("DATABASE_URL") and all(
+    os.environ.get(name) for name in ["DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST"]
+):
+    DATABASES["default"] = {
+        "ENGINE": "django.db.backends.postgresql",
+        "HOST": os.environ.get("DB_HOST"),
+        "PORT": os.environ.get("DB_PORT", "5432"),
+        "NAME": os.environ.get("DB_NAME"),
+        "USER": os.environ.get("DB_USER"),
+        "PASSWORD": os.environ.get("DB_PASSWORD"),
+    }
 
 # Redis Configuration for Local Development
 # Override with localhost Redis (production may use managed Redis)

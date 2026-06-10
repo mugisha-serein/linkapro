@@ -8,6 +8,9 @@ ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS")
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured("ALLOWED_HOSTS must be set.")
 
+if not os.environ.get("DATABASE_URL"):
+    raise ImproperlyConfigured("DATABASE_URL must be set.")
+
 DATABASES["default"] = dj_database_url.config(
     conn_max_age=600,
     ssl_require=True
@@ -16,6 +19,8 @@ DATABASES["default"] = dj_database_url.config(
 CORS_ALLOWED_ORIGINS = _csv_env("CORS_ALLOWED_ORIGINS")
 if not CORS_ALLOWED_ORIGINS:
     raise ImproperlyConfigured("CORS_ALLOWED_ORIGINS must be set.")
+
+CSRF_TRUSTED_ORIGINS = _csv_env("CSRF_TRUSTED_ORIGINS") or CORS_ALLOWED_ORIGINS
 
 # Celery settings
 CELERY_BROKER_URL = os.environ.get('REDIS_URL')
@@ -35,6 +40,7 @@ CACHES = {
 
 # Security settings
 SECURE_SSL_REDIRECT = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_HSTS_SECONDS = 31536000

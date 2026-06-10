@@ -16,7 +16,11 @@ def _csv_env(name: str, default: str = "") -> list[str]:
 DEBUG = os.environ.get("DJANGO_DEBUG", "False").lower() == "true"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
-    raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set")
+    settings_module = os.environ.get("DJANGO_SETTINGS_MODULE", "")
+    if settings_module.endswith((".development", ".test")):
+        SECRET_KEY = "insecure-local-development-secret-key"
+    else:
+        raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set")
 
 ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS")
 
@@ -90,7 +94,7 @@ WSGI_APPLICATION = "django_app.wsgi.application"
 
 DATABASES = {
     "default": dj_database_url.config(
-        default=os.getenv("DATABASE_URL")
+        default=os.getenv("DATABASE_URL") or f"sqlite:///{BASE_DIR / 'db.sqlite3'}"
     )
 }
 
