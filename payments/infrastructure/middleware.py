@@ -37,6 +37,13 @@ class HmacRequestValidator:
            "/.well-known/payment-public-key" in request.path:
             return self.get_response(request)
 
+        # Dashboard/browser payment requests are protected by JWT auth in DRF.
+        # HMAC is reserved for external API-key integrations; requiring it here
+        # makes normal authenticated frontend requests fail before they reach DRF.
+        authorization = request.headers.get("Authorization", "")
+        if authorization.startswith("Bearer "):
+            return self.get_response(request)
+
         # Validate request
         error_response = self._validate_request(request)
         if error_response:
