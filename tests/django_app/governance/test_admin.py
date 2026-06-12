@@ -104,6 +104,71 @@ class TestVendorApprovalAdmin:
         assert calls[0][0][0] == str(vendor.id)
         assert calls[0][0][-1] == "approved"
 
+    def test_admin_api_lists_vendors_by_status(self, admin_client):
+        admin_user = User.objects.create_superuser("admin@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+
+        for status in ["draft", "pending_review", "approved", "rejected", "suspended"]:
+            vendor_user = User.objects.create_user(email=f"{status}@t.com", password="p", role="vendor")
+            VendorProfile.objects.create(
+                user=vendor_user,
+                business_name=f"{status} vendor",
+                category="photography",
+                description="d",
+                service_area="a",
+                contact_email=f"{status}@example.com",
+                contact_phone="1",
+                status=status,
+            )
+
+        response = api_client.get(reverse("admin-vendors"), {"status": "suspended"})
+
+        assert response.status_code == 200
+        assert response.data["count"] == 1
+        assert response.data["results"][0]["status"] == "suspended"
+        assert response.data["status_counts"]["approved"] == 1
+
+    def test_admin_api_suspend_and_reinstate_vendor_updates_marketplace(self, admin_client, monkeypatch):
+        deleted = []
+        synced = []
+        monkeypatch.setattr(
+            "tasks.marketplace_sync.delete_vendor_listing_from_fastapi",
+            lambda vendor_id: deleted.append(vendor_id) or {"status": "ok"},
+        )
+        monkeypatch.setattr(
+            "tasks.marketplace_sync.sync_vendor_listing_to_fastapi",
+            lambda *args, **kwargs: synced.append((args, kwargs)) or {"status": "ok"},
+        )
+        admin_user = User.objects.create_superuser("admin@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(email="approved@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Approved",
+            category="photography",
+            description="d",
+            service_area="a",
+            contact_email="approved@example.com",
+            contact_phone="1",
+            status="approved",
+        )
+
+        suspend_response = api_client.post(reverse("admin-vendor-suspend", args=[vendor.id]))
+        vendor.refresh_from_db()
+
+        assert suspend_response.status_code == 200
+        assert vendor.status == "suspended"
+        assert deleted == [str(vendor.id)]
+
+        reinstate_response = api_client.post(reverse("admin-vendor-reinstate", args=[vendor.id]))
+        vendor.refresh_from_db()
+
+        assert reinstate_response.status_code == 200
+        assert vendor.status == "approved"
+        assert synced
+
 
 class TestUserAdminActions:
     def test_ban_user_action(self, admin_client):

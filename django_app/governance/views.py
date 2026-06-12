@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -10,6 +12,9 @@ from .models import AuditLog, ContentFlag
 from .serializers import FlagContentSerializer
 from .services import get_command_handlers, get_query_handlers
 from application.governance.commands import FlagContentCommand
+
+logger = logging.getLogger(__name__)
+VENDOR_ADMIN_STATUSES = {choice[0] for choice in VendorProfile.Status.choices}
 
 
 class FlagContentCreateView(APIView):
@@ -52,6 +57,7 @@ class AdminMetricsView(APIView):
                     "fraud_signals": 0,
                     "total_events": latest.total_events,
                     "total_vendors": latest.total_vendors,
+                    "vendor_status_counts": _vendor_status_counts(),
                     "revenue": "0",
                     "pending_vendor_approvals": latest.pending_vendor_approvals,
                 }
@@ -61,6 +67,7 @@ class AdminMetricsView(APIView):
             {
                 "total_users": User.objects.count(),
                 "active_vendors": VendorProfile.objects.filter(status=VendorProfile.Status.APPROVED).count(),
+                "vendor_status_counts": _vendor_status_counts(),
                 "payments_today": 0,
                 "fraud_signals": 0,
                 "total_events": Event.objects.count(),
@@ -84,6 +91,32 @@ def _serialize_user(user: User) -> dict:
         "is_verified": user.is_verified,
         "created_at": user.created_at.isoformat(),
         "updated_at": user.updated_at.isoformat(),
+    }
+
+
+def _serialize_vendor(vendor: VendorProfile) -> dict:
+    return {
+        "id": str(vendor.id),
+        "user_id": str(vendor.user_id),
+        "business_name": vendor.business_name,
+        "category": vendor.category,
+        "description": vendor.description,
+        "service_area": vendor.service_area,
+        "contact_email": vendor.contact_email,
+        "contact_phone": vendor.contact_phone,
+        "website": vendor.website,
+        "status": vendor.status,
+        "submitted_at": vendor.submitted_at.isoformat() if vendor.submitted_at else None,
+        "approved_at": vendor.approved_at.isoformat() if vendor.approved_at else None,
+        "rejected_at": vendor.rejected_at.isoformat() if vendor.rejected_at else None,
+        "rejection_reason": vendor.rejection_reason,
+    }
+
+
+def _vendor_status_counts() -> dict:
+    return {
+        status_value: VendorProfile.objects.filter(status=status_value).count()
+        for status_value in VENDOR_ADMIN_STATUSES
     }
 
 
@@ -123,6 +156,32 @@ def _audit(admin, action_type: str, target_type: str, target_id, details: dict |
     )
 
 
+def _sync_approved_vendor(vendor: VendorProfile) -> None:
+    from tasks.marketplace_sync import sync_vendor_listing_to_fastapi
+
+    try:
+        sync_vendor_listing_to_fastapi(
+            str(vendor.id),
+            vendor.business_name,
+            vendor.category,
+            vendor.description,
+            vendor.service_area,
+            None,
+            vendor.status,
+        )
+    except Exception:
+        logger.exception("Approved vendor marketplace sync failed.", extra={"vendor_id": str(vendor.id)})
+
+
+def _delete_vendor_listing(vendor: VendorProfile) -> None:
+    from tasks.marketplace_sync import delete_vendor_listing_from_fastapi
+
+    try:
+        delete_vendor_listing_from_fastapi(str(vendor.id))
+    except Exception:
+        logger.exception("Vendor marketplace removal failed.", extra={"vendor_id": str(vendor.id)})
+
+
 class AdminUserListView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 
@@ -133,6 +192,28 @@ class AdminUserListView(APIView):
             users = users.filter(role=role)
 
         return Response({"results": [_serialize_user(user) for user in users], "count": users.count()})
+
+
+class AdminVendorListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        vendors = VendorProfile.objects.select_related("user").order_by("-updated_at", "-created_at")
+        status_filter = request.query_params.get("status")
+        if status_filter and status_filter != "all":
+            if status_filter not in VENDOR_ADMIN_STATUSES:
+                return Response({"detail": "Invalid vendor status."}, status=status.HTTP_400_BAD_REQUEST)
+            vendors = vendors.filter(status=status_filter)
+
+        search = (request.query_params.get("search") or "").strip()
+        if search:
+            vendors = vendors.filter(business_name__icontains=search)
+
+        return Response({
+            "results": [_serialize_vendor(vendor) for vendor in vendors],
+            "count": vendors.count(),
+            "status_counts": _vendor_status_counts(),
+        })
 
 
 class AdminUserBanView(APIView):
@@ -186,19 +267,9 @@ class AdminVendorApproveView(APIView):
         vendor.rejected_at = None
         vendor.rejection_reason = None
         vendor.save(update_fields=["status", "approved_at", "rejected_at", "rejection_reason", "updated_at"])
-        from tasks.marketplace_sync import sync_vendor_listing_to_fastapi
-
-        sync_vendor_listing_to_fastapi(
-            str(vendor.id),
-            vendor.business_name,
-            vendor.category,
-            vendor.description,
-            vendor.service_area,
-            None,
-            vendor.status,
-        )
+        _sync_approved_vendor(vendor)
         _audit(request.user, AuditLog.ActionType.APPROVE_VENDOR, "vendor_profile", vendor.id)
-        return Response({"id": str(vendor.id), "status": vendor.status})
+        return Response(_serialize_vendor(vendor))
 
 
 class AdminVendorRejectView(APIView):
@@ -222,11 +293,54 @@ class AdminVendorRejectView(APIView):
         vendor.rejected_at = timezone.now()
         vendor.rejection_reason = reason
         vendor.save(update_fields=["status", "rejected_at", "rejection_reason", "updated_at"])
-        from tasks.marketplace_sync import delete_vendor_listing_from_fastapi
-
-        delete_vendor_listing_from_fastapi(str(vendor.id))
+        _delete_vendor_listing(vendor)
         _audit(request.user, AuditLog.ActionType.REJECT_VENDOR, "vendor_profile", vendor.id, {"reason": reason})
-        return Response({"id": str(vendor.id), "status": vendor.status, "rejection_reason": reason})
+        return Response(_serialize_vendor(vendor))
+
+
+class AdminVendorSuspendView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def post(self, request, vendor_id):
+        try:
+            vendor = VendorProfile.objects.get(id=vendor_id)
+        except VendorProfile.DoesNotExist:
+            return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+        if vendor.status != VendorProfile.Status.APPROVED:
+            return Response(
+                {"detail": "Only approved vendors can be suspended."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        vendor.status = VendorProfile.Status.SUSPENDED
+        vendor.save(update_fields=["status", "updated_at"])
+        _delete_vendor_listing(vendor)
+        _audit(request.user, AuditLog.ActionType.SUSPEND_VENDOR, "vendor_profile", vendor.id)
+        return Response(_serialize_vendor(vendor))
+
+
+class AdminVendorReinstateView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def post(self, request, vendor_id):
+        try:
+            vendor = VendorProfile.objects.get(id=vendor_id)
+        except VendorProfile.DoesNotExist:
+            return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+        if vendor.status != VendorProfile.Status.SUSPENDED:
+            return Response(
+                {"detail": "Only suspended vendors can be reinstated."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.utils import timezone
+
+        vendor.status = VendorProfile.Status.APPROVED
+        vendor.approved_at = timezone.now()
+        vendor.save(update_fields=["status", "approved_at", "updated_at"])
+        _sync_approved_vendor(vendor)
+        _audit(request.user, AuditLog.ActionType.APPROVE_VENDOR, "vendor_profile", vendor.id, {"from": "suspended"})
+        return Response(_serialize_vendor(vendor))
 
 
 class AdminFlagListView(APIView):
