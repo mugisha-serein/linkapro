@@ -70,6 +70,8 @@ class EventCommandHandlers:
             raise ValueError("Event not found")
         event.update_details(
             name=cmd.name,
+            event_type=EventType(cmd.event_type) if cmd.event_type is not None else None,
+            event_date=cmd.event_date,
             venue=cmd.venue,
             expected_guests=cmd.expected_guests,
             total_budget=cmd.total_budget,

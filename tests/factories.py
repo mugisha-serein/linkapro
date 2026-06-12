@@ -3,7 +3,15 @@ from datetime import date
 import uuid
 
 from django_app.identity.models import User
-from django_app.events.models import Event, Checklist, ChecklistItem, BudgetLine, GuestEntry, TimelineBlock
+from django_app.events.models import (
+    Event,
+    EventVendorAssignment,
+    Checklist,
+    ChecklistItem,
+    BudgetLine,
+    GuestEntry,
+    TimelineBlock,
+)
 from django_app.vendors.models import VendorProfile, PortfolioImage, ServicePackage, Inquiry
 from django_app.documents.models import ExportJob
 
@@ -108,6 +116,18 @@ def create_vendor_profile(**kwargs):
     }
     defaults.update(kwargs)
     return VendorProfile.objects.create(**defaults)
+
+
+def create_event_vendor_assignment(**kwargs):
+    if "event" not in kwargs:
+        kwargs["event"] = create_event()
+    if "vendor" not in kwargs:
+        kwargs["vendor"] = create_vendor_profile()
+    defaults = {
+        "status": "shortlisted",
+    }
+    defaults.update(kwargs)
+    return EventVendorAssignment.objects.create(**defaults)
 
 
 def create_portfolio_image(**kwargs):

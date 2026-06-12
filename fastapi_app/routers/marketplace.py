@@ -1,11 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-import uuid
 
 from application.marketplace.search_service import MarketplaceSearchCriteria, MarketplaceSearchService
 from application.marketplace.queries import GetVendorListingQuery, GetVendorReviewsQuery
-from application.marketplace.commands import PostReviewCommand
 from fastapi_app.dependencies import (
-    get_command_handlers,
     get_marketplace_client_identifier,
     get_marketplace_search_params,
     get_marketplace_search_service,
@@ -63,18 +60,8 @@ async def get_vendor_reviews(
 async def post_review(
     vendor_id: str,
     request: PostReviewRequest,
-    handlers = Depends(get_command_handlers),
 ):
-    # In real app, author_user_id would come from JWT token
-    # For demo, we'll require it in request
-    cmd = PostReviewCommand(
-        vendor_id=uuid.UUID(vendor_id),
-        author_user_id=uuid.UUID(request.author_user_id),
-        rating=request.rating,
-        comment=request.comment,
+    raise HTTPException(
+        status_code=403,
+        detail="Review creation requires authenticated Django user context.",
     )
-    try:
-        review = await handlers.post_review(cmd)
-        return ReviewResponse.from_dto(review)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))

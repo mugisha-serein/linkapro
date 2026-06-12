@@ -64,10 +64,21 @@ class Event:
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
-    def update_details(self, name: Optional[str] = None, venue: Optional[str] = None, 
-                       expected_guests: Optional[int] = None, total_budget: Optional[float] = None) -> None:
+    def update_details(
+        self,
+        name: Optional[str] = None,
+        event_type: Optional[EventType] = None,
+        event_date: Optional[date] = None,
+        venue: Optional[str] = None,
+        expected_guests: Optional[int] = None,
+        total_budget: Optional[float] = None,
+    ) -> None:
         if name is not None:
             self.name = name
+        if event_type is not None:
+            self.event_type = event_type
+        if event_date is not None:
+            self.event_date = event_date
         if venue is not None:
             self.venue = venue
         if expected_guests is not None:

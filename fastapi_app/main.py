@@ -2,6 +2,7 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from fastapi_app.config import get_cors_origins, require_bool
 from fastapi_app.database import Base, engine
@@ -28,9 +29,15 @@ def should_bootstrap_schema() -> bool:
 
 @app.on_event("startup")
 async def ensure_database_schema():
-    if not should_bootstrap_schema():
-        return
-
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await apply_marketplace_search_schema(conn)
+        if should_bootstrap_schema():
+            await conn.run_sync(Base.metadata.create_all)
+            await apply_marketplace_search_schema(conn)
+            return
+
+        result = await conn.execute(text("SELECT to_regclass('public.marketplace_vendorlisting')"))
+        if result.scalar_one() is None:
+            raise RuntimeError(
+                "FastAPI marketplace schema is missing. Run the marketplace database "
+                "migration/bootstrap step before starting FastAPI in production."
+            )
