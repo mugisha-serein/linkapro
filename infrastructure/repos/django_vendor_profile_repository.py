@@ -78,7 +78,6 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
                 "Failed to sync vendor profile to FastAPI marketplace",
                 extra={"vendor_id": str(obj.id)},
             )
-            raise
 
     def _delete_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
         from tasks.marketplace_sync import delete_vendor_listing_from_fastapi
@@ -90,7 +89,6 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
                 "Failed to delete vendor projection from FastAPI marketplace",
                 extra={"vendor_id": str(vendor_id)},
             )
-            raise
 
     def _to_domain(self, model: DjangoProfile) -> DomainProfile:
         return DomainProfile(

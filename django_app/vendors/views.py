@@ -116,6 +116,7 @@ class VendorProfileView(APIView):
     def _serialize_profile(self, dto: VendorProfileDTO) -> dict:
         return {
             "id": str(dto.id),
+            "user_id": str(dto.user_id),
             "business_name": dto.business_name,
             "category": dto.category,
             "description": dto.description,
@@ -605,6 +606,25 @@ class AdminPendingVendorListView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
-        query_handlers = get_query_handlers()
-        pending = query_handlers.list_pending_approvals()
-        return Response([VendorProfileView()._serialize_profile(profile) for profile in pending])
+        from django_app.vendors.models import VendorProfile
+
+        pending = VendorProfile.objects.filter(status=VendorProfile.Status.PENDING_REVIEW).select_related("user")
+        return Response([
+            {
+                "id": str(profile.id),
+                "user_id": str(profile.user_id),
+                "business_name": profile.business_name,
+                "category": profile.category,
+                "description": profile.description,
+                "service_area": profile.service_area,
+                "contact_email": profile.contact_email,
+                "contact_phone": profile.contact_phone,
+                "website": profile.website,
+                "status": profile.status,
+                "submitted_at": profile.submitted_at.isoformat() if profile.submitted_at else None,
+                "approved_at": profile.approved_at.isoformat() if profile.approved_at else None,
+                "rejected_at": profile.rejected_at.isoformat() if profile.rejected_at else None,
+                "rejection_reason": profile.rejection_reason,
+            }
+            for profile in pending
+        ])
