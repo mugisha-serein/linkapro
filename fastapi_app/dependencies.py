@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 
 from fastapi import Depends
@@ -23,19 +24,32 @@ from application.marketplace.handlers import (
 from infrastructure.adapters.fastapi_event_dispatcher import FastAPIEventDispatcher
 from fastapi_app.schemas import MarketplaceSearchRequest
 
+logger = logging.getLogger(__name__)
+
 
 @lru_cache(maxsize=1)
-def get_redis_client() -> Redis:
-    redis_url = require_env("REDIS_URL")
+def get_redis_client() -> Redis | None:
+    try:
+        redis_url = require_env("REDIS_URL")
+    except RuntimeError:
+        logger.warning("REDIS_URL is not configured; marketplace search will skip Redis cache and rate limiting.")
+        return None
     return Redis.from_url(redis_url, decode_responses=True)
 
 
-def get_marketplace_search_cache() -> MarketplaceSearchCache:
-    ttl_seconds = require_int("FASTAPI_MARKETPLACE_SEARCH_CACHE_TTL_SECONDS", minimum=60, maximum=300)
-    rate_limit_requests = require_int("FASTAPI_MARKETPLACE_SEARCH_RATE_LIMIT_REQUESTS", minimum=1)
-    rate_limit_window_seconds = require_int("FASTAPI_MARKETPLACE_SEARCH_RATE_LIMIT_WINDOW_SECONDS", minimum=1)
+def get_marketplace_search_cache() -> MarketplaceSearchCache | None:
+    redis_client = get_redis_client()
+    if redis_client is None:
+        return None
+    try:
+        ttl_seconds = require_int("FASTAPI_MARKETPLACE_SEARCH_CACHE_TTL_SECONDS", minimum=60, maximum=300)
+        rate_limit_requests = require_int("FASTAPI_MARKETPLACE_SEARCH_RATE_LIMIT_REQUESTS", minimum=1)
+        rate_limit_window_seconds = require_int("FASTAPI_MARKETPLACE_SEARCH_RATE_LIMIT_WINDOW_SECONDS", minimum=1)
+    except RuntimeError:
+        logger.warning("Marketplace Redis cache settings are incomplete; search will skip Redis cache and rate limiting.")
+        return None
     return MarketplaceSearchCache(
-        redis_client=get_redis_client(),
+        redis_client=redis_client,
         ttl_seconds=ttl_seconds,
         rate_limit_requests=rate_limit_requests,
         rate_limit_window_seconds=rate_limit_window_seconds,
