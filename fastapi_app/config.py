@@ -1,10 +1,22 @@
 import os
+import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / ".env")
+logger = logging.getLogger(__name__)
+
+LOCAL_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+PRODUCTION_CORS_ORIGINS = [
+    "https://linkapro.vercel.app",
+    "https://linkapro-frontend.vercel.app",
+]
 
 
 def require_env(name: str) -> str:
@@ -37,5 +49,33 @@ def require_int(name: str, *, minimum: int | None = None, maximum: int | None = 
 
 
 def get_cors_origins() -> list[str]:
-    raw = require_env("FASTAPI_CORS_ORIGINS")
-    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    raw = os.getenv("FASTAPI_CORS_ORIGINS", "")
+    env_name = os.getenv("FASTAPI_ENV", "development").strip().lower()
+    configured = [_normalize_origin(origin) for origin in raw.split(",")]
+    origins = [origin for origin in configured if origin]
+
+    if env_name == "production":
+        missing_required = [origin for origin in PRODUCTION_CORS_ORIGINS if origin not in origins]
+        if missing_required:
+            message = (
+                "FASTAPI_CORS_ORIGINS must explicitly include production frontend origins: "
+                + ", ".join(PRODUCTION_CORS_ORIGINS)
+            )
+            logger.error(message, extra={"missing_origins": missing_required})
+            raise RuntimeError(message)
+    else:
+        origins.extend(origin for origin in LOCAL_CORS_ORIGINS if origin not in origins)
+        origins.extend(origin for origin in PRODUCTION_CORS_ORIGINS if origin not in origins)
+
+    return list(dict.fromkeys(origins))
+
+
+def _normalize_origin(value: str) -> str | None:
+    origin = (value or "").strip().rstrip("/")
+    if not origin:
+        return None
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        logger.warning("Ignoring invalid CORS origin.", extra={"origin": value})
+        return None
+    return origin

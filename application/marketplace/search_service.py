@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Optional
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -132,7 +133,7 @@ class MarketplaceSearchCache:
 
 
 class MarketplaceSearchService:
-    def __init__(self, session: AsyncSession, cache: MarketplaceSearchCache) -> None:
+    def __init__(self, session: AsyncSession, cache: MarketplaceSearchCache | None) -> None:
         self.session = session
         self.cache = cache
 
@@ -156,31 +157,40 @@ class MarketplaceSearchService:
                 "max_price": normalized.max_price,
             },
         )
-        await self.cache.enforce_rate_limit(client_id)
-
-        cache_version = await self.cache.get_version()
-        cache_key = self.cache.build_cache_key(normalized, cache_version)
-        cached = await self.cache.get_cached_result(cache_key)
-        if cached is not None:
-            elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
-            logger.info(
-                "Marketplace search completed",
-                extra={
-                    "query": normalized.query,
-                    "category": normalized.category,
-                    "location": normalized.location,
-                    "page": normalized.page,
-                    "page_size": normalized.page_size,
-                    "cache_hit": True,
-                    "result_count": len(cached.items),
-                    "elapsed_ms": elapsed_ms,
-                    "ranking_method": self._ranking_method(normalized),
-                },
-            )
-            return self._payload_to_result(cached)
+        cache_key = None
+        if self.cache is not None:
+            try:
+                await self.cache.enforce_rate_limit(client_id)
+                cache_version = await self.cache.get_version()
+                cache_key = self.cache.build_cache_key(normalized, cache_version)
+                cached = await self.cache.get_cached_result(cache_key)
+                if cached is not None:
+                    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+                    logger.info(
+                        "Marketplace search completed",
+                        extra={
+                            "query": normalized.query,
+                            "category": normalized.category,
+                            "location": normalized.location,
+                            "page": normalized.page,
+                            "page_size": normalized.page_size,
+                            "cache_hit": True,
+                            "result_count": len(cached.items),
+                            "elapsed_ms": elapsed_ms,
+                            "ranking_method": self._ranking_method(normalized),
+                        },
+                    )
+                    return self._payload_to_result(cached)
+            except RedisError:
+                logger.exception("Redis unavailable for marketplace search; continuing with database query.")
+                cache_key = None
 
         result = await self._execute_search(normalized)
-        await self.cache.set_cached_result(cache_key, result)
+        if self.cache is not None and cache_key is not None:
+            try:
+                await self.cache.set_cached_result(cache_key, result)
+            except RedisError:
+                logger.exception("Failed to cache marketplace search result.")
 
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
         logger.info(

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import SQLAlchemyError
 
 from application.marketplace.search_service import MarketplaceSearchCriteria, MarketplaceSearchService
 from application.marketplace.queries import GetVendorListingQuery, GetVendorReviewsQuery
@@ -25,6 +26,11 @@ async def search_vendors(
         return SearchResponse.from_dto(result)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Marketplace search is temporarily unavailable.",
+        ) from exc
     except RuntimeError as exc:
         message = str(exc).lower()
         if "rate limit" in message:
