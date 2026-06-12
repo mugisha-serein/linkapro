@@ -145,6 +145,28 @@ class TestIdentityViews:
         assert response.status_code == 200
         assert response.data["email"] == "profile@example.com"
         assert response.data["role"] == "planner"
+        assert response.data["requires_password_setup"] is False
+
+    def test_profile_update_preserves_password_setup_state(self):
+        user = DjangoUser.objects.create_user(
+            email="vendor-profile@example.com",
+            password="StrongPass1",
+            first_name="Vendor",
+            last_name="User",
+            role="vendor",
+        )
+        self.client.force_authenticate(user=user)
+
+        response = self.client.patch(
+            reverse("profile"),
+            {"first_name": "Updated", "last_name": "Vendor"},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        assert response.data["first_name"] == "Updated"
+        assert response.data["requires_password_setup"] is False
+        assert response.data["has_password"] is True
 
     def test_refresh_token_returns_access_token(self):
         user = DjangoUser.objects.create_user(

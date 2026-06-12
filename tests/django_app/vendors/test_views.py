@@ -6,7 +6,6 @@ from rest_framework.test import APIClient
 
 from django_app.identity.models import User
 from django_app.vendors.models import VendorProfile as DjangoProfile
-from domain.vendors.entities import VendorStatus
 
 pytestmark = pytest.mark.django_db
 
@@ -51,7 +50,7 @@ class TestVendorProfileViews:
             user=self.user,
             business_name="First",
             category="photography",
-            description="desc",
+            description="A complete vendor description.",
             service_area="area",
             contact_email="first@example.com",
             contact_phone="123",
@@ -74,7 +73,7 @@ class TestVendorProfileViews:
             user=self.user,
             business_name="Test",
             category="photography",
-            description="desc",
+            description="A complete vendor description.",
             service_area="area",
             contact_email="test@example.com",
             contact_phone="123",
@@ -86,6 +85,157 @@ class TestVendorProfileViews:
         profile.refresh_from_db()
         assert profile.status == "pending_review"
         assert profile.submitted_at is not None
+        assert response.data["status"] == "pending_review"
+        assert response.data["business_name"] == "Test"
+
+    def test_incomplete_submit_remains_draft(self):
+        profile = DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="Too short",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="draft",
+        )
+
+        response = self.client.post(reverse("vendor-submit"))
+
+        assert response.status_code == 403
+        assert response.data["code"] == "vendor_profile_incomplete"
+        assert "description" in response.data["field_errors"]
+        profile.refresh_from_db()
+        assert profile.status == "draft"
+
+    def test_vendor_cannot_self_approve_from_profile_update(self):
+        profile = DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="draft",
+        )
+
+        response = self.client.patch(
+            reverse("vendor-profile"),
+            {"status": "approved", "business_name": "Updated"},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        profile.refresh_from_db()
+        assert profile.status == "draft"
+        assert profile.business_name == "Updated"
+
+    def test_draft_vendor_cannot_access_dashboard_summary(self):
+        DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="draft",
+        )
+
+        response = self.client.get(reverse("vendor-dashboard-summary"))
+
+        assert response.status_code == 403
+        assert response.data["code"] == "vendor_profile_incomplete"
+        assert response.data["redirect_to"] == "/vendor/profile"
+
+    def test_pending_vendor_can_access_dashboard_summary(self):
+        DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="pending_review",
+        )
+
+        response = self.client.get(reverse("vendor-dashboard-summary"))
+
+        assert response.status_code == 200
+        assert response.data["account_status"] == "pending_review"
+
+    def test_rejected_vendor_cannot_access_dashboard_summary_until_resubmitted(self):
+        DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="rejected",
+        )
+
+        response = self.client.get(reverse("vendor-dashboard-summary"))
+
+        assert response.status_code == 403
+        assert response.data["code"] == "vendor_profile_incomplete"
+
+    def test_rejected_vendor_can_resubmit_complete_profile(self):
+        profile = DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="rejected",
+            rejection_reason="Needs details",
+        )
+
+        response = self.client.post(reverse("vendor-submit"))
+
+        assert response.status_code == 200
+        profile.refresh_from_db()
+        assert profile.status == "pending_review"
+
+    def test_suspended_vendor_cannot_access_dashboard_summary(self):
+        DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="suspended",
+        )
+
+        response = self.client.get(reverse("vendor-dashboard-summary"))
+
+        assert response.status_code == 403
+        assert response.data["code"] == "vendor_suspended"
+
+    def test_suspended_vendor_cannot_submit_profile_for_review(self):
+        profile = DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="suspended",
+        )
+
+        response = self.client.post(reverse("vendor-submit"))
+
+        assert response.status_code == 400
+        profile.refresh_from_db()
+        assert profile.status == "suspended"
 
 
 class TestPortfolioImageViews:
@@ -104,10 +254,11 @@ class TestPortfolioImageViews:
             user=self.user,
             business_name="Test",
             category="photography",
-            description="desc",
+            description="A complete vendor description.",
             service_area="area",
             contact_email="test@example.com",
             contact_phone="123",
+            status="pending_review",
         )
 
     def test_list_images_empty(self):

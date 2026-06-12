@@ -41,6 +41,34 @@ class VendorProfile(models.Model):
     def __str__(self):
         return self.business_name
 
+    @classmethod
+    def required_profile_fields(cls) -> tuple[str, ...]:
+        return (
+            "business_name",
+            "category",
+            "description",
+            "service_area",
+            "contact_email",
+            "contact_phone",
+        )
+
+    def get_profile_completion_errors(self) -> dict[str, list[str]]:
+        errors: dict[str, list[str]] = {}
+        for field_name in self.required_profile_fields():
+            value = getattr(self, field_name, None)
+            if value is None or not str(value).strip():
+                errors[field_name] = ["This field is required."]
+        if self.description and len(self.description.strip()) < 20:
+            errors["description"] = ["Use at least 20 characters for your description."]
+        return errors
+
+    @property
+    def is_profile_complete(self) -> bool:
+        return not self.get_profile_completion_errors()
+
+    def can_access_vendor_workspace(self) -> bool:
+        return self.status != self.Status.DRAFT and self.is_profile_complete
+
 
 class PortfolioImage(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
