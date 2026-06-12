@@ -3,12 +3,14 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django_app.common.permissions import IsPlanner
-from .models import GuestEntry, TimelineBlock
+from django_app.vendors.models import VendorProfile
+from .models import Event, EventVendorAssignment, GuestEntry, TimelineBlock
 
 from .serializers import (
     CreateEventSerializer, UpdateEventSerializer, CreateChecklistSerializer,
     AddChecklistItemSerializer, UpdateChecklistItemSerializer, AddBudgetLineSerializer,
-    AddGuestSerializer, UpdateGuestSerializer, AddTimelineBlockSerializer, UpdateTimelineBlockSerializer
+    AddGuestSerializer, UpdateGuestSerializer, AddTimelineBlockSerializer, UpdateTimelineBlockSerializer,
+    AddEventVendorAssignmentSerializer, UpdateEventVendorAssignmentSerializer,
 )
 from .services import get_command_handlers, get_query_handlers
 from application.events.commands import (
@@ -318,6 +320,78 @@ class TimelineBlockDetailView(APIView):
         return Response(serialize_timeline_block_dto(block))
 
 
+class EventVendorAssignmentListCreateView(APIView):
+    permission_classes = [IsAuthenticated, IsPlanner]
+
+    def get(self, request, event_id):
+        event = get_planner_event(event_id, request.user)
+        if not event:
+            return Response({"error": "Not found"}, status=404)
+
+        assignments = EventVendorAssignment.objects.filter(event=event).select_related("vendor").order_by("-created_at")
+        return Response([serialize_event_vendor_assignment(assignment) for assignment in assignments])
+
+    def post(self, request, event_id):
+        event = get_planner_event(event_id, request.user)
+        if not event:
+            return Response({"error": "Not found"}, status=404)
+
+        serializer = AddEventVendorAssignmentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        vendor = VendorProfile.objects.filter(id=serializer.validated_data["vendor_id"]).first()
+        if not vendor:
+            return Response({"vendor_id": ["Vendor not found."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        assignment = EventVendorAssignment.objects.filter(event=event, vendor=vendor).select_related("vendor").first()
+        if assignment:
+            return Response(serialize_event_vendor_assignment(assignment))
+
+        assignment = EventVendorAssignment.objects.create(
+            event=event,
+            vendor=vendor,
+            notes=serializer.validated_data.get("notes"),
+        )
+        assignment.vendor = vendor
+        return Response(serialize_event_vendor_assignment(assignment), status=status.HTTP_201_CREATED)
+
+
+class EventVendorAssignmentDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsPlanner]
+
+    def patch(self, request, event_id, assignment_id):
+        assignment = get_planner_event_vendor_assignment(event_id, assignment_id, request.user)
+        if not assignment:
+            return Response({"error": "Not found"}, status=404)
+
+        serializer = UpdateEventVendorAssignmentSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        for field in ("status", "notes"):
+            if field in serializer.validated_data:
+                setattr(assignment, field, serializer.validated_data[field])
+        assignment.save()
+        return Response(serialize_event_vendor_assignment(assignment))
+
+    def delete(self, request, event_id, assignment_id):
+        assignment = get_planner_event_vendor_assignment(event_id, assignment_id, request.user)
+        if not assignment:
+            return Response({"error": "Not found"}, status=404)
+
+        assignment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def get_planner_event(event_id, user):
+    return Event.objects.filter(id=event_id, planner=user).first()
+
+
+def get_planner_event_vendor_assignment(event_id, assignment_id, user):
+    return (
+        EventVendorAssignment.objects.filter(id=assignment_id, event_id=event_id, event__planner=user)
+        .select_related("vendor")
+        .first()
+    )
+
+
 def serialize_event_dto(dto):
     return {
         "id": str(dto.id),
@@ -330,7 +404,7 @@ def serialize_event_dto(dto):
         "total_budget": str(dto.total_budget),
         "created_at": dto.created_at.isoformat(),
         "updated_at": dto.updated_at.isoformat(),
-        "vendors_count": getattr(dto, "vendors_count", 0),
+        "vendors_count": EventVendorAssignment.objects.filter(event_id=dto.id).count(),
         "progress_percent": getattr(dto, "progress_percent", 0.0),
     }
 
@@ -340,8 +414,8 @@ def serialize_checklist_dto(dto: ChecklistDTO):
         "id": str(dto.id),
         "event_id": str(dto.event_id),
         "name": dto.name,
-        "created_at": dto.created_at.isoformat() if dto.created_at else None,
-        "updated_at": dto.updated_at.isoformat() if dto.updated_at else None,
+        "created_at": getattr(dto, "created_at", None).isoformat() if getattr(dto, "created_at", None) else None,
+        "updated_at": getattr(dto, "updated_at", None).isoformat() if getattr(dto, "updated_at", None) else None,
     }
 
 
@@ -368,8 +442,8 @@ def serialize_budget_line_dto(dto):
         "estimated_cost": str(dto.estimated_cost),
         "actual_cost": str(dto.actual_cost) if dto.actual_cost is not None else None,
         "notes": dto.notes,
-        "created_at": dto.created_at.isoformat() if dto.created_at else None,
-        "updated_at": dto.updated_at.isoformat() if dto.updated_at else None,
+        "created_at": getattr(dto, "created_at", None).isoformat() if getattr(dto, "created_at", None) else None,
+        "updated_at": getattr(dto, "updated_at", None).isoformat() if getattr(dto, "updated_at", None) else None,
     }
 
 
@@ -385,8 +459,8 @@ def serialize_guest_dto(dto: GuestEntryDTO):
         "plus_one": dto.plus_one,
         "table_assignment": dto.table_assignment,
         "notes": dto.notes,
-        "created_at": dto.created_at.isoformat() if dto.created_at else None,
-        "updated_at": dto.updated_at.isoformat() if dto.updated_at else None,
+        "created_at": getattr(dto, "created_at", None).isoformat() if getattr(dto, "created_at", None) else None,
+        "updated_at": getattr(dto, "updated_at", None).isoformat() if getattr(dto, "updated_at", None) else None,
     }
 
 
@@ -400,9 +474,26 @@ def serialize_timeline_block_dto(dto):
         "description": dto.description,
         "location": dto.location,
         "order": dto.order,
-        "created_at": dto.created_at.isoformat() if dto.created_at else None,
-        "updated_at": dto.updated_at.isoformat() if dto.updated_at else None,
+        "created_at": getattr(dto, "created_at", None).isoformat() if getattr(dto, "created_at", None) else None,
+        "updated_at": getattr(dto, "updated_at", None).isoformat() if getattr(dto, "updated_at", None) else None,
     }
+
+
+def serialize_event_vendor_assignment(assignment: EventVendorAssignment):
+    return {
+        "id": str(assignment.id),
+        "event_id": str(assignment.event_id),
+        "vendor_id": str(assignment.vendor_id),
+        "business_name": assignment.vendor.business_name,
+        "vendor_name": assignment.vendor.business_name,
+        "category": assignment.vendor.category,
+        "service_area": assignment.vendor.service_area,
+        "status": assignment.status,
+        "notes": assignment.notes,
+        "created_at": assignment.created_at.isoformat() if assignment.created_at else None,
+        "updated_at": assignment.updated_at.isoformat() if assignment.updated_at else None,
+    }
+
 
 class DashboardSummaryView(APIView):
     permission_classes = [IsAuthenticated, IsPlanner]
@@ -410,7 +501,11 @@ class DashboardSummaryView(APIView):
     def get(self, request):
         handlers = get_query_handlers()
         summary = handlers.get_dashboard_summary(request.user.id)
-        return Response(serialize_dashboard_summary_dto(summary))
+        data = serialize_dashboard_summary_dto(summary)
+        data["vendors_linked_count"] = (
+            EventVendorAssignment.objects.filter(event__planner=request.user).values("vendor_id").distinct().count()
+        )
+        return Response(data)
 
 def serialize_dashboard_summary_dto(dto: DashboardSummaryDTO):
     return {

@@ -27,6 +27,8 @@ class CreateEventSerializer(serializers.Serializer):
 
 class UpdateEventSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=200, required=False)
+    event_type = serializers.ChoiceField(choices=["wedding", "travel", "corporate", "other"], required=False)
+    event_date = serializers.DateField(required=False)
     venue = serializers.CharField(max_length=300, required=False, allow_blank=True)
     expected_guests = serializers.IntegerField(min_value=0, required=False)
     total_budget = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
@@ -35,6 +37,8 @@ class UpdateEventSerializer(serializers.Serializer):
         return UpdateEventCommand(
             event_id=event_id,
             name=self.validated_data.get("name"),
+            event_type=self.validated_data.get("event_type"),
+            event_date=self.validated_data.get("event_date"),
             venue=self.validated_data.get("venue"),
             expected_guests=self.validated_data.get("expected_guests"),
             total_budget=float(self.validated_data["total_budget"]) if "total_budget" in self.validated_data else None,
@@ -159,3 +163,16 @@ class UpdateTimelineBlockSerializer(serializers.Serializer):
     description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     location = serializers.CharField(max_length=300, required=False, allow_blank=True, allow_null=True)
     order = serializers.IntegerField(min_value=0, required=False)
+
+
+class AddEventVendorAssignmentSerializer(serializers.Serializer):
+    vendor_id = serializers.UUIDField()
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class UpdateEventVendorAssignmentSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=["shortlisted", "contacted", "booked", "rejected"],
+        required=False,
+    )
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)

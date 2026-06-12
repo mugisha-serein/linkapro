@@ -41,8 +41,8 @@ INSTALLED_APPS = [
     "django_app.identity",
     "django_app.events",
     "django_app.vendors",
-    "django_app.documents",
-    "django_app.governance",
+    "django_app.documents.apps.DocumentsConfig",
+    "django_app.governance.apps.GovernanceConfig",
     "django_app.payments",
 ]
 

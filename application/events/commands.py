@@ -22,6 +22,8 @@ class CreateEventCommand:
 class UpdateEventCommand:
     event_id: uuid.UUID
     name: Optional[str] = None
+    event_type: Optional[str] = None
+    event_date: Optional[date] = None
     venue: Optional[str] = None
     expected_guests: Optional[int] = None
     total_budget: Optional[float] = None

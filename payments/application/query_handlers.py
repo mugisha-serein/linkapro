@@ -7,9 +7,19 @@ class PaymentQueryHandlers:
     def __init__(self, payment_repo: IPaymentRepository):
         self.payment_repo = payment_repo
 
-    def get_payment_status(self, reference: str) -> PaymentStatusDTO:
+    def get_payment_status(
+        self,
+        reference: str,
+        user_id=None,
+        *,
+        allow_global_lookup: bool = False,
+    ) -> PaymentStatusDTO:
         payment = self.payment_repo.find_by_reference(reference)
-        if not payment:
+        if not payment or (
+            user_id is not None
+            and not allow_global_lookup
+            and payment.user_id != user_id
+        ):
             raise PaymentNotFoundError(f"Payment {reference} not found")
 
         return PaymentStatusDTO(

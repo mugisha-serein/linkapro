@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -21,6 +22,29 @@ from payments.application.exceptions import (
 from payments.infrastructure.webhook_decryptor import FlutterwaveWebhookDecryptor
 from payments.domain.value_objects import Money, Currency
 from domain.shared.utils import utc_now
+from .models import Payment as DjangoPayment
+
+
+PAYMENT_DECIMALS = {"RWF": 0, "USD": 2, "EUR": 2, "KES": 2, "GHS": 2, "NGN": 2}
+
+
+def _payment_amount(payment: DjangoPayment) -> str:
+    decimals = PAYMENT_DECIMALS.get(payment.currency, 2)
+    divisor = Decimal(10) ** decimals
+    return str(Decimal(payment.amount_minor) / divisor)
+
+
+def _serialize_payment(payment: DjangoPayment) -> dict:
+    return {
+        "reference": payment.reference,
+        "status": payment.status,
+        "amount": _payment_amount(payment),
+        "currency": payment.currency,
+        "method": payment.method,
+        "created_at": payment.created_at.isoformat(),
+        "expires_at": payment.expires_at.isoformat() if payment.expires_at else None,
+        "provider_reference": payment.provider_reference,
+    }
 
 
 class InitiatePaymentView(APIView):
@@ -67,9 +91,15 @@ class PaymentStatusView(APIView):
     def get(self, request, reference):
         handlers = get_query_handlers()
         try:
-            status_dto = handlers.get_payment_status(reference)
-            # Ensure the payment belongs to the authenticated user
-            # (We need a method to check ownership; for simplicity, we assume query handler does it)
+            allow_global_lookup = bool(
+                getattr(request.user, "is_staff", False)
+                or getattr(request.user, "role", None) == "admin"
+            )
+            status_dto = handlers.get_payment_status(
+                reference,
+                user_id=request.user.id,
+                allow_global_lookup=allow_global_lookup,
+            )
             return Response({
                 "reference": status_dto.reference,
                 "status": status_dto.status,
@@ -82,6 +112,57 @@ class PaymentStatusView(APIView):
             })
         except PaymentNotFoundError:
             return Response({"error": "Payment not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+class PaymentListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        payments = DjangoPayment.objects.filter(user=request.user).order_by("-created_at")
+        requested_status = request.query_params.get("status")
+        if requested_status:
+            payments = payments.filter(status=requested_status)
+
+        try:
+            page = max(int(request.query_params.get("page", 1)), 1)
+        except ValueError:
+            page = 1
+        page_size = 20
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        return Response({
+            "results": [_serialize_payment(payment) for payment in payments[start:end]],
+            "count": payments.count(),
+        })
+
+
+class PaymentSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        payments = DjangoPayment.objects.filter(user=request.user)
+        successful = payments.filter(status=DjangoPayment.Status.SUCCESS)
+        pending = payments.filter(status=DjangoPayment.Status.PENDING)
+        failed = payments.filter(status=DjangoPayment.Status.FAILED)
+
+        total_paid = Decimal("0")
+        for payment in successful:
+            total_paid += Decimal(_payment_amount(payment))
+
+        pending_amount = Decimal("0")
+        for payment in pending:
+            pending_amount += Decimal(_payment_amount(payment))
+
+        return Response({
+            "total_payments": payments.count(),
+            "successful_payments": successful.count(),
+            "pending_payments": pending.count(),
+            "failed_payments": failed.count(),
+            "total_paid": str(total_paid),
+            "pending_amount": str(pending_amount),
+            "transaction_count": payments.count(),
+        })
 
 
 @method_decorator(csrf_exempt, name="dispatch")

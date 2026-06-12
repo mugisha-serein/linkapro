@@ -1,7 +1,9 @@
 import json
+import logging
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.core.mail import send_mail
 from django.shortcuts import redirect
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -21,8 +23,11 @@ from application.identity.auth_policy import AuthenticationStatus
 from application.identity.queries import GetUserByIdQuery
 
 from .serializers import (
+    ForgotPasswordSerializer,
     LoginSerializer,
     RegisterSerializer,
+    ResetPasswordSerializer,
+    SetupPasswordSerializer,
     TwoFactorLoginSerializer,
     TwoFactorSetupVerifySerializer,
     UpdateProfileSerializer,
@@ -35,9 +40,15 @@ from .services import (
 )
 from application.identity.oauth_state import build_oauth_state, parse_oauth_state, ALLOWED_OAUTH_SIGNUP_ROLES
 from .cookies import clear_auth_cookies, set_refresh_cookie
+from django_app.identity.models import User
+from infrastructure.adapters.jwt_token_service import JWTTokenService
+
+logger = logging.getLogger(__name__)
 
 
 def _frontend_url() -> str:
+    if not settings.FRONTEND_URL:
+        raise ValueError("FRONTEND_URL is not configured")
     frontend_url = settings.FRONTEND_URL.rstrip("/")
     if not frontend_url:
         raise ValueError("FRONTEND_URL is not configured")
@@ -321,6 +332,77 @@ class ProfileView(APIView):
             return Response(_serialize_user_profile(user_dto))
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SetupPasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = SetupPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        request.user.set_password(serializer.validated_data["password"])
+        request.user.save(update_fields=["password", "updated_at"])
+        handlers = get_query_handlers()
+        user_dto = handlers.get_user_by_id(GetUserByIdQuery(user_id=request.user.id))
+        return Response({
+            "user": _serialize_user_profile(user_dto),
+            "role": user_dto.role,
+            "next_path": "/dashboard" if user_dto.role == "planner" else f"/{user_dto.role}/dashboard",
+            "requires_password_setup": False,
+            "vendor_profile": None,
+        })
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ForgotPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"].strip().lower()
+        user = User.objects.filter(email=email, is_active=True).first()
+
+        if user:
+            token = JWTTokenService().create_password_reset_token(str(user.id))
+            reset_url = f"{_frontend_url()}/auth/reset-password?token={token}"
+            try:
+                send_mail(
+                    subject="Reset your LinkaPro password",
+                    message=f"Use this link to reset your password: {reset_url}",
+                    from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+                    recipient_list=[user.email],
+                    fail_silently=False,
+                )
+            except Exception:
+                if settings.DEBUG:
+                    raise
+                logger.exception("Password reset email failed to send.")
+
+        return Response(
+            {"detail": "If an account exists for that email, password reset instructions have been sent."},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ResetPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user_id = JWTTokenService().verify_password_reset_token(serializer.validated_data["token"])
+        if not user_id:
+            return Response({"error": "Invalid or expired reset token"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(id=user_id, is_active=True).first()
+        if not user:
+            return Response({"error": "Invalid or expired reset token"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(serializer.validated_data["new_password"])
+        user.save(update_fields=["password", "updated_at"])
+        return Response({"status": "password_reset"}, status=status.HTTP_200_OK)
 
 
 class GoogleLoginView(View):

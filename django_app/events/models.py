@@ -26,6 +26,34 @@ class Event(models.Model):
         return f"{self.name} ({self.planner.email})"
 
 
+class EventVendorAssignment(models.Model):
+    class Status(models.TextChoices):
+        SHORTLISTED = "shortlisted"
+        CONTACTED = "contacted"
+        BOOKED = "booked"
+        REJECTED = "rejected"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="vendor_assignments")
+    vendor = models.ForeignKey("vendors.VendorProfile", on_delete=models.CASCADE, related_name="event_assignments")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SHORTLISTED)
+    notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["event", "vendor"], name="unique_event_vendor_assignment"),
+        ]
+        indexes = [
+            models.Index(fields=["event", "status"]),
+            models.Index(fields=["vendor"]),
+        ]
+
+    def __str__(self):
+        return f"{self.vendor.business_name} for {self.event.name}"
+
+
 class Checklist(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="checklists")

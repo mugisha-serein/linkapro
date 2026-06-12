@@ -11,6 +11,8 @@ from .views import (
     GuestDetailView,
     TimelineBlockListCreateView,
     TimelineBlockDetailView,
+    EventVendorAssignmentListCreateView,
+    EventVendorAssignmentDetailView,
     DashboardSummaryView,
 )
 
@@ -22,6 +24,8 @@ urlpatterns = [
     path("<uuid:event_id>/budget-lines/", BudgetLineListCreateView.as_view(), name="event-budget-lines"),
     path("<uuid:event_id>/guests/", GuestListCreateView.as_view(), name="event-guests"),
     path("<uuid:event_id>/timeline-blocks/", TimelineBlockListCreateView.as_view(), name="event-timeline-blocks"),
+    path("<uuid:event_id>/vendors/", EventVendorAssignmentListCreateView.as_view(), name="event-vendors"),
+    path("<uuid:event_id>/vendors/<uuid:assignment_id>/", EventVendorAssignmentDetailView.as_view(), name="event-vendor-detail"),
     path("checklists/<uuid:checklist_id>/items/", ChecklistItemListCreateView.as_view(), name="checklist-items"),
     path("checklist-items/<uuid:item_id>/", ChecklistItemDetailView.as_view(), name="checklist-item-detail"),
     path("budget-lines/<uuid:line_id>/", BudgetLineDetailView.as_view(), name="budget-line-detail"),
