@@ -377,6 +377,7 @@ class IdentityCommandHandlers:
         return self.auth_policy.issue_authenticated_login(user)
 
     def _to_dto(self, user: User) -> UserDTO:
+        has_password = bool(user.password_hash)
         return UserDTO(
             id=user.id,
             email=str(user.email),
@@ -387,6 +388,12 @@ class IdentityCommandHandlers:
             is_verified=user.is_verified,
             created_at=user.created_at,
             last_login=user.last_login,
+            display_name=f"{user.first_name} {user.last_name}".strip() or str(user.email),
+            has_password=has_password,
+            requires_password_setup=not has_password,
+            two_factor_enabled=user.two_factor_enabled,
+            is_authenticated=True,
+            onboarding_complete=user.is_verified and has_password,
         )
 
 
@@ -400,6 +407,7 @@ class IdentityQueryHandlers:
         user = self.user_repo.get_by_id(query.user_id)
         if not user:
             return None
+        has_password = bool(user.password_hash)
         return UserDTO(
             id=user.id,
             email=str(user.email),
@@ -410,12 +418,19 @@ class IdentityQueryHandlers:
             is_verified=user.is_verified,
             created_at=user.created_at,
             last_login=user.last_login,
+            display_name=f"{user.first_name} {user.last_name}".strip() or str(user.email),
+            has_password=has_password,
+            requires_password_setup=not has_password,
+            two_factor_enabled=user.two_factor_enabled,
+            is_authenticated=True,
+            onboarding_complete=user.is_verified and has_password,
         )
 
     def get_user_by_email(self, query: GetUserByEmailQuery) -> Optional[UserDTO]:
         user = self.user_repo.get_by_email(query.email)
         if not user:
             return None
+        has_password = bool(user.password_hash)
         return UserDTO(
             id=user.id,
             email=str(user.email),
@@ -426,4 +441,10 @@ class IdentityQueryHandlers:
             is_verified=user.is_verified,
             created_at=user.created_at,
             last_login=user.last_login,
+            display_name=f"{user.first_name} {user.last_name}".strip() or str(user.email),
+            has_password=has_password,
+            requires_password_setup=not has_password,
+            two_factor_enabled=user.two_factor_enabled,
+            is_authenticated=True,
+            onboarding_complete=user.is_verified and has_password,
         )

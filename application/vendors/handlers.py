@@ -56,6 +56,7 @@ class VendorCommandHandlers:
         if not profile:
             raise ValueError("Vendor not found")
         if cmd.business_name: profile.business_name = cmd.business_name
+        if cmd.category: profile.category = ServiceCategory(cmd.category)
         if cmd.description: profile.description = cmd.description
         if cmd.service_area: profile.service_area = cmd.service_area
         if cmd.contact_email: profile.contact_email = cmd.contact_email

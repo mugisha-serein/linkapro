@@ -22,6 +22,7 @@ from .serializers import (
     ReorderImagesSerializer,
     VerificationDocumentUploadSerializer,
 )
+from .models import VendorProfile as VendorProfileModel
 from .services import get_command_handlers, get_query_handlers
 from application.vendors.commands import (
     CreateVendorProfileCommand,
@@ -43,20 +44,95 @@ from application.vendors.dtos import (
 )
 
 
+VENDOR_PROFILE_INCOMPLETE_CODE = "vendor_profile_incomplete"
+VENDOR_PROFILE_INCOMPLETE_DETAIL = "Vendor profile setup is required before accessing this resource."
+VENDOR_PROFILE_SETUP_REDIRECT = "/vendor/profile"
+VENDOR_SUSPENDED_CODE = "vendor_suspended"
+VENDOR_SUSPENDED_DETAIL = "Your vendor account is suspended. Please contact support."
+
+
+def _profile_completion_errors(profile: VendorProfileDTO) -> dict[str, list[str]]:
+    errors: dict[str, list[str]] = {}
+    for field_name in VendorProfileModel.required_profile_fields():
+        value = getattr(profile, field_name, None)
+        if value is None or not str(value).strip():
+            errors[field_name] = ["This field is required."]
+    if profile.description and len(profile.description.strip()) < 20:
+        errors["description"] = ["Use at least 20 characters for your description."]
+    return errors
+
+
+def _vendor_profile_incomplete_response(
+    field_errors: dict[str, list[str]] | None = None,
+) -> Response:
+    return Response(
+        {
+            "detail": VENDOR_PROFILE_INCOMPLETE_DETAIL,
+            "code": VENDOR_PROFILE_INCOMPLETE_CODE,
+            "redirect_to": VENDOR_PROFILE_SETUP_REDIRECT,
+            "field_errors": field_errors or {},
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _vendor_suspended_response() -> Response:
+    return Response(
+        {
+            "detail": VENDOR_SUSPENDED_DETAIL,
+            "code": VENDOR_SUSPENDED_CODE,
+            "redirect_to": VENDOR_PROFILE_SETUP_REDIRECT,
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _get_current_vendor_profile(request, *, require_workspace: bool = False):
+    query_handlers = get_query_handlers()
+    profile = query_handlers.get_vendor_by_user(request.user.id)
+    if not profile:
+        return None, Response(
+            {"detail": "No vendor profile found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    completion_errors = _profile_completion_errors(profile)
+    if require_workspace:
+        if profile.status == VendorProfileModel.Status.SUSPENDED:
+            return None, _vendor_suspended_response()
+        if profile.status in {VendorProfileModel.Status.DRAFT, VendorProfileModel.Status.REJECTED} or completion_errors:
+            return None, _vendor_profile_incomplete_response(completion_errors)
+    return profile, None
+
+
+def _serialize_profile(dto: VendorProfileDTO) -> dict:
+    return {
+        "id": str(dto.id),
+        "user_id": str(dto.user_id),
+        "business_name": dto.business_name,
+        "category": dto.category,
+        "description": dto.description,
+        "service_area": dto.service_area,
+        "contact_email": dto.contact_email,
+        "contact_phone": dto.contact_phone,
+        "website": dto.website,
+        "status": dto.status,
+        "submitted_at": dto.submitted_at.isoformat() if dto.submitted_at else None,
+        "approved_at": dto.approved_at.isoformat() if dto.approved_at else None,
+        "rejected_at": dto.rejected_at.isoformat() if dto.rejected_at else None,
+        "rejection_reason": dto.rejection_reason,
+    }
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class VendorProfileView(APIView):
     permission_classes = [IsAuthenticated, IsVendor]
 
     def get(self, request):
         """Get the current user's vendor profile."""
-        query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        return Response(self._serialize_profile(profile))
+        profile, error_response = _get_current_vendor_profile(request)
+        if error_response:
+            return error_response
+        return Response(_serialize_profile(profile))
 
     def post(self, request):
         """Create a new vendor profile for the current user."""
@@ -78,19 +154,15 @@ class VendorProfileView(APIView):
         try:
             command_handlers = get_command_handlers()
             profile = command_handlers.create_profile(cmd)
-            return Response(self._serialize_profile(profile), status=status.HTTP_201_CREATED)
+            return Response(_serialize_profile(profile), status=status.HTTP_201_CREATED)
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def patch(self, request):
         """Update the current user's vendor profile."""
-        query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        profile, error_response = _get_current_vendor_profile(request)
+        if error_response:
+            return error_response
 
         serializer = VendorProfileSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -99,6 +171,7 @@ class VendorProfileView(APIView):
         cmd = UpdateVendorProfileCommand(
             vendor_id=profile.id,
             business_name=data.get("business_name"),
+            category=data.get("category"),
             description=data.get("description"),
             service_area=data.get("service_area"),
             contact_email=data.get("contact_email"),
@@ -109,27 +182,9 @@ class VendorProfileView(APIView):
         try:
             command_handlers = get_command_handlers()
             updated_profile = command_handlers.update_profile(cmd)
-            return Response(self._serialize_profile(updated_profile))
+            return Response(_serialize_profile(updated_profile))
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-    def _serialize_profile(self, dto: VendorProfileDTO) -> dict:
-        return {
-            "id": str(dto.id),
-            "user_id": str(dto.user_id),
-            "business_name": dto.business_name,
-            "category": dto.category,
-            "description": dto.description,
-            "service_area": dto.service_area,
-            "contact_email": dto.contact_email,
-            "contact_phone": dto.contact_phone,
-            "website": dto.website,
-            "status": dto.status,
-            "submitted_at": dto.submitted_at.isoformat() if dto.submitted_at else None,
-            "approved_at": dto.approved_at.isoformat() if dto.approved_at else None,
-            "rejected_at": dto.rejected_at.isoformat() if dto.rejected_at else None,
-            "rejection_reason": dto.rejection_reason,
-        }
 
 
 class VendorSubmitForReviewView(APIView):
@@ -137,22 +192,19 @@ class VendorSubmitForReviewView(APIView):
 
     def post(self, request):
         """Submit the vendor profile for admin review."""
-        query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        profile, error_response = _get_current_vendor_profile(request)
+        if error_response:
+            return error_response
+
+        completion_errors = _profile_completion_errors(profile)
+        if completion_errors:
+            return _vendor_profile_incomplete_response(completion_errors)
 
         cmd = SubmitVendorForReviewCommand(vendor_id=profile.id)
         try:
             command_handlers = get_command_handlers()
             updated_profile = command_handlers.submit_for_review(cmd)
-            return Response({
-                "status": updated_profile.status,
-                "submitted_at": updated_profile.submitted_at.isoformat() if updated_profile.submitted_at else None
-            })
+            return Response(_serialize_profile(updated_profile))
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -163,26 +215,19 @@ class PortfolioImageView(APIView):
 
     def get(self, request):
         """List portfolio images for the current vendor."""
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
         query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
 
         images = query_handlers.list_portfolio_images(profile.id)
         return Response([self._serialize_image(img) for img in images])
 
     def post(self, request):
         """Upload a new portfolio image (via Celery task)."""
-        query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
 
         if "image" not in request.FILES:
             return Response(
@@ -221,13 +266,10 @@ class PortfolioImageView(APIView):
 
     def delete(self, request, image_id):
         """Delete a portfolio image."""
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
         query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
 
         # Verify ownership: fetch the image and check vendor_id
         images = query_handlers.list_portfolio_images(profile.id)
@@ -257,13 +299,9 @@ class PortfolioImageReorderView(APIView):
 
     def post(self, request):
         """Reorder portfolio images."""
-        query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
 
         serializer = ReorderImagesSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -284,26 +322,19 @@ class ServicePackageListView(APIView):
 
     def get(self, request):
         """List service packages for the current vendor."""
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
         query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
 
         packages = query_handlers.list_service_packages(profile.id)
         return Response([self._serialize_package(pkg) for pkg in packages])
 
     def post(self, request):
         """Create a new service package."""
-        query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
 
         serializer = ServicePackageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -337,13 +368,10 @@ class ServicePackageDetailView(APIView):
 
     def patch(self, request, package_id):
         """Update a service package."""
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
         query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
 
         # Verify ownership
         packages = query_handlers.list_service_packages(profile.id)
@@ -371,13 +399,10 @@ class ServicePackageDetailView(APIView):
 
     def delete(self, request, package_id):
         """Deactivate a service package (soft delete)."""
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
         query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
 
         packages = query_handlers.list_service_packages(profile.id)
         pkg = next((p for p in packages if str(p.id) == package_id), None)
@@ -398,6 +423,9 @@ class ServicePackageActivateView(APIView):
 
     def post(self, request, package_id):
         """Vendor packages must be approved by an administrator before publication."""
+        _, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
         return Response(
             {"detail": "Package publication requires admin approval."},
             status=status.HTTP_403_FORBIDDEN,
@@ -409,13 +437,10 @@ class InquiryListView(APIView):
 
     def get(self, request):
         """List inquiries for the current vendor."""
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
         query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
 
         inquiries = query_handlers.list_inquiries(profile.id)
         return Response([self._serialize_inquiry(inq) for inq in inquiries])
@@ -572,10 +597,10 @@ class VendorDashboardSummaryView(APIView):
     permission_classes = [IsAuthenticated, IsVendor]
 
     def get(self, request):
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
         query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response({"detail": "No vendor profile found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(query_handlers.get_dashboard_summary(profile.id))
 
 
@@ -583,10 +608,10 @@ class VendorAnalyticsView(APIView):
     permission_classes = [IsAuthenticated, IsVendor]
 
     def get(self, request):
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
         query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response({"detail": "No vendor profile found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(query_handlers.get_analytics(profile.id))
 
 
@@ -594,10 +619,10 @@ class VendorActivityView(APIView):
     permission_classes = [IsAuthenticated, IsVendor]
 
     def get(self, request):
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
         query_handlers = get_query_handlers()
-        profile = query_handlers.get_vendor_by_user(request.user.id)
-        if not profile:
-            return Response({"detail": "No vendor profile found."}, status=status.HTTP_404_NOT_FOUND)
         limit = int(request.query_params.get("limit", 10))
         return Response(query_handlers.get_recent_activity(profile.id, limit=limit))
 

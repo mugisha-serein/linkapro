@@ -18,6 +18,7 @@ class CreateVendorProfileCommand:
 class UpdateVendorProfileCommand:
     vendor_id: uuid.UUID
     business_name: Optional[str] = None
+    category: Optional[str] = None
     description: Optional[str] = None
     service_area: Optional[str] = None
     contact_email: Optional[str] = None
