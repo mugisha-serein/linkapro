@@ -120,6 +120,7 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "static"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
+VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE = int(os.environ.get("VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE", 4 * 1024 * 1024))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

@@ -1,111 +1,131 @@
-We are fixing LinkaPro marketplace synchronization properly, not doing demo-only work.
+Fix LinkaPro vendor portfolio upload so Cloudinary upload is asynchronous and production-safe.
+
+Problem:
+django_app/vendors/views.py currently uploads vendor portfolio images to Cloudinary synchronously inside the HTTP request. There is even a comment saying async upload is required, but the implementation still blocks the request. This can cause slow requests, Render timeouts, poor vendor UX, and failed uploads under load.
 
 Goal:
-Django vendor profile is the source of truth. FastAPI marketplace is the read/search projection. When a vendor is approved in Django, it must appear in FastAPI marketplace search. When rejected, suspended, draft, or incomplete, it must be removed from FastAPI marketplace. Frontend marketplace and planner vendor discovery must fetch approved vendors from FastAPI only.
+Move vendor portfolio image upload into a Celery task while keeping the vendor dashboard clean and reliable.
 
-Repositories:
+Repository:
 - Backend: linkapro
-- Frontend: linkapro-frontend
+- Frontend: linkapro-frontend only if API response contract requires UI changes
 
-Backend tasks in linkapro:
+Backend tasks:
 
-1. Create a clean marketplace projection service.
-   - Add a service module, for example:
-     infrastructure/adapters/marketplace_projection.py
-     or django_app/vendors/marketplace_projection.py
-   - It must expose:
-     sync_vendor_to_marketplace(vendor: VendorProfile) -> dict
-     delete_vendor_from_marketplace(vendor_id: UUID | str) -> dict
-     sync_or_delete_vendor_projection(vendor: VendorProfile) -> dict
-   - It must call FastAPI internal endpoints:
-     POST {FASTAPI_INTERNAL_URL}/internal/listings
-     DELETE {FASTAPI_INTERNAL_URL}/internal/listings/{vendor_id}
-   - It must send X-Internal-Secret using FASTAPI_INTERNAL_SHARED_SECRET.
-   - In production, missing FASTAPI_INTERNAL_URL or FASTAPI_INTERNAL_SHARED_SECRET must raise a clear ImproperlyConfigured or RuntimeError, not silently skip.
-   - In development/test, it may skip safely but must log clearly.
+1. Inspect current vendor portfolio upload flow.
+   - django_app/vendors/views.py
+   - vendor serializers
+   - vendor models
+   - application/vendors/handlers.py
+   - infrastructure repos for portfolio images
+   - existing Celery app/tasks setup
+   - existing image/document task patterns
 
-2. Replace duplicated sync logic.
-   - Remove duplicated marketplace sync code from django_app/governance/views.py where possible.
-   - Replace manual _sync_approved_vendor and _delete_vendor_listing with the new projection service.
-   - Update infrastructure/repos/django_vendor_profile_repository.py to call the same projection service after saving:
-       if status == approved -> sync
-       else -> delete
-   - Keep behavior safe: never show non-approved vendors in FastAPI.
+2. Design the async flow.
+   Preferred API behavior:
+   - POST /api/django/vendors/portfolio/
+   - Validate auth, vendor ownership, file type, file size, and caption/order immediately.
+   - Save a pending upload record or create an upload job record.
+   - Dispatch Celery task to upload image to Cloudinary.
+   - Return HTTP 202 Accepted with:
+       {
+         "status": "processing",
+         "job_id": "...",
+         "message": "Portfolio image upload is processing."
+       }
+   - Do not block HTTP request waiting for Cloudinary.
 
-3. Add a Django management command:
-   python manage.py sync_marketplace_listings
-   - It must find all VendorProfile rows where status == APPROVED.
-   - For each approved vendor, call sync_vendor_to_marketplace.
-   - Print summary:
-       synced count
-       failed count
-       skipped count
-   - It should continue syncing remaining vendors if one fails, then exit non-zero if any failed.
-   - This command is required for backfilling existing approved vendors.
+3. Add upload status tracking.
+   Choose the least invasive approach:
+   Option A: Add status fields to PortfolioImage model:
+     upload_status: pending | processing | completed | failed
+     upload_error: text nullable
+     original_filename: string nullable
+   Option B: Add separate VendorPortfolioUploadJob model if cleaner.
+   Use migrations.
 
-4. Improve FastAPI marketplace internals.
-   - Keep /internal/listings upsert and /internal/listings/{vendor_id} delete.
-   - Ensure upsert writes approval_status='approved' only for approved vendors.
-   - Ensure non-approved payload deletes existing listing.
-   - Ensure cache invalidates after upsert/delete.
-   - Add or verify idempotency: repeated upsert for the same vendor_id updates existing row, not duplicate.
+4. Celery task requirements.
+   - Add task, for example:
+       tasks/image_tasks.py
+       upload_vendor_portfolio_image_task(...)
+   - Task must:
+       - Mark upload as processing.
+       - Upload to Cloudinary.
+       - Store public_id and secure_url.
+       - Mark upload as completed.
+       - On failure, mark upload as failed and save a safe error message.
+       - Retry transient Cloudinary/network errors with exponential backoff.
+   - Task must not trust user input blindly; re-fetch vendor/image record from DB.
+   - Task must be idempotent:
+       - If image is already completed, do not upload again.
+       - If retried after partial success, avoid duplicate broken records when possible.
 
-5. Improve FastAPI search behavior.
-   - Keep approved-only condition:
-       VendorListingModel.approval_status == "approved"
-   - Change location filtering from exact equality to partial case-insensitive matching, so "Kigali" matches "Kigali, Rwanda".
-   - Keep category exact match.
-   - Keep q full-text search.
-   - Keep page/page_size limits.
+5. File handling.
+   - Do not pass raw uploaded file objects directly into Celery.
+   - Save upload temporarily in Django storage or a safe temporary media path first.
+   - Pass only the upload record ID/path to Celery.
+   - Clean up temporary file after successful Cloudinary upload.
+   - On failure, keep enough metadata for retry/debug but avoid leaking sensitive local paths in API responses.
 
-6. Add FastAPI marketplace health endpoint:
-   GET /api/v1/marketplace/health
-   Return:
-     status
-     listings_count
-     approved_listings_count
-   It should fail clearly if DB/table is missing.
+6. API response/list behavior.
+   - GET /api/django/vendors/portfolio/ should return portfolio items including upload_status.
+   - Completed images should include secure_url.
+   - Pending/processing/failed items should be visible enough for frontend to show status.
+   - Failed upload should not break portfolio list.
 
-7. Ensure schema/bootstrap is clear.
-   - Do not rely on development-only startup bootstrap for production.
-   - Add documentation or command instructions for applying marketplace schema before FastAPI starts.
-   - If there is already a migration helper, make sure there is a production-safe way to run it.
+7. Frontend behavior if needed.
+   - Vendor portfolio upload should show a toast:
+       "Upload started. Your image will appear shortly."
+   - Portfolio gallery should display processing state for pending images.
+   - Failed items should show a clear retry/remove option only if backend supports it.
+   - Do not fake completed images.
+   - Do not use mock URLs.
 
-8. Tests:
-   Add or update backend tests for:
-   - approving vendor syncs/upserts FastAPI listing
-   - rejecting vendor removes listing
-   - suspending vendor removes listing
-   - approved-only FastAPI search
-   - internal upsert idempotency
-   - partial location search
-   - sync_marketplace_listings command backfills approved vendors
+8. Backward compatibility.
+   - Existing completed portfolio images must continue working.
+   - Existing records with secure_url should be treated as completed.
+   - Migration should backfill upload_status='completed' for existing images that already have secure_url.
 
-Frontend tasks in linkapro-frontend:
+9. Validation and constraints.
+   - Enforce allowed image types:
+       image/jpeg
+       image/png
+       image/webp
+   - Enforce max image size from settings, default 4MB or current project limit.
+   - Return clear 400 errors for invalid files.
+   - Return 202 for accepted async upload.
+   - Return 403 if vendor profile is incomplete/not approved where current rules require workspace access.
 
-1. Keep marketplaceService using FastAPI.
-   - Do not switch public marketplace to Django.
-   - Ensure query maps to q.
-   - Ensure planner vendor discovery also uses FastAPI marketplace search.
+10. Tests.
+   Add tests for:
+   - portfolio upload returns 202 and queues Celery task
+   - invalid file type returns 400
+   - oversized file returns 400
+   - Celery task marks image completed on Cloudinary success
+   - Celery task marks image failed on Cloudinary failure
+   - existing completed images still serialize correctly
+   - vendor cannot upload to another vendor profile
+   - portfolio list includes upload_status
 
-2. Improve marketplace empty/error states.
-   - Show "No approved vendors found" when FastAPI returns zero items.
-   - Show clear unavailable message when FastAPI is down.
-   - Do not show mock vendors.
-
-3. Run:
-   Backend:
-     python manage.py check
-     python manage.py test tests/django_app/vendors tests/django_app/governance tests/fastapi_app
-   Frontend:
-     npm run lint
-     npm run build
+11. Run validation:
+   - python manage.py makemigrations --check
+   - python manage.py check
+   - pytest tests/django_app/vendors -q
+   - pytest tests -q if reasonable
 
 Rules:
-- No mocked marketplace data.
-- No silent production sync skips.
-- Do not show draft/rejected/suspended vendors in FastAPI search.
-- Django remains source of truth.
-- FastAPI remains marketplace read/search API.
-- Keep existing public API routes stable.
-- Provide final branch names and commit messages for backend and frontend separately.
+- Do not block the request with Cloudinary upload.
+- Do not pass file objects directly into Celery.
+- Do not break existing portfolio images.
+- Do not introduce mocked portfolio URLs.
+- Keep the API response honest: processing means processing, completed means uploaded.
+- Keep this focused on vendor portfolio upload only.
+- Do not refactor unrelated vendor dashboard logic.
+
+Return:
+- Files changed
+- Migration created
+- API response examples
+- Validation results
+- Suggested branch name
+- Suggested commit message

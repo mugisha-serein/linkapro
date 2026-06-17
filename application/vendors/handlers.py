@@ -208,7 +208,10 @@ class VendorCommandHandlers:
     @staticmethod
     def _to_image_dto(i: PortfolioImage) -> PortfolioImageDTO:
         return PortfolioImageDTO(id=i.id, vendor_id=i.vendor_id, secure_url=i.secure_url,
-                                 caption=i.caption, order=i.order)
+                                 caption=i.caption, order=i.order,
+                                 upload_status=i.upload_status,
+                                 upload_error=i.upload_error,
+                                 original_filename=i.original_filename)
 
     @staticmethod
     def _to_package_dto(p: ServicePackage) -> ServicePackageDTO:
