@@ -1,6 +1,7 @@
 import asyncio
 import os
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
@@ -18,29 +19,68 @@ def event_loop():
     loop.close()
 
 @pytest.fixture(scope="session")
-async def engine():
+def engine(event_loop):
     """Create a file-based SQLite engine and create all tables."""
     # File-based SQLite ensures tables persist across connections
     DATABASE_URL = "sqlite+aiosqlite:///./test_marketplace.db"
     engine = create_async_engine(DATABASE_URL, echo=False)
 
-    async with engine.begin() as conn:
-        # Drop all tables first (clean slate)
-        await conn.run_sync(Base.metadata.drop_all)
-        # Create all tables
-        await conn.run_sync(Base.metadata.create_all)
+    async def setup():
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS marketplace_review"))
+            await conn.execute(text("DROP TABLE IF EXISTS marketplace_vendorlisting"))
+            await conn.execute(text(
+                """
+                CREATE TABLE marketplace_vendorlisting (
+                    id UUID PRIMARY KEY,
+                    vendor_id UUID NOT NULL UNIQUE,
+                    external_id VARCHAR(128) UNIQUE,
+                    business_name VARCHAR(200) NOT NULL,
+                    category VARCHAR(50) NOT NULL,
+                    description TEXT NOT NULL,
+                    service_area VARCHAR(200) NOT NULL,
+                    tags TEXT,
+                    cover_image_url VARCHAR(500),
+                    average_rating FLOAT,
+                    total_reviews INTEGER,
+                    is_verified BOOLEAN,
+                    approval_status VARCHAR(20),
+                    search_rank_score FLOAT,
+                    search_vector TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME
+                )
+                """
+            ))
+            await conn.execute(text(
+                """
+                CREATE TABLE marketplace_review (
+                    id UUID PRIMARY KEY,
+                    vendor_id UUID NOT NULL,
+                    author_user_id UUID NOT NULL,
+                    rating INTEGER NOT NULL,
+                    comment TEXT,
+                    is_verified_purchase BOOLEAN,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(vendor_id) REFERENCES marketplace_vendorlisting(vendor_id)
+                )
+                """
+            ))
+
+    event_loop.run_until_complete(setup())
 
     yield engine
 
-    await engine.dispose()
+    event_loop.run_until_complete(engine.dispose())
     # Clean up the test database file
     if os.path.exists("./test_marketplace.db"):
         os.remove("./test_marketplace.db")
 
 @pytest.fixture
-async def session(engine):
+def session(engine, event_loop):
     """Provide a transactional session for a test."""
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with async_session() as session:
-        yield session
-        await session.rollback()
+    session = async_session()
+    yield session
+    event_loop.run_until_complete(session.rollback())
+    event_loop.run_until_complete(session.close())

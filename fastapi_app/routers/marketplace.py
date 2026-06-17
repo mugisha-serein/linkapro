@@ -1,19 +1,38 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from application.marketplace.search_service import MarketplaceSearchCriteria, MarketplaceSearchService
 from application.marketplace.queries import GetVendorListingQuery, GetVendorReviewsQuery
+from fastapi_app.database import get_session
 from fastapi_app.dependencies import (
     get_marketplace_client_identifier,
     get_marketplace_search_params,
     get_marketplace_search_service,
     get_query_handlers,
 )
+from fastapi_app.marketplace.models import VendorListingModel
 from fastapi_app.schemas import (
     SearchResponse, VendorListingResponse, ReviewResponse, PostReviewRequest
 )
 
 router = APIRouter()
+
+
+@router.get("/health")
+async def marketplace_health(session: AsyncSession = Depends(get_session)):
+    listings_count_result = await session.execute(select(func.count()).select_from(VendorListingModel))
+    approved_count_result = await session.execute(
+        select(func.count())
+        .select_from(VendorListingModel)
+        .where(VendorListingModel.approval_status == "approved")
+    )
+    return {
+        "status": "ok",
+        "listings_count": int(listings_count_result.scalar_one()),
+        "approved_listings_count": int(approved_count_result.scalar_one()),
+    }
 
 @router.get("/search", response_model=SearchResponse)
 async def search_vendors(

@@ -423,6 +423,19 @@ cd linkapro
 ```
 ---
 
+
+### Marketplace Projection Operations
+
+FastAPI marketplace search reads from the `marketplace_vendorlisting` projection table. In production, create/update the FastAPI marketplace schema before starting FastAPI; the development-only startup bootstrap is intentionally not used for production schema changes.
+
+```bash
+python -m fastapi_app.bootstrap_db
+python manage.py sync_marketplace_listings
+```
+
+The Django vendor profile remains the source of truth. Run `sync_marketplace_listings` after deployment or data imports to backfill existing approved vendors into the FastAPI projection.
+
+---
 ### 🌐 Service Access Points
 
 ---

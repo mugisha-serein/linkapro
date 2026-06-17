@@ -35,26 +35,30 @@ class AsyncVendorListingRepository(IVendorListingRepository):
         raise RuntimeError("Legacy marketplace search path is disabled.")
 
     async def save(self, listing: VendorListing) -> VendorListing:
-        model = VendorListingModel(
-            id=listing.id,
-            vendor_id=listing.vendor_id,
-            external_id=getattr(listing, "external_id", None),
-            business_name=listing.business_name,
-            category=listing.category,
-            description=listing.description,
-            service_area=listing.service_area,
-            cover_image_url=listing.cover_image_url,
-            average_rating=listing.average_rating,
-            total_reviews=listing.total_reviews,
-            is_verified=listing.is_verified,
-            approval_status="approved",
-            search_rank_score=getattr(listing, "search_rank_score", 0.0),
-            created_at=listing.created_at,
-            updated_at=listing.updated_at,
+        result = await self.session.execute(
+            select(VendorListingModel).where(VendorListingModel.vendor_id == listing.vendor_id)
         )
-        merged = await self.session.merge(model)
+        model = result.scalar_one_or_none()
+        if model is None:
+            model = VendorListingModel(id=listing.id, vendor_id=listing.vendor_id)
+            self.session.add(model)
+
+        model.external_id = getattr(listing, "external_id", None)
+        model.business_name = listing.business_name
+        model.category = listing.category
+        model.description = listing.description
+        model.service_area = listing.service_area
+        model.cover_image_url = listing.cover_image_url
+        model.average_rating = listing.average_rating
+        model.total_reviews = listing.total_reviews
+        model.is_verified = listing.is_verified
+        model.approval_status = "approved"
+        model.search_rank_score = getattr(listing, "search_rank_score", 0.0)
+        model.created_at = listing.created_at
+        model.updated_at = listing.updated_at
         await self.session.commit()
-        return self._to_domain(merged)
+        await self.session.refresh(model)
+        return self._to_domain(model)
 
     async def delete(self, vendor_id: uuid.UUID) -> None:
         stmt = select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_id)
