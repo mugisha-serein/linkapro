@@ -78,7 +78,7 @@ services:
       context: .
       dockerfile: Dockerfile.django
     container_name: linkapro_celery_worker
-    command: celery -A tasks worker --loglevel=info
+    command: celery -A tasks.celery worker --loglevel=info
     volumes:
       - .:/app
       - static_volume:/app/static
@@ -109,7 +109,7 @@ services:
       context: .
       dockerfile: Dockerfile.django
     container_name: linkapro_celery_beat
-    command: celery -A tasks beat --loglevel=info
+    command: celery -A tasks.celery beat --loglevel=info
     volumes:
       - .:/app
       - static_volume:/app/static
