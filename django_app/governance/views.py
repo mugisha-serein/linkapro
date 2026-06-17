@@ -1,5 +1,3 @@
-import logging
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -8,12 +6,15 @@ from django_app.common.permissions import IsAdmin
 from django_app.identity.models import User
 from django_app.events.models import Event
 from django_app.vendors.models import VendorProfile
+from infrastructure.adapters.marketplace_projection import (
+    delete_vendor_from_marketplace,
+    sync_vendor_to_marketplace,
+)
 from .models import AuditLog, ContentFlag
 from .serializers import FlagContentSerializer
 from .services import get_command_handlers, get_query_handlers
 from application.governance.commands import FlagContentCommand
 
-logger = logging.getLogger(__name__)
 VENDOR_ADMIN_STATUSES = {choice[0] for choice in VendorProfile.Status.choices}
 
 
@@ -157,29 +158,11 @@ def _audit(admin, action_type: str, target_type: str, target_id, details: dict |
 
 
 def _sync_approved_vendor(vendor: VendorProfile) -> None:
-    from tasks.marketplace_sync import sync_vendor_listing_to_fastapi
-
-    try:
-        sync_vendor_listing_to_fastapi(
-            str(vendor.id),
-            vendor.business_name,
-            vendor.category,
-            vendor.description,
-            vendor.service_area,
-            None,
-            vendor.status,
-        )
-    except Exception:
-        logger.exception("Approved vendor marketplace sync failed.", extra={"vendor_id": str(vendor.id)})
+    sync_vendor_to_marketplace(vendor)
 
 
 def _delete_vendor_listing(vendor: VendorProfile) -> None:
-    from tasks.marketplace_sync import delete_vendor_listing_from_fastapi
-
-    try:
-        delete_vendor_listing_from_fastapi(str(vendor.id))
-    except Exception:
-        logger.exception("Vendor marketplace removal failed.", extra={"vendor_id": str(vendor.id)})
+    delete_vendor_from_marketplace(vendor.id)
 
 
 class AdminUserListView(APIView):

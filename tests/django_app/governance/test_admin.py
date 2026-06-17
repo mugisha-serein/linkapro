@@ -12,8 +12,8 @@ pytestmark = pytest.mark.django_db
 class TestVendorApprovalAdmin:
     def test_approve_vendor_action(self, admin_client, monkeypatch):
         monkeypatch.setattr(
-            "tasks.marketplace_sync.sync_vendor_listing_to_fastapi",
-            lambda *args, **kwargs: {"status": "ok"},
+            "infrastructure.repos.django_vendor_profile_repository.sync_or_delete_vendor_projection",
+            lambda vendor: {"status": "ok"},
         )
         admin_user = User.objects.create_superuser("admin@t.com", "pass")
         admin_client.force_login(admin_user)
@@ -21,7 +21,7 @@ class TestVendorApprovalAdmin:
         vendor_user = User.objects.create_user(email="v@t.com", password="p", role="vendor")
         vendor = VendorProfile.objects.create(
             user=vendor_user, business_name="V", category="photography",
-            description="d", service_area="a", contact_email="e", contact_phone="1",
+            description="A complete vendor description.", service_area="a", contact_email="e", contact_phone="1",
             status="pending_review"
         )
 
@@ -35,8 +35,8 @@ class TestVendorApprovalAdmin:
 
     def test_reject_vendor_action(self, admin_client, monkeypatch):
         monkeypatch.setattr(
-            "tasks.marketplace_sync.delete_vendor_listing_from_fastapi",
-            lambda *args, **kwargs: {"status": "ok"},
+            "infrastructure.repos.django_vendor_profile_repository.sync_or_delete_vendor_projection",
+            lambda vendor: {"status": "ok"},
         )
         admin_user = User.objects.create_superuser("admin@t.com", "pass")
         admin_client.force_login(admin_user)
@@ -44,7 +44,7 @@ class TestVendorApprovalAdmin:
         vendor_user = User.objects.create_user(email="v@t.com", password="p", role="vendor")
         vendor = VendorProfile.objects.create(
             user=vendor_user, business_name="V", category="photography",
-            description="d", service_area="a", contact_email="e", contact_phone="1",
+            description="A complete vendor description.", service_area="a", contact_email="e", contact_phone="1",
             status="pending_review"
         )
 
@@ -81,8 +81,8 @@ class TestVendorApprovalAdmin:
     def test_admin_api_approval_syncs_marketplace_listing(self, admin_client, monkeypatch):
         calls = []
         monkeypatch.setattr(
-            "tasks.marketplace_sync.sync_vendor_listing_to_fastapi",
-            lambda *args, **kwargs: calls.append((args, kwargs)) or {"status": "ok"},
+            "django_app.governance.views.sync_vendor_to_marketplace",
+            lambda vendor: calls.append(vendor) or {"status": "ok"},
         )
         admin_user = User.objects.create_superuser("admin@t.com", "pass")
         api_client = APIClient()
@@ -91,7 +91,7 @@ class TestVendorApprovalAdmin:
         vendor_user = User.objects.create_user(email="pending@t.com", password="p", role="vendor")
         vendor = VendorProfile.objects.create(
             user=vendor_user, business_name="Pending", category="photography",
-            description="d", service_area="a", contact_email="e@example.com", contact_phone="1",
+            description="A complete vendor description.", service_area="a", contact_email="e@example.com", contact_phone="1",
             status="pending_review"
         )
 
@@ -101,8 +101,8 @@ class TestVendorApprovalAdmin:
         assert response.status_code == 200
         assert vendor.status == "approved"
         assert calls
-        assert calls[0][0][0] == str(vendor.id)
-        assert calls[0][0][-1] == "approved"
+        assert calls[0].id == vendor.id
+        assert calls[0].status == "approved"
 
     def test_admin_api_lists_vendors_by_status(self, admin_client):
         admin_user = User.objects.create_superuser("admin@t.com", "pass")
@@ -133,12 +133,12 @@ class TestVendorApprovalAdmin:
         deleted = []
         synced = []
         monkeypatch.setattr(
-            "tasks.marketplace_sync.delete_vendor_listing_from_fastapi",
-            lambda vendor_id: deleted.append(vendor_id) or {"status": "ok"},
+            "django_app.governance.views.delete_vendor_from_marketplace",
+            lambda vendor_id: deleted.append(str(vendor_id)) or {"status": "ok"},
         )
         monkeypatch.setattr(
-            "tasks.marketplace_sync.sync_vendor_listing_to_fastapi",
-            lambda *args, **kwargs: synced.append((args, kwargs)) or {"status": "ok"},
+            "django_app.governance.views.sync_vendor_to_marketplace",
+            lambda vendor: synced.append(vendor) or {"status": "ok"},
         )
         admin_user = User.objects.create_superuser("admin@t.com", "pass")
         api_client = APIClient()
@@ -148,7 +148,7 @@ class TestVendorApprovalAdmin:
             user=vendor_user,
             business_name="Approved",
             category="photography",
-            description="d",
+            description="A complete vendor description.",
             service_area="a",
             contact_email="approved@example.com",
             contact_phone="1",

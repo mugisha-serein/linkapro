@@ -238,7 +238,7 @@ class MarketplaceSearchService:
         if normalized_category:
             conditions.append(func.lower(VendorListingModel.category) == normalized_category)
         if normalized_location:
-            conditions.append(func.lower(VendorListingModel.service_area) == normalized_location)
+            conditions.append(func.lower(VendorListingModel.service_area).like(f"%{normalized_location}%"))
         if criteria.min_rating is not None:
             conditions.append(VendorListingModel.average_rating >= criteria.min_rating)
 

@@ -1,5 +1,4 @@
 import uuid
-import logging
 from typing import Optional, List
 from django.core.exceptions import ObjectDoesNotExist
 
@@ -7,8 +6,10 @@ from domain.vendors.entities import VendorProfile as DomainProfile, VendorStatus
 from domain.vendors.interfaces import IVendorProfileRepository
 from django_app.vendors.models import VendorProfile as DjangoProfile
 from django_app.identity.models import User
-
-logger = logging.getLogger(__name__)
+from infrastructure.adapters.marketplace_projection import (
+    delete_vendor_from_marketplace,
+    sync_or_delete_vendor_projection,
+)
 
 
 class DjangoVendorProfileRepository(IVendorProfileRepository):
@@ -50,45 +51,12 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         obj.rejected_at = domain.rejected_at
         obj.rejection_reason = domain.rejection_reason
         obj.save()
-        if obj.status == DjangoProfile.Status.APPROVED:
-            self._sync_marketplace_projection(obj)
-        else:
-            self._delete_marketplace_projection(obj.id)
+        sync_or_delete_vendor_projection(obj)
         return self._to_domain(obj)
 
     def delete(self, vendor_id: uuid.UUID) -> None:
         DjangoProfile.objects.filter(id=vendor_id).delete()
-        self._delete_marketplace_projection(vendor_id)
-
-    def _sync_marketplace_projection(self, obj: DjangoProfile) -> None:
-        from tasks.marketplace_sync import sync_vendor_listing_to_fastapi
-
-        try:
-            sync_vendor_listing_to_fastapi(
-                str(obj.id),
-                obj.business_name,
-                obj.category,
-                obj.description,
-                obj.service_area,
-                None,
-                obj.status,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to sync vendor profile to FastAPI marketplace",
-                extra={"vendor_id": str(obj.id)},
-            )
-
-    def _delete_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
-        from tasks.marketplace_sync import delete_vendor_listing_from_fastapi
-
-        try:
-            delete_vendor_listing_from_fastapi(str(vendor_id))
-        except Exception:
-            logger.exception(
-                "Failed to delete vendor projection from FastAPI marketplace",
-                extra={"vendor_id": str(vendor_id)},
-            )
+        delete_vendor_from_marketplace(vendor_id)
 
     def _to_domain(self, model: DjangoProfile) -> DomainProfile:
         return DomainProfile(

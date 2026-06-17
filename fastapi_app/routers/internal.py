@@ -36,14 +36,14 @@ async def _upsert_listing_payload(payload: dict, session: AsyncSession) -> dict:
     external_id = str(external_id_value).strip() if external_id_value else None
 
     listing = None
-    if external_id:
-        result = await session.execute(
-            select(VendorListingModel).where(VendorListingModel.external_id == external_id)
-        )
-        listing = result.scalar_one_or_none()
-    if listing is None and vendor_id is not None:
+    if vendor_id is not None:
         result = await session.execute(
             select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_id)
+        )
+        listing = result.scalar_one_or_none()
+    if listing is None and external_id:
+        result = await session.execute(
+            select(VendorListingModel).where(VendorListingModel.external_id == external_id)
         )
         listing = result.scalar_one_or_none()
 
@@ -51,7 +51,6 @@ async def _upsert_listing_payload(payload: dict, session: AsyncSession) -> dict:
         if listing is not None:
             await session.delete(listing)
             await session.commit()
-            await get_marketplace_search_cache().invalidate()
         return {"status": "ok", "listed": False}
 
     listing_data = {
@@ -105,7 +104,7 @@ async def upsert_listing(
     """
     _verify_internal_secret(x_internal_secret)
     result = await _upsert_listing_payload(payload, session)
-    await get_marketplace_search_cache().invalidate()
+    await _invalidate_marketplace_cache()
     return result
 
 
@@ -117,7 +116,7 @@ async def upsert_listing_with_trailing_slash(
 ):
     _verify_internal_secret(x_internal_secret)
     result = await _upsert_listing_payload(payload, session)
-    await get_marketplace_search_cache().invalidate()
+    await _invalidate_marketplace_cache()
     return result
 
 
@@ -136,8 +135,15 @@ async def delete_listing(
         return {"status": "ok", "deleted": False}
     await session.delete(listing)
     await session.commit()
-    await get_marketplace_search_cache().invalidate()
+    await _invalidate_marketplace_cache()
     return {"status": "ok", "deleted": True}
+
+
+async def _invalidate_marketplace_cache() -> None:
+    cache = get_marketplace_search_cache()
+    if cache is None:
+        return
+    await cache.invalidate()
 
 
 def _normalize_tags(tags_value) -> str:
