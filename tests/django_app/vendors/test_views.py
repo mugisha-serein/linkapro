@@ -1,11 +1,15 @@
 import uuid
 import pytest
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
 from django_app.identity.models import User
-from django_app.vendors.models import VendorProfile as DjangoProfile
+from django_app.vendors.models import PortfolioImage, VendorProfile as DjangoProfile
+from tasks.image_tasks import upload_vendor_portfolio_image_task
 
 pytestmark = pytest.mark.django_db
 
@@ -267,32 +271,112 @@ class TestPortfolioImageViews:
         assert response.status_code == 200
         assert response.data == []
 
-    def test_upload_image_sync(self, monkeypatch):
-        # Mock Cloudinary upload to avoid network call
-        def mock_upload(self, file):
-            return {"public_id": "fake_id", "secure_url": "https://fake.url/img.jpg"}
+    def test_upload_image_returns_202_and_queues_task(self, monkeypatch):
+        queued = []
         monkeypatch.setattr(
-            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_image",
-            mock_upload
+            "tasks.image_tasks.upload_vendor_portfolio_image_task.delay",
+            lambda image_id: queued.append(image_id),
         )
 
         url = reverse("portfolio-list")
-        with open(__file__, "rb") as f:
-            data = {"image": f, "caption": "My photo"}
-            response = self.client.post(url, data, format="multipart")
-        assert response.status_code == 201
-        assert response.data["secure_url"] == "https://fake.url/img.jpg"
-        assert self.profile.images.count() == 1
+        image = SimpleUploadedFile("portfolio.jpg", b"fake-image", content_type="image/jpeg")
+        response = self.client.post(url, {"image": image, "caption": "My photo"}, format="multipart")
 
-    @override_settings(CLOUDINARY_CLOUD_NAME="", CLOUDINARY_API_KEY="", CLOUDINARY_API_SECRET="")
-    def test_upload_image_falls_back_to_local_storage_when_cloudinary_unavailable(self):
-        url = reverse("portfolio-list")
-        with open(__file__, "rb") as f:
-            response = self.client.post(url, {"image": f, "caption": "My photo"}, format="multipart")
-
-        assert response.status_code == 201
-        assert response.data["secure_url"].startswith("/media/")
+        assert response.status_code == 202
+        assert response.data["status"] == "processing"
+        assert response.data["job_id"]
+        assert response.data["message"] == "Portfolio image upload is processing."
         assert self.profile.images.count() == 1
+        stored = self.profile.images.get()
+        assert stored.upload_status == PortfolioImage.UploadStatus.PENDING
+        assert stored.original_filename == "portfolio.jpg"
+        assert stored.temp_upload_path
+        assert queued == [str(stored.id)]
+
+    def test_upload_invalid_file_type_returns_400(self):
+        image = SimpleUploadedFile("portfolio.txt", b"not-image", content_type="text/plain")
+
+        response = self.client.post(reverse("portfolio-list"), {"image": image}, format="multipart")
+
+        assert response.status_code == 400
+        assert "Unsupported image type" in response.data["detail"]
+        assert self.profile.images.count() == 0
+
+    @override_settings(VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE=4)
+    def test_upload_oversized_file_returns_400(self):
+        image = SimpleUploadedFile("portfolio.jpg", b"too-large", content_type="image/jpeg")
+
+        response = self.client.post(reverse("portfolio-list"), {"image": image}, format="multipart")
+
+        assert response.status_code == 400
+        assert "too large" in response.data["detail"]
+        assert self.profile.images.count() == 0
+
+    def test_list_includes_upload_status_for_existing_completed_images(self):
+        PortfolioImage.objects.create(
+            vendor=self.profile,
+            public_id="portfolio/existing",
+            secure_url="https://example.com/existing.jpg",
+            caption="Existing",
+            upload_status=PortfolioImage.UploadStatus.COMPLETED,
+        )
+
+        response = self.client.get(reverse("portfolio-list"))
+
+        assert response.status_code == 200
+        assert response.data[0]["secure_url"] == "https://example.com/existing.jpg"
+        assert response.data[0]["upload_status"] == "completed"
+
+    def test_celery_task_marks_image_completed_on_cloudinary_success(self, monkeypatch):
+        temp_path = default_storage.save("vendor_portfolio_uploads/test/portfolio.jpg", ContentFile(b"image"))
+        image = PortfolioImage.objects.create(
+            vendor=self.profile,
+            caption="Queued",
+            upload_status=PortfolioImage.UploadStatus.PENDING,
+            original_filename="portfolio.jpg",
+            temp_upload_path=temp_path,
+        )
+
+        monkeypatch.setattr(
+            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_image",
+            lambda self, file, fallback_to_storage=False: {
+                "public_id": "vendor_portfolio/portfolio",
+                "secure_url": "https://res.cloudinary.com/demo/portfolio.jpg",
+            },
+        )
+
+        result = upload_vendor_portfolio_image_task.run(str(image.id))
+
+        image.refresh_from_db()
+        assert result["status"] == "completed"
+        assert image.upload_status == PortfolioImage.UploadStatus.COMPLETED
+        assert image.secure_url == "https://res.cloudinary.com/demo/portfolio.jpg"
+        assert image.public_id == "vendor_portfolio/portfolio"
+        assert image.temp_upload_path is None
+        assert not default_storage.exists(temp_path)
+
+    def test_celery_task_marks_image_failed_on_cloudinary_failure(self, monkeypatch):
+        temp_path = default_storage.save("vendor_portfolio_uploads/test/failure.jpg", ContentFile(b"image"))
+        image = PortfolioImage.objects.create(
+            vendor=self.profile,
+            caption="Queued",
+            upload_status=PortfolioImage.UploadStatus.PENDING,
+            original_filename="failure.jpg",
+            temp_upload_path=temp_path,
+        )
+
+        monkeypatch.setattr(
+            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_image",
+            lambda self, file, fallback_to_storage=False: (_ for _ in ()).throw(RuntimeError("network down")),
+        )
+
+        upload_vendor_portfolio_image_task.request.retries = upload_vendor_portfolio_image_task.max_retries
+        result = upload_vendor_portfolio_image_task.run(str(image.id))
+
+        image.refresh_from_db()
+        assert result["status"] == "failed"
+        assert image.upload_status == PortfolioImage.UploadStatus.FAILED
+        assert image.upload_error == "Portfolio image upload failed. Please try again."
 
     def test_delete_image_not_found(self):
         url = reverse("portfolio-detail", args=[uuid.uuid4()])

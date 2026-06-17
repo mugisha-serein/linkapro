@@ -7,8 +7,10 @@ from rest_framework.permissions import IsAuthenticated
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.db.models import Max
 from django.utils import timezone
 from django.utils.decorators import method_decorator
+from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django_app.common.permissions import IsVendor, IsAdmin
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -22,13 +24,13 @@ from .serializers import (
     ReorderImagesSerializer,
     VerificationDocumentUploadSerializer,
 )
+from .models import PortfolioImage as PortfolioImageModel
 from .models import VendorProfile as VendorProfileModel
 from .services import get_command_handlers, get_query_handlers
 from application.vendors.commands import (
     CreateVendorProfileCommand,
     UpdateVendorProfileCommand,
     SubmitVendorForReviewCommand,
-    AddPortfolioImageCommand,
     DeletePortfolioImageCommand,
     ReorderPortfolioImagesCommand,
     CreateServicePackageCommand,
@@ -49,6 +51,7 @@ VENDOR_PROFILE_INCOMPLETE_DETAIL = "Vendor profile setup is required before acce
 VENDOR_PROFILE_SETUP_REDIRECT = "/vendor/profile"
 VENDOR_SUSPENDED_CODE = "vendor_suspended"
 VENDOR_SUSPENDED_DETAIL = "Your vendor account is suspended. Please contact support."
+ALLOWED_PORTFOLIO_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
 def _profile_completion_errors(profile: VendorProfileDTO) -> dict[str, list[str]]:
@@ -235,34 +238,50 @@ class PortfolioImageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # In a real implementation, we would:
-        # 1. Save the uploaded file temporarily
-        # 2. Dispatch a domain event that triggers a Celery task
-        # 3. The Celery task uploads to Cloudinary and then calls the application handler
-        # For simplicity, we'll assume synchronous upload here, but note the spec requires async.
-
-        from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
-
-        adapter = CloudinaryAdapter()
-        try:
-            result = adapter.upload_image(request.FILES["image"])
-        except Exception:
+        uploaded_image = request.FILES["image"]
+        content_type = (getattr(uploaded_image, "content_type", "") or "").lower()
+        if content_type not in ALLOWED_PORTFOLIO_IMAGE_TYPES:
             return Response(
-                {"detail": "Image upload service is currently unavailable. Please try again later."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                {"detail": "Unsupported image type. Upload JPEG, PNG, or WEBP images only."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        caption = request.data.get("caption")
-        cmd = AddPortfolioImageCommand(
+        max_upload_size = getattr(settings, "VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE", 4 * 1024 * 1024)
+        if uploaded_image.size > max_upload_size:
+            return Response(
+                {"detail": f"Image file is too large. Maximum size is {max_upload_size // (1024 * 1024)}MB."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = PortfolioImageSerializer(data={"caption": request.data.get("caption", "")})
+        serializer.is_valid(raise_exception=True)
+
+        safe_filename = get_valid_filename(uploaded_image.name)
+        temp_path = default_storage.save(
+            f"vendor_portfolio_uploads/{profile.id}/{uuid.uuid4().hex}_{safe_filename}",
+            uploaded_image,
+        )
+        max_order = PortfolioImageModel.objects.filter(vendor_id=profile.id).aggregate(Max("order"))["order__max"]
+        image = PortfolioImageModel.objects.create(
             vendor_id=profile.id,
-            public_id=result["public_id"],
-            secure_url=result["secure_url"],
-            caption=caption,
+            caption=serializer.validated_data.get("caption") or None,
+            order=(max_order if max_order is not None else -1) + 1,
+            upload_status=PortfolioImageModel.UploadStatus.PENDING,
+            original_filename=uploaded_image.name,
+            temp_upload_path=temp_path,
         )
 
-        command_handlers = get_command_handlers()
-        image_dto = command_handlers.add_portfolio_image(cmd)
-        return Response(self._serialize_image(image_dto), status=status.HTTP_201_CREATED)
+        from tasks.image_tasks import upload_vendor_portfolio_image_task
+
+        upload_vendor_portfolio_image_task.delay(str(image.id))
+        return Response(
+            {
+                "status": "processing",
+                "job_id": str(image.id),
+                "message": "Portfolio image upload is processing.",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     def delete(self, request, image_id):
         """Delete a portfolio image."""
@@ -291,6 +310,9 @@ class PortfolioImageView(APIView):
             "secure_url": dto.secure_url,
             "caption": dto.caption,
             "order": dto.order,
+            "upload_status": dto.upload_status,
+            "upload_error": dto.upload_error,
+            "original_filename": dto.original_filename,
         }
 
 

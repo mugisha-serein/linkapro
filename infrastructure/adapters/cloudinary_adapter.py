@@ -26,8 +26,10 @@ class CloudinaryAdapter:
                 secure=True,
             )
 
-    def upload_image(self, file, folder: str = "vendor_portfolio") -> dict:
+    def upload_image(self, file, folder: str = "vendor_portfolio", fallback_to_storage: bool = True) -> dict:
         if not self._cloudinary_configured:
+            if not fallback_to_storage:
+                raise RuntimeError("Cloudinary credentials are not configured.")
             logger.warning("Cloudinary credentials are not configured. Saving portfolio image locally instead.")
             return self._store_locally(file, folder)
 
@@ -40,6 +42,8 @@ class CloudinaryAdapter:
                 max_file_size=10_000_000,  # 10MB
             )
         except cloudinary.exceptions.Error as exc:
+            if not fallback_to_storage:
+                raise
             logger.exception("Cloudinary upload failed; falling back to local storage: %s", exc)
             return self._store_locally(file, folder)
 

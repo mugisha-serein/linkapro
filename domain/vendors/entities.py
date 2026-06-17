@@ -116,6 +116,9 @@ class PortfolioImage:
     secure_url: str          # Cloudinary URL
     caption: Optional[str] = None
     order: int = 0
+    upload_status: str = "completed"
+    upload_error: Optional[str] = None
+    original_filename: Optional[str] = None
     created_at: datetime = field(default_factory=utc_now)
 
     def update_caption(self, caption: Optional[str]) -> None:

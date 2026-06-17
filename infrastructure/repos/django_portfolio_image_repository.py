@@ -30,6 +30,9 @@ class DjangoPortfolioImageRepository(IPortfolioImageRepository):
         obj.secure_url = domain.secure_url
         obj.caption = domain.caption
         obj.order = domain.order
+        obj.upload_status = domain.upload_status
+        obj.upload_error = domain.upload_error
+        obj.original_filename = domain.original_filename
         obj.save()
         return self._to_domain(obj)
 
@@ -44,5 +47,8 @@ class DjangoPortfolioImageRepository(IPortfolioImageRepository):
             secure_url=model.secure_url,
             caption=model.caption,
             order=model.order,
+            upload_status=model.upload_status,
+            upload_error=model.upload_error,
+            original_filename=model.original_filename,
             created_at=model.created_at,
         )

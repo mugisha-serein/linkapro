@@ -71,12 +71,22 @@ class VendorProfile(models.Model):
 
 
 class PortfolioImage(models.Model):
+    class UploadStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="images")
-    public_id = models.CharField(max_length=200)
-    secure_url = models.URLField()
+    public_id = models.CharField(max_length=200, blank=True)
+    secure_url = models.URLField(blank=True)
     caption = models.CharField(max_length=500, blank=True, null=True)
     order = models.PositiveIntegerField(default=0)
+    upload_status = models.CharField(max_length=20, choices=UploadStatus.choices, default=UploadStatus.COMPLETED)
+    upload_error = models.TextField(blank=True, null=True)
+    original_filename = models.CharField(max_length=255, blank=True, null=True)
+    temp_upload_path = models.CharField(max_length=500, blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:

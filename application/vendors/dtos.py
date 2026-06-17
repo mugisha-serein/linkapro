@@ -27,6 +27,9 @@ class PortfolioImageDTO:
     secure_url: str
     caption: Optional[str]
     order: int
+    upload_status: str = "completed"
+    upload_error: Optional[str] = None
+    original_filename: Optional[str] = None
 
 @dataclass(frozen=True)
 class ServicePackageDTO:
