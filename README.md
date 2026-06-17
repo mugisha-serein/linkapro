@@ -436,7 +436,37 @@ python manage.py sync_marketplace_listings
 The Django vendor profile remains the source of truth. Run `sync_marketplace_listings` after deployment or data imports to backfill existing approved vendors into the FastAPI projection.
 
 ---
+### Render Celery Worker and Beat
+
+Render Celery Worker and Celery Beat services must set `DJANGO_SETTINGS_MODULE=django_app.settings.production`. Celery intentionally fails at startup in Render/production-like environments when this variable is missing.
+
+Required worker/beat environment variables:
+
+```env
+DJANGO_SETTINGS_MODULE=django_app.settings.production
+DJANGO_SECRET_KEY=<production-secret>
+DATABASE_URL=<production-database-url>
+DATABASE_SSL=true
+REDIS_URL=<redis-url>
+FASTAPI_INTERNAL_URL=<fastapi-internal-url>
+FASTAPI_INTERNAL_SHARED_SECRET=<shared-secret>
+```
+
+Worker command:
+
+```bash
+celery -A tasks.celery worker --loglevel=info
+```
+
+Beat command:
+
+```bash
+celery -A tasks.celery beat --loglevel=info
+```
+
+---
 ### 🌐 Service Access Points
+
 
 ---
 

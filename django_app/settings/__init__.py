@@ -11,9 +11,9 @@
 #
 # The settings are selected via DJANGO_SETTINGS_MODULE environment variable,
 # which is set in:
-# - Celery: tasks/celery.py (defaults to development)
-# - Docker Compose: docker-compose.yml (defaults to development)
-# - Render: Environment variable in dashboard (should be production)
+# - Celery: tasks/celery.py (local fallback only; production must set it)
+# - Docker Compose: docker-compose.yml
+# - Render: Environment variable in dashboard (must be production)
 # - pytest: pytest.ini (should be test)
 #
 # This __init__.py is imported by Django's configuration system.
