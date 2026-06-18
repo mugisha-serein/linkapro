@@ -28,9 +28,27 @@ class PortfolioImageDTO:
     secure_url: str
     caption: Optional[str]
     order: int
-    upload_status: str = "completed"
+    media_type: str = "image"
+    upload_status: str = "uploaded"
+    quality_status: str = "passed"
+    visibility_status: str = "approved"
     upload_error: Optional[str] = None
+    failure_reason: Optional[str] = None
+    rejection_reason: Optional[str] = None
     original_filename: Optional[str] = None
+    mime_type: str = ""
+    file_size: int = 0
+    local_preview_url: Optional[str] = None
+    cloudinary_public_id: Optional[str] = None
+    cloudinary_secure_url: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration_seconds: Optional[int] = None
+    analyzer_score: Optional[int] = None
+    analyzer_summary: Optional[str] = None
+    is_active: bool = True
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
 
 @dataclass(frozen=True)
 class ServicePackageDTO:

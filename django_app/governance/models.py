@@ -17,10 +17,13 @@ class AuditLog(models.Model):
         APPROVE_PACKAGE = "approve_package"
         REJECT_PACKAGE = "reject_package"
         HARD_DELETE_PACKAGE = "hard_delete_package"
+        APPROVE_PORTFOLIO_MEDIA = "approve_portfolio_media"
+        REJECT_PORTFOLIO_MEDIA = "reject_portfolio_media"
+        HARD_DELETE_PORTFOLIO_MEDIA = "hard_delete_portfolio_media"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     admin = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="admin_actions")
-    action_type = models.CharField(max_length=30, choices=ActionType.choices)
+    action_type = models.CharField(max_length=40, choices=ActionType.choices)
     target_type = models.CharField(max_length=50)
     target_id = models.UUIDField()
     details = models.JSONField(default=dict)

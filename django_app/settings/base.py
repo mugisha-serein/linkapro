@@ -126,6 +126,10 @@ ODCR_ENABLED = os.environ.get("ODCR_ENABLED", "false").lower() == "true"
 ODCR_API_URL = os.environ.get("ODCR_API_URL", "")
 ODCR_API_KEY = os.environ.get("ODCR_API_KEY", "")
 ODCR_TIMEOUT_SECONDS = int(os.environ.get("ODCR_TIMEOUT_SECONDS", 10))
+MEDIA_ANALYZER_ENABLED = os.environ.get("MEDIA_ANALYZER_ENABLED", "false").lower() == "true"
+MEDIA_ANALYZER_API_URL = os.environ.get("MEDIA_ANALYZER_API_URL", "")
+MEDIA_ANALYZER_API_KEY = os.environ.get("MEDIA_ANALYZER_API_KEY", "")
+MEDIA_ANALYZER_TIMEOUT_SECONDS = int(os.environ.get("MEDIA_ANALYZER_TIMEOUT_SECONDS", 10))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

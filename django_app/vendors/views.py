@@ -1,5 +1,6 @@
 import logging
 import uuid
+from pathlib import Path
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -53,6 +54,9 @@ VENDOR_PROFILE_SETUP_REDIRECT = "/vendor/profile"
 VENDOR_SUSPENDED_CODE = "vendor_suspended"
 VENDOR_SUSPENDED_DETAIL = "Your vendor account is suspended. Please contact support."
 ALLOWED_PORTFOLIO_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+ALLOWED_PORTFOLIO_VIDEO_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
+ALLOWED_PORTFOLIO_MEDIA_TYPES = ALLOWED_PORTFOLIO_IMAGE_TYPES | ALLOWED_PORTFOLIO_VIDEO_TYPES
+VIDEO_PORTFOLIO_MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 PDF_MIME_TYPE = "application/pdf"
 DOCUMENT_RECEIVED_MESSAGE = "Document received. Verification will continue automatically."
 logger = logging.getLogger(__name__)
@@ -236,58 +240,67 @@ class PortfolioImageView(APIView):
         return Response([self._serialize_image(img) for img in images])
 
     def post(self, request):
-        """Upload a new portfolio image (via Celery task)."""
+        """Upload a new portfolio image/video (via Celery task)."""
         profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
         if error_response:
             return error_response
 
-        if "image" not in request.FILES:
+        uploaded_media = request.FILES.get("media") or request.FILES.get("image")
+        if not uploaded_media:
             return Response(
-                {"detail": "No image file provided."},
+                {"detail": "No portfolio media file provided."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        uploaded_image = request.FILES["image"]
-        content_type = (getattr(uploaded_image, "content_type", "") or "").lower()
-        if content_type not in ALLOWED_PORTFOLIO_IMAGE_TYPES:
-            return Response(
-                {"detail": "Unsupported image type. Upload JPEG, PNG, or WEBP images only."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        max_upload_size = getattr(settings, "VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE", 4 * 1024 * 1024)
-        if uploaded_image.size > max_upload_size:
-            return Response(
-                {"detail": f"Image file is too large. Maximum size is {max_upload_size // (1024 * 1024)}MB."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        validation_error, media_type, dimensions = self._validate_portfolio_media(uploaded_media)
+        if validation_error:
+            return Response(validation_error, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = PortfolioImageSerializer(data={"caption": request.data.get("caption", "")})
         serializer.is_valid(raise_exception=True)
 
-        safe_filename = get_valid_filename(uploaded_image.name)
+        safe_filename = get_valid_filename(uploaded_media.name)
         temp_path = default_storage.save(
             f"vendor_portfolio_uploads/{profile.id}/{uuid.uuid4().hex}_{safe_filename}",
-            uploaded_image,
+            uploaded_media,
         )
         max_order = PortfolioImageModel.objects.filter(vendor_id=profile.id).aggregate(Max("order"))["order__max"]
+        local_preview_url = default_storage.url(temp_path)
         image = PortfolioImageModel.objects.create(
             vendor_id=profile.id,
             caption=serializer.validated_data.get("caption") or None,
             order=(max_order if max_order is not None else -1) + 1,
-            upload_status=PortfolioImageModel.UploadStatus.PENDING,
-            original_filename=uploaded_image.name,
+            media_type=media_type,
+            is_active=True,
+            upload_status=PortfolioImageModel.UploadStatus.QUEUED,
+            quality_status=PortfolioImageModel.QualityStatus.PENDING_ANALYSIS,
+            visibility_status=PortfolioImageModel.VisibilityStatus.PRIVATE,
+            original_filename=uploaded_media.name,
+            mime_type=(getattr(uploaded_media, "content_type", "") or "").lower(),
+            file_size=uploaded_media.size,
+            width=dimensions.get("width"),
+            height=dimensions.get("height"),
+            local_preview_url=local_preview_url,
             temp_upload_path=temp_path,
         )
 
-        from tasks.image_tasks import upload_vendor_portfolio_image_task
+        from tasks.image_tasks import process_vendor_portfolio_media_task
 
-        upload_vendor_portfolio_image_task.delay(str(image.id))
+        processing_deferred = False
+        try:
+            process_vendor_portfolio_media_task.delay(str(image.id))
+        except Exception:
+            processing_deferred = True
+            image.upload_status = PortfolioImageModel.UploadStatus.PROCESSING_DEFERRED
+            image.save(update_fields=["upload_status", "updated_at"])
+            logger.exception("Vendor portfolio media dispatch deferred.", extra={"image_id": str(image.id)})
         return Response(
             {
-                "status": "processing",
+                "status": "queued",
                 "job_id": str(image.id),
-                "message": "Portfolio image upload is processing.",
+                "processing_deferred": processing_deferred,
+                "message": "Portfolio item received. Review will continue automatically.",
+                "item": self._serialize_model_image(image),
             },
             status=status.HTTP_202_ACCEPTED,
         )
@@ -301,28 +314,145 @@ class PortfolioImageView(APIView):
 
         # Verify ownership: fetch the image and check vendor_id
         images = query_handlers.list_portfolio_images(profile.id)
-        image = next((img for img in images if str(img.id) == image_id), None)
+        image = next((img for img in images if img.id == image_id), None)
         if not image:
             return Response(
                 {"detail": "Image not found or does not belong to this vendor."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        cmd = DeletePortfolioImageCommand(image_id=uuid.UUID(image_id))
+        cmd = DeletePortfolioImageCommand(image_id=image_id, deleted_by_id=request.user.id)
         command_handlers = get_command_handlers()
         command_handlers.delete_portfolio_image(cmd)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(
+            {
+                "message": "Portfolio item removed from active listings.",
+                "id": str(image_id),
+            },
+            status=status.HTTP_200_OK,
+        )
 
     def _serialize_image(self, dto: PortfolioImageDTO) -> dict:
         return {
             "id": str(dto.id),
             "secure_url": dto.secure_url,
+            "local_preview_url": dto.local_preview_url,
+            "media_type": dto.media_type,
             "caption": dto.caption,
             "order": dto.order,
             "upload_status": dto.upload_status,
+            "quality_status": dto.quality_status,
+            "visibility_status": dto.visibility_status,
             "upload_error": dto.upload_error,
+            "failure_reason": dto.failure_reason,
+            "rejection_reason": dto.rejection_reason,
             "original_filename": dto.original_filename,
+            "mime_type": dto.mime_type,
+            "file_size": dto.file_size,
+            "cloudinary_secure_url": dto.cloudinary_secure_url or dto.secure_url,
+            "width": dto.width,
+            "height": dto.height,
+            "duration_seconds": dto.duration_seconds,
+            "analyzer_score": dto.analyzer_score,
+            "analyzer_summary": dto.analyzer_summary,
+            "is_active": dto.is_active,
+            "is_deleted": dto.is_deleted,
         }
+
+    def _serialize_model_image(self, image: PortfolioImageModel) -> dict:
+        return {
+            "id": str(image.id),
+            "secure_url": image.cloudinary_secure_url or image.secure_url,
+            "local_preview_url": image.local_preview_url,
+            "media_type": image.media_type,
+            "caption": image.caption,
+            "order": image.order,
+            "upload_status": image.upload_status,
+            "quality_status": image.quality_status,
+            "visibility_status": image.visibility_status,
+            "upload_error": image.upload_error,
+            "failure_reason": image.failure_reason,
+            "rejection_reason": image.rejection_reason,
+            "original_filename": image.original_filename,
+            "mime_type": image.mime_type,
+            "file_size": image.file_size,
+            "cloudinary_secure_url": image.cloudinary_secure_url or image.secure_url,
+            "width": image.width,
+            "height": image.height,
+            "duration_seconds": image.duration_seconds,
+            "analyzer_score": image.analyzer_score,
+            "analyzer_summary": image.analyzer_summary,
+            "is_active": image.is_active,
+            "is_deleted": image.is_deleted,
+        }
+
+    def _validate_portfolio_media(self, uploaded_media) -> tuple[dict | None, str | None, dict]:
+        content_type = (getattr(uploaded_media, "content_type", "") or "").lower()
+        filename = uploaded_media.name or ""
+        extension = Path(filename).suffix.lower()
+        if content_type not in ALLOWED_PORTFOLIO_MEDIA_TYPES:
+            return {"media": ["Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."]}, None, {}
+
+        media_type = PortfolioImageModel.MediaType.IMAGE if content_type in ALLOWED_PORTFOLIO_IMAGE_TYPES else PortfolioImageModel.MediaType.VIDEO
+        max_upload_size = (
+            getattr(settings, "VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE", 4 * 1024 * 1024)
+            if media_type == PortfolioImageModel.MediaType.IMAGE
+            else VIDEO_PORTFOLIO_MAX_UPLOAD_SIZE
+        )
+        if uploaded_media.size > max_upload_size:
+            if media_type == PortfolioImageModel.MediaType.VIDEO:
+                return {"media": ["Videos must be 10MB or smaller."]}, None, {}
+            return {"media": [f"Image file is too large. Maximum size is {max_upload_size // (1024 * 1024)}MB."]}, None, {}
+
+        current_position = uploaded_media.tell() if hasattr(uploaded_media, "tell") else None
+        try:
+            uploaded_media.seek(0)
+            header = uploaded_media.read(32)
+        finally:
+            try:
+                uploaded_media.seek(current_position or 0)
+            except Exception:
+                pass
+
+        if media_type == PortfolioImageModel.MediaType.IMAGE:
+            if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+                return {"media": ["Only JPEG, PNG, or WEBP image files are allowed."]}, None, {}
+            if not (
+                header.startswith(b"\xff\xd8\xff")
+                or header.startswith(b"\x89PNG\r\n\x1a\n")
+                or header.startswith(b"RIFF")
+            ):
+                return {"media": ["Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."]}, None, {}
+            dimensions_error, dimensions = self._image_dimensions(uploaded_media)
+            if dimensions_error:
+                return dimensions_error, None, {}
+            return None, media_type, dimensions
+
+        if extension not in {".mp4", ".webm", ".mov"}:
+            return {"media": ["Only MP4, WEBM, or MOV highlight videos are allowed."]}, None, {}
+        if b"ftyp" not in header and not header.startswith(b"\x1aE\xdf\xa3"):
+            return {"media": ["This video could not be read. Upload a valid highlight video."]}, None, {}
+        return None, media_type, {}
+
+    def _image_dimensions(self, uploaded_media) -> tuple[dict | None, dict]:
+        current_position = uploaded_media.tell() if hasattr(uploaded_media, "tell") else None
+        try:
+            from PIL import Image
+
+            uploaded_media.seek(0)
+            image = Image.open(uploaded_media)
+            image.verify()
+            width, height = image.size
+        except Exception:
+            return {"media": ["This image could not be read. Upload a valid image."]}, {}
+        finally:
+            try:
+                uploaded_media.seek(current_position or 0)
+            except Exception:
+                pass
+        if width < 800 or height < 600:
+            return {"media": ["This image is too small. Upload a clearer, higher-resolution photo."]}, {}
+        return None, {"width": width, "height": height}
 
 
 class PortfolioImageReorderView(APIView):

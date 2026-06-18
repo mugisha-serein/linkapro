@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from django_app.common.permissions import IsAdmin
 from django_app.identity.models import User
 from django_app.events.models import Event
-from django_app.vendors.models import ServicePackage, VendorProfile
+from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile
 from infrastructure.adapters.marketplace_projection import (
     delete_vendor_from_marketplace,
     sync_vendor_to_marketplace,
@@ -131,6 +131,30 @@ def _serialize_package(package: ServicePackage) -> dict:
         "deleted_at": package.deleted_at.isoformat() if package.deleted_at else None,
         "created_at": package.created_at.isoformat(),
         "updated_at": package.updated_at.isoformat(),
+    }
+
+
+def _serialize_portfolio_media(media: PortfolioImage) -> dict:
+    return {
+        "id": str(media.id),
+        "vendor_id": str(media.vendor_id),
+        "vendor_business_name": media.vendor.business_name,
+        "media_type": media.media_type,
+        "secure_url": media.cloudinary_secure_url or media.secure_url,
+        "local_preview_url": media.local_preview_url,
+        "caption": media.caption,
+        "order": media.order,
+        "upload_status": media.upload_status,
+        "quality_status": media.quality_status,
+        "visibility_status": media.visibility_status,
+        "rejection_reason": media.rejection_reason,
+        "failure_reason": media.failure_reason,
+        "analyzer_score": media.analyzer_score,
+        "analyzer_summary": media.analyzer_summary,
+        "is_active": media.is_active,
+        "is_deleted": media.is_deleted,
+        "created_at": media.created_at.isoformat(),
+        "updated_at": media.updated_at.isoformat(),
     }
 
 
@@ -406,6 +430,86 @@ class AdminVendorPackageHardDeleteView(APIView):
         _audit(request.user, AuditLog.ActionType.HARD_DELETE_PACKAGE, "service_package", package_id_value)
         package.hard_delete()
         return Response({"message": "Package permanently deleted.", "package_id": str(package_id_value)})
+
+
+class AdminVendorPortfolioPendingListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        media = (
+            PortfolioImage.objects.select_related("vendor")
+            .filter(
+                visibility_status__in=[
+                    PortfolioImage.VisibilityStatus.PRIVATE,
+                    PortfolioImage.VisibilityStatus.WAITING_APPROVAL,
+                ],
+                upload_status=PortfolioImage.UploadStatus.UPLOADED,
+            )
+            .exclude(quality_status=PortfolioImage.QualityStatus.FAILED)
+            .order_by("-updated_at", "-created_at")
+        )
+        return Response({"results": [_serialize_portfolio_media(item) for item in media], "count": media.count()})
+
+
+class AdminVendorPortfolioApproveView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def post(self, request, media_id):
+        try:
+            media = PortfolioImage.objects.select_related("vendor").get(id=media_id)
+        except PortfolioImage.DoesNotExist:
+            return Response({"detail": "Portfolio item not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if media.upload_status != PortfolioImage.UploadStatus.UPLOADED:
+            return Response(
+                {"detail": "Portfolio item must finish uploading before approval."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if media.quality_status == PortfolioImage.QualityStatus.FAILED:
+            return Response(
+                {"detail": "Portfolio item failed quality review and cannot be approved."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        media.visibility_status = PortfolioImage.VisibilityStatus.APPROVED
+        media.rejection_reason = None
+        media.is_active = True
+        media.save(update_fields=["visibility_status", "rejection_reason", "is_active", "updated_at"])
+        _audit(request.user, AuditLog.ActionType.APPROVE_PORTFOLIO_MEDIA, "portfolio_image", media.id)
+        return Response({"message": "Portfolio item approved.", "portfolio_item": _serialize_portfolio_media(media)})
+
+
+class AdminVendorPortfolioRejectView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def post(self, request, media_id):
+        reason = request.data.get("reason") or "Portfolio item rejected by administrator."
+        try:
+            media = PortfolioImage.objects.select_related("vendor").get(id=media_id)
+        except PortfolioImage.DoesNotExist:
+            return Response({"detail": "Portfolio item not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        media.visibility_status = PortfolioImage.VisibilityStatus.REJECTED
+        media.rejection_reason = reason
+        media.is_active = False
+        media.save(update_fields=["visibility_status", "rejection_reason", "is_active", "updated_at"])
+        _audit(request.user, AuditLog.ActionType.REJECT_PORTFOLIO_MEDIA, "portfolio_image", media.id, {"reason": reason})
+        return Response({"message": "Portfolio item rejected.", "portfolio_item": _serialize_portfolio_media(media)})
+
+
+class AdminVendorPortfolioHardDeleteView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def delete(self, request, media_id):
+        try:
+            media = PortfolioImage.all_objects.select_related("vendor").get(id=media_id)
+        except PortfolioImage.DoesNotExist:
+            return Response({"detail": "Portfolio item not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        media_id_value = media.id
+        _audit(request.user, AuditLog.ActionType.HARD_DELETE_PORTFOLIO_MEDIA, "portfolio_image", media_id_value)
+        media.hard_delete()
+        return Response({"message": "Portfolio item permanently deleted.", "portfolio_item_id": str(media_id_value)})
 
 
 class AdminFlagListView(APIView):
