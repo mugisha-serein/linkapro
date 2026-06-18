@@ -1,10 +1,21 @@
-Fix LinkaPro vendor profile 400 error, verification document upload flow, PDF-only validation, async Cloudinary storage, document quality checks, and required “Other category” input.
+Fix LinkaPro vendor verification document 500 error, background document upload/verification fallback, ODCR/OCR verification flow, and vendor onboarding UX.
+
+Current error:
+POST https://linkapro-django.onrender.com/api/django/vendors/profile/verification-documents/ returns 500 Internal Server Error.
 
 Problem:
-POST https://linkapro-django.onrender.com/api/django/vendors/profile/ returns 400 Bad Request when saving vendor profile. Also, vendor verification documents must not be uploaded synchronously or stored directly as raw files in the database. The database should store only Cloudinary URL/public_id/metadata after Celery background upload. Backend must only accept PDF verification documents. The document upload must go through validation/quality checks so fake/invalid documents are rejected as much as possible. Also, when vendor category is “other”, frontend must show an input asking what the vendor does, and that input must be required.
+The verification document endpoint must never crash because Celery, Redis, Cloudinary, or ODCR/OCR document verification is unavailable. Vendor profile save must succeed. If document background processing cannot start immediately, the app should keep a pending document/job record and continue the vendor to dashboard after profile submission. The user should see a short toast that the document will be processed automatically when the service is available again. Do not tell the user that the document is “not uploaded yet” as a failure. This should be handled as a background job state.
 
 Goal:
-Vendor profile creation/update must save successfully without being blocked by Cloudinary/Celery document upload. Verification document upload must be asynchronous, PDF-only, validated, and stored as Cloudinary URL/public_id metadata after upload. Category “other” must require custom category text.
+Make vendor verification document upload resilient:
+
+* PDF is accepted only after validation.
+* File is staged safely.
+* DB stores metadata/job status, not raw file bytes.
+* Celery uploads to Cloudinary and runs ODCR/OCR verification in background.
+* If Celery/broker is unavailable, endpoint still returns a controlled response, not 500.
+* Vendor can continue after profile save/submission.
+* Add logout button top-right on vendor setup/dashboard pages so user can return to login without manually typing URL.
 
 Repositories:
 
@@ -13,218 +24,216 @@ Repositories:
 
 Backend tasks:
 
-1. Debug and fix vendor profile 400.
+1. Reproduce and identify the 500 root cause.
 
+   * Inspect Render logs or local traceback for:
+     POST /api/django/vendors/profile/verification-documents/
    * Inspect:
 
      * django_app/vendors/views.py
      * django_app/vendors/serializers.py
      * django_app/vendors/models.py
-     * application/vendors/commands.py
-     * application/vendors/handlers.py
-     * infrastructure/repos/django_vendor_profile_repository.py
-   * Confirm the exact required fields for POST /api/django/vendors/profile/.
-   * Ensure frontend payload matches backend serializer.
-   * Ensure profile creation succeeds when valid required fields are provided.
-   * Return clear field-level errors when invalid.
-   * Do not let verification document upload failure prevent basic profile save.
+     * tasks/document_tasks.py
+     * tasks/celery.py
+     * Cloudinary integration code
+     * ODCR/OCR integration code if present
+   * Return the exact exception causing the 500.
 
-2. Separate profile save from verification document upload.
+2. Make verification document endpoint fail-safe.
 
-   * Vendor profile POST/PATCH should only create/update profile fields:
-     business_name
-     category
-     custom_category if category == "other"
-     description
-     service_area
-     contact_email
-     contact_phone
-     website
-     any existing required fields
-   * Verification document upload should remain a separate endpoint:
-     /api/django/vendors/profile/verification-documents/
-   * Profile save must not require Cloudinary upload to complete.
+   * Endpoint must catch expected operational failures:
+     Celery broker unavailable
+     Redis unavailable
+     Cloudinary temporarily unavailable
+     ODCR/OCR service unavailable
+     task dispatch failure
+   * These must not return 500.
+   * Endpoint should create/update a VerificationDocument record with a safe status:
+     queued / pending_processing / processing_deferred
+   * Return HTTP 202 Accepted with a clear response:
+     {
+     "status": "queued",
+     "document_id": "...",
+     "processing_deferred": true,
+     "message": "Document received. Verification will continue automatically."
+     }
+   * Only return 400 for actual user/input errors:
+     non-PDF
+     corrupt PDF
+     oversized PDF
+     missing file
+     missing required document type
+   * Only return 403 for permission/workspace errors.
+   * Never expose internal exception messages to the user.
 
-3. Add/confirm category “other” backend support.
+3. PDF-only validation before staging.
 
-   * If category choices include "other", add a field:
-     custom_category or other_category_label
-   * Required only when category == "other".
-   * If category != "other", custom_category may be blank/null.
-   * Validation rule:
-     category == "other" and custom_category empty -> 400 field error.
-   * Marketplace projection should use custom_category label when category is "other" if appropriate for display/search, while preserving canonical category="other" if needed.
-   * Add migration if model field is missing.
-   * Existing vendors must not break.
-
-4. Verification document upload must be PDF-only.
-
-   * Backend must reject non-PDF files.
+   * Backend must accept PDF only.
    * Validate:
-     content_type == application/pdf
-     file extension .pdf
-     PDF magic header starts with %PDF
-     file size <= configured limit
-   * Add setting:
-     VENDOR_VERIFICATION_DOCUMENT_MAX_SIZE_MB
-     default reasonable value, for example 5MB or existing project standard.
-   * Return clear 400 errors for invalid type/size/corrupt PDF.
+     extension .pdf
+     content_type application/pdf where available
+     magic header starts with %PDF
+     file size <= VENDOR_VERIFICATION_DOCUMENT_MAX_SIZE_MB
+     parseable PDF
+     at least 1 page
+     not encrypted/password-protected
+   * If invalid, return field-level 400.
+   * Do not call Cloudinary or ODCR/OCR for invalid files.
 
-5. Add document quality/authenticity checks.
+4. Safe file staging.
 
-   * Do not claim perfect fraud detection.
-   * Implement practical server-side checks before upload:
-
-     * File is parseable PDF.
-     * PDF has at least 1 page.
-     * PDF is not empty.
-     * File is not encrypted/password protected.
-     * Optional: PDF metadata/basic text extraction if available.
-   * If the project already uses a PDF library, reuse it.
-   * If not, add a lightweight dependency only if acceptable.
-   * Store verification status:
-     pending_review / processing / verified / rejected / failed
-     depending on current model naming.
-   * Save safe rejection/failure reason.
-   * Admin should be able to review; do not auto-approve just because PDF is valid.
-   * Fake-document detection should be “quality/preflight validation”, not final truth.
-
-6. Verification document upload must be asynchronous.
-
-   * HTTP request should:
-
-     * validate vendor ownership/profile exists
-     * validate PDF type/size/header/basic quality
-     * save temporary file in safe Django storage/temp path
-     * create VerificationDocument record with status=pending/processing
-     * dispatch Celery task
-     * return 202 Accepted with:
-       {
-       "status": "processing",
-       "document_id": "...",
-       "message": "Verification document upload is processing."
-       }
-   * Do not upload to Cloudinary inside the HTTP request.
-   * Do not store raw file binary in database.
-   * Do not pass uploaded file object directly to Celery.
-
-7. Celery task for document upload.
-
-   * Add or update task, for example:
-     tasks/document_tasks.py
-     upload_vendor_verification_document_task(document_id)
-   * Task must:
-
-     * re-fetch document record from DB
-     * mark status=processing
-     * upload temporary PDF to Cloudinary as raw/resource_type=raw or correct Cloudinary document mode
-     * store:
-       cloudinary_public_id
-       cloudinary_secure_url
-       original_filename
-       file_size
-       mime_type
-     * mark status=pending_review or uploaded, depending current admin review flow
-     * cleanup temporary file after successful upload
-     * on failure, mark status=failed and save safe error message
-     * retry transient Cloudinary/network errors with exponential backoff
-     * be idempotent: if document already has Cloudinary URL and completed status, do not upload again.
-
-8. Database model requirements.
-
-   * Verification document model should store only metadata and URLs, not raw file bytes:
-     id
-     vendor/profile FK
-     document_type if currently used
+   * Do not store raw file bytes in database.
+   * Save uploaded PDF temporarily to Django storage or safe media/temp path.
+   * Store only:
+     document_id
+     vendor_id
      original_filename
      mime_type
      file_size
-     cloudinary_public_id
-     cloudinary_secure_url
+     local_staged_path or storage key
      upload_status
      verification_status
-     failure_reason/rejection_reason
-     created_at/updated_at
-   * Add migrations.
-   * Existing records should migrate safely.
-   * Existing Cloudinary URLs should be treated as uploaded/pending_review or completed based on current rules.
+     cloudinary_public_id nullable
+     cloudinary_secure_url nullable
+     odcr_status nullable
+     odcr_score nullable
+     odcr_result_summary nullable
+     failure_reason nullable
+   * Add migrations if fields are missing.
+   * Existing Cloudinary URL records must remain compatible.
 
-9. API response/list behavior.
+5. Celery task dispatch must be resilient.
 
-   * GET verification documents should include:
-     id
-     original_filename
-     cloudinary_secure_url if uploaded
-     upload_status
-     verification_status
-     failure_reason if failed/rejected
-     created_at
-   * Failed document should not break the profile page.
-   * Profile save endpoint should not return 400 because a document is processing.
+   * Try to enqueue:
+     process_vendor_verification_document_task.delay(document_id)
+   * If enqueue succeeds:
+     upload_status = queued
+     processing_deferred = false
+   * If enqueue fails because broker/Celery unavailable:
+     upload_status = processing_deferred
+     processing_deferred = true
+     log exception server-side
+     return 202, not 500
+   * Add a management command or periodic Celery beat task to pick up deferred documents later:
+     python manage.py process_deferred_vendor_documents
+     or a beat task:
+     retry_deferred_vendor_document_processing
+   * It should enqueue/process documents where upload_status is processing_deferred/queued and no Cloudinary URL exists.
 
-10. Frontend profile form fix.
+6. Celery document processing task.
 
-* Inspect:
-  vendor profile setup page
-  vendor profile page
-  vendor service/hooks/types
-  category dropdown/options
-* Fix payload sent to POST /vendors/profile/.
-* Ensure required backend fields are sent.
-* When category == "other":
-  show input:
-  “What do you do?”
-  make it required
-  send custom_category/other_category_label to backend
-* When category changes away from “other”, clear custom category field or stop sending it.
-* Show field-level validation errors from backend.
+   * Task name example:
+     process_vendor_verification_document_task(document_id)
+   * Task must be idempotent:
 
-11. Frontend verification document upload.
+     * if already uploaded and verified/pending_review, exit safely
+     * if Cloudinary URL exists, do not upload duplicate
+   * Steps:
 
-* Only allow selecting PDF files in file input:
-  accept="application/pdf,.pdf"
-* Validate file extension/type/size client-side before upload.
-* Still rely on backend validation as source of truth.
-* On upload submit:
-  show “Document upload started”
-  handle 202 Accepted
-  refresh/poll document list until uploaded/pending_review/failed
-* Do not display fake Cloudinary URLs.
-* Show processing/failed/pending review status clearly.
-* Document upload failure must not erase saved profile changes.
+     1. Re-fetch document from DB.
+     2. Mark upload_status=processing.
+     3. Upload staged PDF to Cloudinary as raw/document resource.
+     4. Save cloudinary_public_id and cloudinary_secure_url.
+     5. Run ODCR/OCR verification if configured.
+     6. Store ODCR/OCR result metadata.
+     7. Set verification_status:
+        pending_review if ODCR passes/preflight passes
+        needs_manual_review if ODCR uncertain/unavailable
+        rejected if document is clearly invalid by configured rules
+     8. Clean up local staged file after successful Cloudinary upload.
+     9. On transient failure, retry with exponential backoff.
+     10. On final failure, mark upload_status=failed and save safe failure_reason.
+   * Do not auto-approve vendor solely based on ODCR/OCR.
+   * ODCR/OCR is an assistive pre-check; admin review remains final.
 
-12. Fix redirect/onboarding behavior related to profile save.
+7. ODCR/OCR integration.
 
-* Saving profile successfully should keep user on setup/profile page if status is still draft/incomplete.
-* Submitting profile for review should redirect to dashboard only when backend returns pending_review.
-* Do not redirect to dashboard just because document upload started.
-* Do not create redirect loop between /vendor/dashboard and /vendor/profile/setup.
+   * If the intended tool is named ODCR in the project, wire that service behind an adapter:
+     infrastructure/adapters/document_verification.py
+   * If the actual tool is OCR, name the adapter generically:
+     DocumentVerificationAdapter
+   * Add env vars if needed:
+     ODCR_API_URL
+     ODCR_API_KEY
+     ODCR_TIMEOUT_SECONDS
+     ODCR_ENABLED=true/false
+   * If ODCR is disabled or unavailable:
+     set odcr_status = unavailable
+     verification_status = needs_manual_review or pending_review
+     do not crash
+   * Do not claim perfect fake/forgery detection.
 
-13. Tests.
+8. Profile save/submission behavior.
+
+   * POST/PATCH /vendors/profile/ must save profile independently from document processing.
+   * Submit-for-review should not fail only because background document processing is delayed.
+   * If the profile is complete and document record is queued/deferred/pending_review, allow status pending_review according to existing business rules.
+   * If current business rules require a document, accept queued/deferred document as “submitted” but not verified.
+   * Vendor should be able to continue to dashboard after profile is saved/submitted.
+   * Marketplace listing must still require admin approval only.
+
+9. Frontend verification document behavior.
+
+   * On document upload 202:
+     show a short success/info toast:
+     "Document received. Verification will continue automatically."
+   * Do not show scary wording like:
+     "Document not uploaded"
+     "Celery not running"
+     "Upload failed"
+     unless backend returns actual failed status.
+   * If backend returns processing_deferred=true:
+     show:
+     "Document received. We’ll process it automatically."
+   * Do not block profile save because document is still processing.
+   * Do not redirect vendor back to setup just because document upload is queued/deferred.
+   * After successful profile submit returning pending_review, redirect to /vendor/dashboard.
+   * Dashboard can show a soft pending review state, not an error.
+
+10. Celery unavailable UX rule.
+
+* If Celery is not running or Redis broker is unavailable:
+
+  * backend returns 202 with processing_deferred=true
+  * frontend shows toast for a few seconds
+  * vendor continues to dashboard after profile submission
+  * background retry command/beat later processes deferred documents
+* Do not tell the user technical service names like Celery, Redis, Cloudinary, or ODCR.
+
+11. Add logout button top-right.
+
+* Add a visible logout button on vendor onboarding/profile setup top-right.
+* Also ensure vendor dashboard top-right/topbar has logout access if not already.
+* It should call existing auth logout flow.
+* After logout, redirect to /auth/login.
+* Do not require user to manually type login URL.
+* Keep UI light and consistent.
+
+12. Tests.
     Backend tests:
 
-* valid profile POST succeeds
-* missing required field returns clear 400
-* category other without custom_category returns 400
-* category other with custom_category succeeds
-* PDF verification document returns 202 and queues Celery task
-* non-PDF file returns 400
+* valid PDF returns 202
+* non-PDF returns 400
 * corrupt PDF returns 400
 * oversized PDF returns 400
-* Celery document upload task stores Cloudinary metadata and no raw file in DB
-* Celery failure marks document failed
-* profile save still succeeds even if document upload is not complete
-* existing Cloudinary document records serialize correctly
+* Celery enqueue success returns 202 processing_deferred=false
+* Celery enqueue failure returns 202 processing_deferred=true, not 500
+* Cloudinary failure inside task marks failed after retries
+* ODCR/OCR unavailable does not crash task
+* deferred document command/beat picks up deferred records
+* profile save succeeds without completed document upload
+* submit-for-review can move to pending_review with queued/deferred document if business rules require submitted document only
+* marketplace still excludes pending_review vendors
 
-Frontend validation:
+Frontend tests or manual validation:
 
-* touched-file ESLint
-* build passes
-* category other input required
-* PDF-only file picker/validation
-* 202 upload response handled correctly
+* PDF upload shows accepted toast
+* deferred upload does not block redirect
+* profile save/submission redirects to dashboard only after pending_review
+* logout button redirects to login
+* no infinite redirect between /vendor/profile/setup and /vendor/dashboard
 
-14. Validation commands.
+13. Validation commands.
     Backend:
     python manage.py makemigrations --check
     python manage.py check
@@ -236,24 +245,24 @@ npm run build
 
 Rules:
 
-* Do not store raw files in database.
-* Do not upload verification documents synchronously in the request.
-* Do not let document upload block profile creation/update.
-* Backend must accept PDF only for verification documents.
-* Do not claim fake-document detection is perfect; implement practical PDF quality/preflight checks.
-* Do not auto-approve vendors just because a PDF uploaded.
-* Do not show mock document URLs.
-* Do not weaken admin review.
-* Keep Django vendor profile as source of truth.
-* Keep marketplace listing only for approved vendors.
+* Never return 500 for expected background service outages.
+* Never expose Celery/Redis/Cloudinary/ODCR errors to the user.
+* Do not store raw document bytes in the database.
+* Backend allows PDF only.
+* Document processing is background-only.
+* User can continue after profile save/submission.
+* Do not auto-approve vendors based only on automated document checks.
+* Keep pending_review vendors out of marketplace until admin approval.
 * Keep light UI only.
+* No mocked document URLs.
 
 Return:
 
-* Root cause of POST /vendors/profile/ 400
+* Exact root cause of the current 500
 * Files changed
 * Migration names
-* New/changed API response examples
+* New response examples
+* How deferred processing works
 * Validation results
-* Suggested backend branch and commit
-* Suggested frontend branch and commit
+* Suggested backend branch/commit
+* Suggested frontend branch/commit

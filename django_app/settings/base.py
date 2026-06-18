@@ -122,6 +122,10 @@ MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE = int(os.environ.get("VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE", 4 * 1024 * 1024))
 VENDOR_VERIFICATION_DOCUMENT_MAX_SIZE_MB = int(os.environ.get("VENDOR_VERIFICATION_DOCUMENT_MAX_SIZE_MB", 5))
+ODCR_ENABLED = os.environ.get("ODCR_ENABLED", "false").lower() == "true"
+ODCR_API_URL = os.environ.get("ODCR_API_URL", "")
+ODCR_API_KEY = os.environ.get("ODCR_API_KEY", "")
+ODCR_TIMEOUT_SECONDS = int(os.environ.get("ODCR_TIMEOUT_SECONDS", 10))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

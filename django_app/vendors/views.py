@@ -1,3 +1,4 @@
+import logging
 import uuid
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -51,6 +52,8 @@ VENDOR_SUSPENDED_CODE = "vendor_suspended"
 VENDOR_SUSPENDED_DETAIL = "Your vendor account is suspended. Please contact support."
 ALLOWED_PORTFOLIO_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 PDF_MIME_TYPE = "application/pdf"
+DOCUMENT_RECEIVED_MESSAGE = "Document received. Verification will continue automatically."
+logger = logging.getLogger(__name__)
 
 
 def _profile_completion_errors(profile: VendorProfileDTO) -> dict[str, list[str]]:
@@ -534,21 +537,33 @@ class VendorVerificationDocumentView(APIView):
             original_filename=uploaded_document.name,
             mime_type=PDF_MIME_TYPE,
             file_size=uploaded_document.size,
-            upload_status=VerificationDocument.UploadStatus.PENDING,
+            upload_status=VerificationDocument.UploadStatus.QUEUED,
             verification_status=VerificationDocument.VerificationStatus.PENDING_REVIEW,
             fraud_status=VerificationDocument.FraudStatus.REVIEW_REQUIRED,
             fraud_reasons=["PDF preflight passed; awaiting admin review."],
             temp_upload_path=temp_path,
         )
 
-        from tasks.document_tasks import upload_vendor_verification_document_task
+        from tasks.document_tasks import process_vendor_verification_document_task
 
-        upload_vendor_verification_document_task.delay(str(document.id))
+        processing_deferred = False
+        try:
+            process_vendor_verification_document_task.delay(str(document.id))
+        except Exception:
+            processing_deferred = True
+            document.upload_status = VerificationDocument.UploadStatus.PROCESSING_DEFERRED
+            document.save(update_fields=["upload_status", "updated_at"])
+            logger.exception(
+                "Vendor verification document dispatch deferred.",
+                extra={"document_id": str(document.id), "vendor_id": str(profile.id)},
+            )
+
         return Response(
             {
-                "status": "processing",
+                "status": "queued",
                 "document_id": str(document.id),
-                "message": "Verification document upload is processing.",
+                "processing_deferred": processing_deferred,
+                "message": DOCUMENT_RECEIVED_MESSAGE,
             },
             status=status.HTTP_202_ACCEPTED,
         )
@@ -599,6 +614,9 @@ class VendorVerificationDocumentView(APIView):
             "upload_status": document.upload_status,
             "verification_status": document.verification_status,
             "failure_reason": document.failure_reason,
+            "odcr_status": document.odcr_status,
+            "odcr_score": document.odcr_score,
+            "odcr_result_summary": document.odcr_result_summary,
             "fraud_status": document.fraud_status,
             "fraud_score": document.fraud_score,
             "fraud_reasons": document.fraud_reasons,
