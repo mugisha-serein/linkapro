@@ -139,19 +139,43 @@ class ServicePackage:
     description: str
     price: float               # in local currency
     currency: str = "RWF"      # Rwandan Franc
+    package_tier: str = "standard"
+    approval_status: str = "waiting_approval"
+    rejection_reason: Optional[str] = None
     is_active: bool = True
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
     def update_details(self, name: Optional[str] = None, description: Optional[str] = None,
-                       price: Optional[float] = None) -> None:
+                       price: Optional[float] = None, currency: Optional[str] = None,
+                       package_tier: Optional[str] = None) -> None:
+        was_approved = self.approval_status == "approved"
+        public_fields_changed = False
         if name: self.name = name
-        if description: self.description = description
-        if price is not None: self.price = price
+        if name: public_fields_changed = True
+        if description:
+            self.description = description
+            public_fields_changed = True
+        if price is not None:
+            self.price = price
+            public_fields_changed = True
+        if currency:
+            self.currency = currency
+            public_fields_changed = True
+        if package_tier:
+            self.package_tier = package_tier
+            public_fields_changed = True
+        if was_approved and public_fields_changed:
+            self.approval_status = "waiting_approval"
+            self.rejection_reason = None
         self.updated_at = utc_now()
 
     def deactivate(self) -> None:
         self.is_active = False
+        self.is_deleted = True
+        self.deleted_at = utc_now()
         self.updated_at = utc_now()
 
     def activate(self) -> None:

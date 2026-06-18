@@ -71,6 +71,7 @@ class CreateServicePackageCommand:
     description: str
     price: float
     currency: str = "RWF"
+    package_tier: str = "standard"
 
 @dataclass(frozen=True)
 class UpdateServicePackageCommand:
@@ -78,10 +79,13 @@ class UpdateServicePackageCommand:
     name: Optional[str] = None
     description: Optional[str] = None
     price: Optional[float] = None
+    currency: Optional[str] = None
+    package_tier: Optional[str] = None
 
 @dataclass(frozen=True)
 class DeactivateServicePackageCommand:
     package_id: uuid.UUID
+    deleted_by_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class ActivateServicePackageCommand:

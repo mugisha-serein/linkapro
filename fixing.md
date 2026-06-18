@@ -1,243 +1,268 @@
-Fix LinkaPro vendor verification document 500 error, background document upload/verification fallback, ODCR/OCR verification flow, and vendor onboarding UX.
-
-Current error:
-POST https://linkapro-django.onrender.com/api/django/vendors/profile/verification-documents/ returns 500 Internal Server Error.
+Fix LinkaPro vendor packages with soft delete, admin verification, package tiers, immediate frontend updates, and backend-enforced package rules.
 
 Problem:
-The verification document endpoint must never crash because Celery, Redis, Cloudinary, or ODCR/OCR document verification is unavailable. Vendor profile save must succeed. If document background processing cannot start immediately, the app should keep a pending document/job record and continue the vendor to dashboard after profile submission. The user should see a short toast that the document will be processed automatically when the service is available again. Do not tell the user that the document is “not uploaded yet” as a failure. This should be handled as a background job state.
+Vendor packages currently need stronger production rules. Vendors should be able to add/edit/delete packages, but delete must be soft delete only: mark package inactive/deleted, not remove it from the database. Deleted/inactive packages should not show on vendor dashboard active package sections or marketplace/public views. Only admin should be allowed to hard delete packages. Before packages appear publicly/marketplace, they must be verified/approved by administration to prevent fraud, fake packages, or misleading offers.
 
-Goal:
-Make vendor verification document upload resilient:
+Also, packages must support different package tiers/categories:
 
-* PDF is accepted only after validation.
-* File is staged safely.
-* DB stores metadata/job status, not raw file bytes.
-* Celery uploads to Cloudinary and runs ODCR/OCR verification in background.
-* If Celery/broker is unavailable, endpoint still returns a controlled response, not 500.
-* Vendor can continue after profile save/submission.
-* Add logout button top-right on vendor setup/dashboard pages so user can return to login without manually typing URL.
+* Standard
+* Premier
+* Gold
+
+Each package tier must have backend-enforced rules that vendors cannot bypass from frontend. Backend must return human-readable errors that guide the vendor to fix mistakes. Package approval state should support at least:
+
+* waiting_approval
+* approved
+
+After vendor creates/edits/deletes a package, the vendor dashboard/package list must update immediately without requiring page refresh/reload.
 
 Repositories:
 
 * Backend: linkapro
 * Frontend: linkapro-frontend
 
+Backend architecture requirement:
+Implement reusable soft-delete behavior in a backend/shared or common module that respects the system folder structure and architecture. Do not hardcode soft-delete logic only inside one view if the project has shared/domain/application patterns.
+
 Backend tasks:
 
-1. Reproduce and identify the 500 root cause.
+1. Inspect current package flow.
 
-   * Inspect Render logs or local traceback for:
-     POST /api/django/vendors/profile/verification-documents/
-   * Inspect:
+   * django_app/vendors/models.py
+   * django_app/vendors/views.py
+   * django_app/vendors/serializers.py
+   * application/vendors/commands.py
+   * application/vendors/handlers.py
+   * domain/vendors/entities.py
+   * infrastructure/repos/vendor/package repository files
+   * django_app/vendors/urls.py
+   * admin/governance views if admin vendor package review already exists
+   * frontend vendor package service/hooks/pages
 
-     * django_app/vendors/views.py
-     * django_app/vendors/serializers.py
-     * django_app/vendors/models.py
-     * tasks/document_tasks.py
-     * tasks/celery.py
-     * Cloudinary integration code
-     * ODCR/OCR integration code if present
-   * Return the exact exception causing the 500.
+2. Add shared soft-delete support.
 
-2. Make verification document endpoint fail-safe.
+   * Create a shared backend soft-delete abstraction in the correct architecture layer, for example:
+     django_app/common/models.py
+     or django_app/shared/models.py
+     or infrastructure/shared/soft_delete.py
+     depending on existing project structure.
+   * Add fields like:
+     is_deleted = BooleanField(default=False)
+     deleted_at = DateTimeField(null=True, blank=True)
+     deleted_by = ForeignKey(User, null=True, blank=True) if appropriate
+   * Add reusable methods:
+     soft_delete(user=None)
+     restore(user=None) if needed
+     hard_delete only for admin/internal use
+   * Add queryset/manager helpers if suitable:
+     active()
+     deleted()
+     with_deleted()
+   * Apply this to vendor ServicePackage model.
+   * Add migrations.
+   * Existing packages must migrate as not deleted.
 
-   * Endpoint must catch expected operational failures:
-     Celery broker unavailable
-     Redis unavailable
-     Cloudinary temporarily unavailable
-     ODCR/OCR service unavailable
-     task dispatch failure
-   * These must not return 500.
-   * Endpoint should create/update a VerificationDocument record with a safe status:
-     queued / pending_processing / processing_deferred
-   * Return HTTP 202 Accepted with a clear response:
+3. Vendor package delete must be soft delete.
+
+   * Vendor DELETE /vendors/packages/{id}/ should not remove DB row.
+   * It should set:
+     is_deleted=true
+     deleted_at=now
+     is_active=false
+     approval_status maybe archived/deleted if needed
+   * Return a success response explaining package was removed from active listings.
+   * Deleted packages should not appear in normal vendor package lists unless explicitly requested.
+   * Deleted packages must never appear in public marketplace/public vendor package views.
+
+4. Admin hard delete only.
+
+   * Add/admin-only endpoint or service method for hard delete if needed.
+   * Only users with admin/staff/governance permission may hard delete package rows.
+   * Vendor users must never hard delete.
+   * Add tests proving vendor delete does not physically delete and admin hard delete can.
+
+5. Add package approval workflow.
+
+   * Add package approval status field:
+     approval_status:
+     draft
+     waiting_approval
+     approved
+     rejected
+     or if keeping minimal:
+     waiting_approval
+     approved
+     rejected
+   * Vendor-created or edited packages should default to waiting_approval, not approved.
+   * Any significant vendor edit to an approved package should move it back to waiting_approval unless admin-only safe fields are changed.
+   * Public marketplace/package visibility requires:
+     vendor.status == approved
+     package.is_active == true
+     package.is_deleted == false
+     package.approval_status == approved
+   * Vendor dashboard should show package status clearly:
+     Waiting approval
+     Approved
+     Rejected
+     Inactive
+   * Do not show waiting_approval packages publicly.
+
+6. Admin package review.
+
+   * Add admin/governance endpoints if missing:
+     GET /api/django/governance/vendors/packages/pending/
+     POST /api/django/governance/vendors/packages/{package_id}/approve/
+     POST /api/django/governance/vendors/packages/{package_id}/reject/
+     DELETE /api/django/governance/vendors/packages/{package_id}/hard-delete/
+   * Approval should set approval_status=approved.
+   * Rejection should set approval_status=rejected and store rejection_reason.
+   * Hard delete should physically delete only when admin requests it.
+   * Return human-readable messages.
+   * Audit log these actions if governance audit logging already exists.
+
+7. Package tier/category support.
+
+   * Add package_tier or package_category field with choices:
+     standard
+     premier
+     gold
+   * Display labels:
+     Standard
+     Premier
+     Gold
+   * Add backend validation rules for each tier.
+   * Start with clear, realistic rules and centralize them in one place, for example:
+     domain/vendors/package_rules.py
+     or application/vendors/package_rules.py
+
+   Example rules:
+   Standard:
+
+   * price must be greater than 0
+   * name required
+   * description minimum length 30
+   * max included services/items if the model supports items/features
+   * cannot claim premium/exclusive/VIP terms in name unless allowed
+     Premier:
+   * price must be greater than Standard minimum
+   * description minimum length 50
+   * must include stronger details/benefits if model supports features
+     Gold:
+   * description minimum length 80
+   * price must meet Gold minimum
+   * must include clear deliverables/terms
+   * cannot use misleading guarantee words unless backend allows them
+
+   If the current package model only has name, description, price, currency, is_active:
+   enforce rules using those fields only.
+   Do not invent complex feature tables unless needed.
+
+8. Human-readable backend errors.
+
+   * Validation errors must be field-level and easy to understand.
+   * Example:
      {
-     "status": "queued",
-     "document_id": "...",
-     "processing_deferred": true,
-     "message": "Document received. Verification will continue automatically."
+     "package_tier": ["Choose Standard, Premier, or Gold."],
+     "description": ["Gold packages must include at least 80 characters explaining deliverables and terms."],
+     "price": ["Gold packages must be priced at least RWF 100,000."]
      }
-   * Only return 400 for actual user/input errors:
-     non-PDF
-     corrupt PDF
-     oversized PDF
-     missing file
-     missing required document type
-   * Only return 403 for permission/workspace errors.
-   * Never expose internal exception messages to the user.
+   * Avoid vague errors like:
+     "Invalid input"
+     "Bad request"
+   * Frontend should display these errors near fields or in a clear toast.
 
-3. PDF-only validation before staging.
+9. Package create/edit behavior.
 
-   * Backend must accept PDF only.
-   * Validate:
-     extension .pdf
-     content_type application/pdf where available
-     magic header starts with %PDF
-     file size <= VENDOR_VERIFICATION_DOCUMENT_MAX_SIZE_MB
-     parseable PDF
-     at least 1 page
-     not encrypted/password-protected
-   * If invalid, return field-level 400.
-   * Do not call Cloudinary or ODCR/OCR for invalid files.
+   * Vendor can create package:
+     POST /vendors/packages/
+     returns created package immediately with approval_status=waiting_approval.
+   * Vendor can edit package:
+     PATCH /vendors/packages/{id}/
+     returns updated package immediately.
+     If edited package was approved, move it back to waiting_approval if public-facing fields changed.
+   * Vendor can soft delete package:
+     DELETE /vendors/packages/{id}/
+     returns success.
+   * All operations must check vendor ownership.
+   * Vendor cannot edit/delete another vendor’s package.
+   * Suspended/rejected/incomplete vendors should be blocked according to current workspace rules.
 
-4. Safe file staging.
+10. Frontend vendor package UX.
 
-   * Do not store raw file bytes in database.
-   * Save uploaded PDF temporarily to Django storage or safe media/temp path.
-   * Store only:
-     document_id
-     vendor_id
-     original_filename
-     mime_type
-     file_size
-     local_staged_path or storage key
-     upload_status
-     verification_status
-     cloudinary_public_id nullable
-     cloudinary_secure_url nullable
-     odcr_status nullable
-     odcr_score nullable
-     odcr_result_summary nullable
-     failure_reason nullable
-   * Add migrations if fields are missing.
-   * Existing Cloudinary URL records must remain compatible.
+* Inspect:
+  src/services/vendorService.ts
+  src/hooks/useVendor.ts
+  vendor packages page/components
+  dashboard package summary/widgets
+* After create package:
+  update React Query cache immediately or invalidate/refetch so the package appears without reload.
+  Show toast:
+  "Package created and sent for approval."
+* After edit package:
+  update UI immediately.
+  If approval reset:
+  "Package updated and sent for approval."
+* After soft delete:
+  remove from visible active list immediately.
+  Show toast:
+  "Package removed from active listings."
+* Show package status badges:
+  Waiting approval
+  Approved
+  Rejected
+  Inactive
+* Do not show deleted packages in default list.
+* Optionally show filter/toggle for inactive/deleted only if backend supports it.
+* Do not show waiting_approval packages as public/marketplace-ready.
 
-5. Celery task dispatch must be resilient.
+11. Frontend package tier/category field.
 
-   * Try to enqueue:
-     process_vendor_verification_document_task.delay(document_id)
-   * If enqueue succeeds:
-     upload_status = queued
-     processing_deferred = false
-   * If enqueue fails because broker/Celery unavailable:
-     upload_status = processing_deferred
-     processing_deferred = true
-     log exception server-side
-     return 202, not 500
-   * Add a management command or periodic Celery beat task to pick up deferred documents later:
-     python manage.py process_deferred_vendor_documents
-     or a beat task:
-     retry_deferred_vendor_document_processing
-   * It should enqueue/process documents where upload_status is processing_deferred/queued and no Cloudinary URL exists.
+* Add required package tier selector:
+  Standard
+  Premier
+  Gold
+* Send package_tier to backend.
+* Show backend validation messages clearly.
+* Apply helpful frontend validation, but backend remains source of truth.
+* Do not allow frontend to bypass tier rules.
 
-6. Celery document processing task.
+12. Marketplace/public visibility.
 
-   * Task name example:
-     process_vendor_verification_document_task(document_id)
-   * Task must be idempotent:
+* Ensure only approved packages appear on any public vendor profile or marketplace package sections.
+* If FastAPI marketplace projection includes packages now or later:
+  only sync packages with approval_status=approved and is_deleted=false and is_active=true.
+* If packages are not currently projected to FastAPI, do not invent a large new marketplace package projection unless needed. At minimum, keep Django public package endpoints approved-only.
 
-     * if already uploaded and verified/pending_review, exit safely
-     * if Cloudinary URL exists, do not upload duplicate
-   * Steps:
-
-     1. Re-fetch document from DB.
-     2. Mark upload_status=processing.
-     3. Upload staged PDF to Cloudinary as raw/document resource.
-     4. Save cloudinary_public_id and cloudinary_secure_url.
-     5. Run ODCR/OCR verification if configured.
-     6. Store ODCR/OCR result metadata.
-     7. Set verification_status:
-        pending_review if ODCR passes/preflight passes
-        needs_manual_review if ODCR uncertain/unavailable
-        rejected if document is clearly invalid by configured rules
-     8. Clean up local staged file after successful Cloudinary upload.
-     9. On transient failure, retry with exponential backoff.
-     10. On final failure, mark upload_status=failed and save safe failure_reason.
-   * Do not auto-approve vendor solely based on ODCR/OCR.
-   * ODCR/OCR is an assistive pre-check; admin review remains final.
-
-7. ODCR/OCR integration.
-
-   * If the intended tool is named ODCR in the project, wire that service behind an adapter:
-     infrastructure/adapters/document_verification.py
-   * If the actual tool is OCR, name the adapter generically:
-     DocumentVerificationAdapter
-   * Add env vars if needed:
-     ODCR_API_URL
-     ODCR_API_KEY
-     ODCR_TIMEOUT_SECONDS
-     ODCR_ENABLED=true/false
-   * If ODCR is disabled or unavailable:
-     set odcr_status = unavailable
-     verification_status = needs_manual_review or pending_review
-     do not crash
-   * Do not claim perfect fake/forgery detection.
-
-8. Profile save/submission behavior.
-
-   * POST/PATCH /vendors/profile/ must save profile independently from document processing.
-   * Submit-for-review should not fail only because background document processing is delayed.
-   * If the profile is complete and document record is queued/deferred/pending_review, allow status pending_review according to existing business rules.
-   * If current business rules require a document, accept queued/deferred document as “submitted” but not verified.
-   * Vendor should be able to continue to dashboard after profile is saved/submitted.
-   * Marketplace listing must still require admin approval only.
-
-9. Frontend verification document behavior.
-
-   * On document upload 202:
-     show a short success/info toast:
-     "Document received. Verification will continue automatically."
-   * Do not show scary wording like:
-     "Document not uploaded"
-     "Celery not running"
-     "Upload failed"
-     unless backend returns actual failed status.
-   * If backend returns processing_deferred=true:
-     show:
-     "Document received. We’ll process it automatically."
-   * Do not block profile save because document is still processing.
-   * Do not redirect vendor back to setup just because document upload is queued/deferred.
-   * After successful profile submit returning pending_review, redirect to /vendor/dashboard.
-   * Dashboard can show a soft pending review state, not an error.
-
-10. Celery unavailable UX rule.
-
-* If Celery is not running or Redis broker is unavailable:
-
-  * backend returns 202 with processing_deferred=true
-  * frontend shows toast for a few seconds
-  * vendor continues to dashboard after profile submission
-  * background retry command/beat later processes deferred documents
-* Do not tell the user technical service names like Celery, Redis, Cloudinary, or ODCR.
-
-11. Add logout button top-right.
-
-* Add a visible logout button on vendor onboarding/profile setup top-right.
-* Also ensure vendor dashboard top-right/topbar has logout access if not already.
-* It should call existing auth logout flow.
-* After logout, redirect to /auth/login.
-* Do not require user to manually type login URL.
-* Keep UI light and consistent.
-
-12. Tests.
+13. Tests.
     Backend tests:
 
-* valid PDF returns 202
-* non-PDF returns 400
-* corrupt PDF returns 400
-* oversized PDF returns 400
-* Celery enqueue success returns 202 processing_deferred=false
-* Celery enqueue failure returns 202 processing_deferred=true, not 500
-* Cloudinary failure inside task marks failed after retries
-* ODCR/OCR unavailable does not crash task
-* deferred document command/beat picks up deferred records
-* profile save succeeds without completed document upload
-* submit-for-review can move to pending_review with queued/deferred document if business rules require submitted document only
-* marketplace still excludes pending_review vendors
+* vendor creates package -> approval_status waiting_approval
+* package appears in vendor own package list immediately
+* package does not appear in public/marketplace until approved
+* admin approves package -> appears publicly if vendor approved and package active
+* vendor edits approved package public fields -> status returns to waiting_approval
+* vendor soft deletes package -> DB row remains, is_deleted=true, is_active=false
+* soft-deleted package hidden from vendor default list and public views
+* admin hard delete physically removes row
+* vendor cannot hard delete
+* vendor cannot edit/delete another vendor’s package
+* Standard/Premier/Gold validation rules enforced
+* human-readable field errors returned
 
-Frontend tests or manual validation:
+Frontend validation/manual tests:
 
-* PDF upload shows accepted toast
-* deferred upload does not block redirect
-* profile save/submission redirects to dashboard only after pending_review
-* logout button redirects to login
-* no infinite redirect between /vendor/profile/setup and /vendor/dashboard
+* create package appears immediately without refresh
+* edit package updates immediately
+* delete removes from visible list immediately
+* tier field required
+* backend validation errors render clearly
+* waiting approval/approved states display correctly
 
-13. Validation commands.
+14. Validation commands.
     Backend:
-    python manage.py makemigrations --check
+    python manage.py makemigrations
     python manage.py check
-    pytest tests/django_app/vendors -q
+    pytest tests/django_app/vendors tests/django_app/governance -q
 
 Frontend:
 npm run lint for touched files
@@ -245,24 +270,27 @@ npm run build
 
 Rules:
 
-* Never return 500 for expected background service outages.
-* Never expose Celery/Redis/Cloudinary/ODCR errors to the user.
-* Do not store raw document bytes in the database.
-* Backend allows PDF only.
-* Document processing is background-only.
-* User can continue after profile save/submission.
-* Do not auto-approve vendors based only on automated document checks.
-* Keep pending_review vendors out of marketplace until admin approval.
+* Do not hard delete vendor packages from vendor actions.
+* Only admin may hard delete.
+* Implement soft-delete in shared/common backend structure.
+* Do not show inactive/deleted/waiting_approval packages publicly.
+* Do not rely on frontend for package tier rules.
+* Backend must enforce Standard/Premier/Gold rules.
+* Backend must return human-readable errors.
+* Do not introduce mocked package data.
+* Do not break existing vendor dashboard.
 * Keep light UI only.
-* No mocked document URLs.
+* Keep current route constants and API service structure.
 
 Return:
 
-* Exact root cause of the current 500
+* Root cause of current package behavior
 * Files changed
 * Migration names
-* New response examples
-* How deferred processing works
+* New API response examples
+* Package tier rules implemented
+* Soft-delete design location
+* Admin approval flow
 * Validation results
 * Suggested backend branch/commit
 * Suggested frontend branch/commit

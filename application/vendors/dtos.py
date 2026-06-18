@@ -40,7 +40,12 @@ class ServicePackageDTO:
     description: str
     price: float
     currency: str
+    package_tier: str
+    approval_status: str
+    rejection_reason: Optional[str]
     is_active: bool
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
 
 @dataclass(frozen=True)
 class InquiryDTO:

@@ -14,6 +14,9 @@ class AuditLog(models.Model):
         REINSTATE_USER = "reinstate_user"
         DELETE_CONTENT = "delete_content"
         FLAG_RESOLVE = "flag_resolve"
+        APPROVE_PACKAGE = "approve_package"
+        REJECT_PACKAGE = "reject_package"
+        HARD_DELETE_PACKAGE = "hard_delete_package"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     admin = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="admin_actions")

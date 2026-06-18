@@ -21,7 +21,7 @@ class DjangoServicePackageRepository(IServicePackageRepository):
 
     def save(self, domain: DomainPackage) -> DomainPackage:
         try:
-            obj = DjangoPackage.objects.get(id=domain.id)
+            obj = DjangoPackage.all_objects.get(id=domain.id)
         except DjangoPackage.DoesNotExist:
             obj = DjangoPackage(id=domain.id)
 
@@ -30,12 +30,23 @@ class DjangoServicePackageRepository(IServicePackageRepository):
         obj.description = domain.description
         obj.price = domain.price
         obj.currency = domain.currency
+        obj.package_tier = domain.package_tier
+        obj.approval_status = domain.approval_status
+        obj.rejection_reason = domain.rejection_reason
         obj.is_active = domain.is_active
+        obj.is_deleted = domain.is_deleted
+        obj.deleted_at = domain.deleted_at
         obj.save()
         return self._to_domain(obj)
 
-    def delete(self, package_id: uuid.UUID) -> None:
-        DjangoPackage.objects.filter(id=package_id).delete()
+    def delete(self, package_id: uuid.UUID, deleted_by_id: Optional[uuid.UUID] = None) -> None:
+        try:
+            obj = DjangoPackage.all_objects.get(id=package_id)
+        except DjangoPackage.DoesNotExist:
+            return
+        obj.is_active = False
+        obj.save(update_fields=["is_active", "updated_at"])
+        obj.soft_delete(user_id=deleted_by_id)
 
     def _to_domain(self, model: DjangoPackage) -> DomainPackage:
         return DomainPackage(
@@ -45,7 +56,12 @@ class DjangoServicePackageRepository(IServicePackageRepository):
             description=model.description,
             price=float(model.price),
             currency=model.currency,
+            package_tier=model.package_tier,
+            approval_status=model.approval_status,
+            rejection_reason=model.rejection_reason,
             is_active=model.is_active,
+            is_deleted=model.is_deleted,
+            deleted_at=model.deleted_at,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
