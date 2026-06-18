@@ -63,7 +63,7 @@ class VendorProfile(models.Model):
         if self.description and len(self.description.strip()) < 20:
             errors["description"] = ["Use at least 20 characters for your description."]
         if self.category == self.Category.OTHER and not (self.custom_category or "").strip():
-            errors["custom_category"] = ["Describe what you do when category is Other."]
+            errors["custom_category"] = ["Tell us what service you provide when choosing Other."]
         return errors
 
     @property

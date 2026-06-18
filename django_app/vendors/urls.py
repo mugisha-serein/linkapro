@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     VendorProfileView,
+    VendorProfileStatusView,
     VendorSubmitForReviewView,
     PortfolioImageView,
     PortfolioImageReorderView,
@@ -18,6 +19,7 @@ from .views import (
 
 urlpatterns = [
     path("profile/", VendorProfileView.as_view(), name="vendor-profile"),
+    path("profile/status/", VendorProfileStatusView.as_view(), name="vendor-profile-status"),
     path("profile/submit/", VendorSubmitForReviewView.as_view(), name="vendor-submit"),
     path("portfolio/", PortfolioImageView.as_view(), name="portfolio-list"),
     path("portfolio/<uuid:image_id>/", PortfolioImageView.as_view(), name="portfolio-detail"),
