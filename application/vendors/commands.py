@@ -12,6 +12,7 @@ class CreateVendorProfileCommand:
     service_area: str
     contact_email: str
     contact_phone: str
+    custom_category: Optional[str] = None
     website: Optional[str] = None
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class UpdateVendorProfileCommand:
     service_area: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
+    custom_category: Optional[str] = None
     website: Optional[str] = None
 
 @dataclass(frozen=True)

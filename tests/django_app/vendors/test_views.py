@@ -8,7 +8,8 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from django_app.identity.models import User
-from django_app.vendors.models import PortfolioImage, VendorProfile as DjangoProfile
+from django_app.vendors.models import PortfolioImage, VerificationDocument, VendorProfile as DjangoProfile
+from tasks.document_tasks import upload_vendor_verification_document_task
 from tasks.image_tasks import upload_vendor_portfolio_image_task
 
 pytestmark = pytest.mark.django_db
@@ -47,6 +48,55 @@ class TestVendorProfileViews:
         assert response.status_code == 201
         assert response.data["business_name"] == "My Photo Studio"
         assert DjangoProfile.objects.count() == 1
+
+    def test_create_profile_missing_required_field_returns_400(self):
+        data = {
+            "business_name": "",
+            "category": "photography",
+            "description": "Best photos in town",
+            "service_area": "Kigali, Rwanda",
+            "contact_email": "studio@example.com",
+            "contact_phone": "+250788123456",
+        }
+
+        response = self.client.post(reverse("vendor-profile"), data, format="json")
+
+        assert response.status_code == 400
+        assert "business_name" in response.data
+
+    def test_create_profile_other_category_requires_custom_category(self):
+        data = {
+            "business_name": "My Studio",
+            "category": "other",
+            "custom_category": "",
+            "description": "Best creative services in town",
+            "service_area": "Kigali, Rwanda",
+            "contact_email": "studio@example.com",
+            "contact_phone": "+250788123456",
+        }
+
+        response = self.client.post(reverse("vendor-profile"), data, format="json")
+
+        assert response.status_code == 400
+        assert "custom_category" in response.data
+
+    def test_create_profile_other_category_with_custom_category_succeeds(self):
+        data = {
+            "business_name": "My Studio",
+            "category": "other",
+            "custom_category": "Cake sculpture",
+            "description": "Best creative services in town",
+            "service_area": "Kigali, Rwanda",
+            "contact_email": "studio@example.com",
+            "contact_phone": "+250788123456",
+        }
+
+        response = self.client.post(reverse("vendor-profile"), data, format="json")
+
+        assert response.status_code == 201
+        assert response.data["category"] == "other"
+        assert response.data["custom_category"] == "Cake sculpture"
+        assert DjangoProfile.objects.get().custom_category == "Cake sculpture"
 
     def test_create_duplicate_profile_fails(self):
         # Create first profile
@@ -382,3 +432,179 @@ class TestPortfolioImageViews:
         url = reverse("portfolio-detail", args=[uuid.uuid4()])
         response = self.client.delete(url)
         assert response.status_code == 404
+
+
+def valid_pdf_bytes() -> bytes:
+    return (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
+        b"%%EOF\n"
+    )
+
+
+class TestVerificationDocumentViews:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="vendor@example.com",
+            password="pass123",
+            first_name="Vendor",
+            last_name="User",
+            role="vendor",
+        )
+        self.client.force_authenticate(user=self.user)
+        self.profile = DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="draft",
+        )
+
+    def test_pdf_verification_document_returns_202_and_queues_task(self, monkeypatch):
+        queued = []
+        monkeypatch.setattr(
+            "tasks.document_tasks.upload_vendor_verification_document_task.delay",
+            lambda document_id: queued.append(document_id),
+        )
+        document_file = SimpleUploadedFile("license.pdf", valid_pdf_bytes(), content_type="application/pdf")
+
+        response = self.client.post(
+            reverse("vendor-verification-documents"),
+            {"document_type": "trade_license", "document": document_file},
+            format="multipart",
+        )
+
+        assert response.status_code == 202
+        assert response.data["status"] == "processing"
+        assert response.data["document_id"]
+        stored = VerificationDocument.objects.get()
+        assert stored.upload_status == VerificationDocument.UploadStatus.PENDING
+        assert stored.verification_status == VerificationDocument.VerificationStatus.PENDING_REVIEW
+        assert stored.mime_type == "application/pdf"
+        assert stored.secure_url == ""
+        assert stored.temp_upload_path
+        assert queued == [str(stored.id)]
+
+    def test_non_pdf_verification_document_returns_400(self):
+        document_file = SimpleUploadedFile("license.png", b"not-pdf", content_type="image/png")
+
+        response = self.client.post(
+            reverse("vendor-verification-documents"),
+            {"document_type": "trade_license", "document": document_file},
+            format="multipart",
+        )
+
+        assert response.status_code == 400
+        assert "document" in response.data
+        assert VerificationDocument.objects.count() == 0
+
+    def test_corrupt_pdf_verification_document_returns_400(self):
+        document_file = SimpleUploadedFile("license.pdf", b"%PDF-1.4\nnot enough", content_type="application/pdf")
+
+        response = self.client.post(
+            reverse("vendor-verification-documents"),
+            {"document_type": "trade_license", "document": document_file},
+            format="multipart",
+        )
+
+        assert response.status_code == 400
+        assert "document" in response.data
+        assert VerificationDocument.objects.count() == 0
+
+    @override_settings(VENDOR_VERIFICATION_DOCUMENT_MAX_SIZE_MB=0)
+    def test_oversized_pdf_verification_document_returns_400(self):
+        document_file = SimpleUploadedFile("license.pdf", valid_pdf_bytes(), content_type="application/pdf")
+
+        response = self.client.post(
+            reverse("vendor-verification-documents"),
+            {"document_type": "trade_license", "document": document_file},
+            format="multipart",
+        )
+
+        assert response.status_code == 400
+        assert "too large" in response.data["document"][0]
+        assert VerificationDocument.objects.count() == 0
+
+    def test_celery_document_task_stores_cloudinary_metadata(self, monkeypatch):
+        temp_path = default_storage.save("vendor_verification_uploads/test/license.pdf", ContentFile(valid_pdf_bytes()))
+        document = VerificationDocument.objects.create(
+            vendor=self.profile,
+            document_type="trade_license",
+            original_filename="license.pdf",
+            mime_type="application/pdf",
+            file_size=len(valid_pdf_bytes()),
+            temp_upload_path=temp_path,
+            upload_status=VerificationDocument.UploadStatus.PENDING,
+        )
+        monkeypatch.setattr(
+            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_file",
+            lambda self, file_obj, folder="exports", public_id=None, resource_type="raw": {
+                "public_id": "vendor_verification_documents/license",
+                "secure_url": "https://res.cloudinary.com/demo/license.pdf",
+            },
+        )
+
+        result = upload_vendor_verification_document_task.run(str(document.id))
+
+        document.refresh_from_db()
+        assert result["status"] == "completed"
+        assert document.upload_status == VerificationDocument.UploadStatus.COMPLETED
+        assert document.verification_status == VerificationDocument.VerificationStatus.PENDING_REVIEW
+        assert document.cloudinary_public_id == "vendor_verification_documents/license"
+        assert document.cloudinary_secure_url == "https://res.cloudinary.com/demo/license.pdf"
+        assert document.secure_url == "https://res.cloudinary.com/demo/license.pdf"
+        assert document.temp_upload_path is None
+        assert not default_storage.exists(temp_path)
+
+    def test_celery_document_task_failure_marks_failed(self, monkeypatch):
+        temp_path = default_storage.save("vendor_verification_uploads/test/fail.pdf", ContentFile(valid_pdf_bytes()))
+        document = VerificationDocument.objects.create(
+            vendor=self.profile,
+            document_type="trade_license",
+            original_filename="fail.pdf",
+            mime_type="application/pdf",
+            file_size=len(valid_pdf_bytes()),
+            temp_upload_path=temp_path,
+            upload_status=VerificationDocument.UploadStatus.PENDING,
+        )
+        monkeypatch.setattr(
+            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_file",
+            lambda self, file_obj, folder="exports", public_id=None, resource_type="raw": (_ for _ in ()).throw(RuntimeError("network down")),
+        )
+
+        upload_vendor_verification_document_task.request.retries = upload_vendor_verification_document_task.max_retries
+        result = upload_vendor_verification_document_task.run(str(document.id))
+
+        document.refresh_from_db()
+        assert result["status"] == "failed"
+        assert document.upload_status == VerificationDocument.UploadStatus.FAILED
+        assert document.verification_status == VerificationDocument.VerificationStatus.FAILED
+        assert document.failure_reason == "Verification document upload failed. Please try again."
+
+    def test_existing_cloudinary_document_records_serialize(self):
+        VerificationDocument.objects.create(
+            vendor=self.profile,
+            document_type="trade_license",
+            original_filename="license.pdf",
+            mime_type="application/pdf",
+            file_size=123,
+            secure_url="https://res.cloudinary.com/demo/license.pdf",
+            cloudinary_secure_url="https://res.cloudinary.com/demo/license.pdf",
+            upload_status=VerificationDocument.UploadStatus.COMPLETED,
+            verification_status=VerificationDocument.VerificationStatus.PENDING_REVIEW,
+        )
+
+        response = self.client.get(reverse("vendor-verification-documents"))
+
+        assert response.status_code == 200
+        assert response.data[0]["original_filename"] == "license.pdf"
+        assert response.data[0]["cloudinary_secure_url"] == "https://res.cloudinary.com/demo/license.pdf"
+        assert response.data[0]["upload_status"] == "completed"
+        assert response.data[0]["verification_status"] == "pending_review"

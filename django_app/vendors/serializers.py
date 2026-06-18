@@ -10,7 +10,19 @@ class VendorProfileSerializer(serializers.Serializer):
     service_area = serializers.CharField(max_length=200)
     contact_email = serializers.EmailField()
     contact_phone = serializers.CharField(max_length=30)
+    custom_category = serializers.CharField(max_length=120, required=False, allow_blank=True, allow_null=True)
     website = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+
+    def validate(self, attrs):
+        category = attrs.get("category")
+        custom_category = (attrs.get("custom_category") or "").strip()
+        if category == "other" and not custom_category:
+            raise serializers.ValidationError({"custom_category": ["Describe what you do when category is Other."]})
+        if category and category != "other":
+            attrs["custom_category"] = None
+        elif custom_category:
+            attrs["custom_category"] = custom_category
+        return attrs
 
 class SubmitForReviewSerializer(serializers.Serializer):
     pass  # No fields needed

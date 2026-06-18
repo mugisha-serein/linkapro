@@ -121,6 +121,7 @@ def _vendor_payload(vendor: VendorProfile) -> dict[str, Any]:
         "vendor_id": str(vendor.id),
         "business_name": vendor.business_name,
         "category": vendor.category,
+        "custom_category": vendor.custom_category if vendor.category == VendorProfile.Category.OTHER else None,
         "description": vendor.description,
         "service_area": vendor.service_area,
         "cover_image_url": None,
