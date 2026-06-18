@@ -1,6 +1,9 @@
 import uuid
+from io import StringIO
+
 import pytest
 from django.core.files.base import ContentFile
+from django.core.management import call_command
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
@@ -9,7 +12,7 @@ from rest_framework.test import APIClient
 
 from django_app.identity.models import User
 from django_app.vendors.models import PortfolioImage, VerificationDocument, VendorProfile as DjangoProfile
-from tasks.document_tasks import upload_vendor_verification_document_task
+from tasks.document_tasks import process_vendor_verification_document_task
 from tasks.image_tasks import upload_vendor_portfolio_image_task
 
 pytestmark = pytest.mark.django_db
@@ -470,7 +473,7 @@ class TestVerificationDocumentViews:
     def test_pdf_verification_document_returns_202_and_queues_task(self, monkeypatch):
         queued = []
         monkeypatch.setattr(
-            "tasks.document_tasks.upload_vendor_verification_document_task.delay",
+            "tasks.document_tasks.process_vendor_verification_document_task.delay",
             lambda document_id: queued.append(document_id),
         )
         document_file = SimpleUploadedFile("license.pdf", valid_pdf_bytes(), content_type="application/pdf")
@@ -482,15 +485,41 @@ class TestVerificationDocumentViews:
         )
 
         assert response.status_code == 202
-        assert response.data["status"] == "processing"
+        assert response.data["status"] == "queued"
         assert response.data["document_id"]
+        assert response.data["processing_deferred"] is False
+        assert response.data["message"] == "Document received. Verification will continue automatically."
         stored = VerificationDocument.objects.get()
-        assert stored.upload_status == VerificationDocument.UploadStatus.PENDING
+        assert stored.upload_status == VerificationDocument.UploadStatus.QUEUED
         assert stored.verification_status == VerificationDocument.VerificationStatus.PENDING_REVIEW
         assert stored.mime_type == "application/pdf"
         assert stored.secure_url == ""
         assert stored.temp_upload_path
         assert queued == [str(stored.id)]
+
+    def test_pdf_verification_document_returns_202_when_task_dispatch_fails(self, monkeypatch):
+        def raise_broker_error(document_id):
+            raise RuntimeError("broker unavailable")
+
+        monkeypatch.setattr(
+            "tasks.document_tasks.process_vendor_verification_document_task.delay",
+            raise_broker_error,
+        )
+        document_file = SimpleUploadedFile("license.pdf", valid_pdf_bytes(), content_type="application/pdf")
+
+        response = self.client.post(
+            reverse("vendor-verification-documents"),
+            {"document_type": "trade_license", "document": document_file},
+            format="multipart",
+        )
+
+        assert response.status_code == 202
+        assert response.data["status"] == "queued"
+        assert response.data["processing_deferred"] is True
+        assert response.data["message"] == "Document received. Verification will continue automatically."
+        stored = VerificationDocument.objects.get()
+        assert stored.upload_status == VerificationDocument.UploadStatus.PROCESSING_DEFERRED
+        assert stored.temp_upload_path
 
     def test_non_pdf_verification_document_returns_400(self):
         document_file = SimpleUploadedFile("license.png", b"not-pdf", content_type="image/png")
@@ -541,7 +570,7 @@ class TestVerificationDocumentViews:
             mime_type="application/pdf",
             file_size=len(valid_pdf_bytes()),
             temp_upload_path=temp_path,
-            upload_status=VerificationDocument.UploadStatus.PENDING,
+            upload_status=VerificationDocument.UploadStatus.QUEUED,
         )
         monkeypatch.setattr(
             "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_file",
@@ -551,15 +580,16 @@ class TestVerificationDocumentViews:
             },
         )
 
-        result = upload_vendor_verification_document_task.run(str(document.id))
+        result = process_vendor_verification_document_task.run(str(document.id))
 
         document.refresh_from_db()
         assert result["status"] == "completed"
         assert document.upload_status == VerificationDocument.UploadStatus.COMPLETED
-        assert document.verification_status == VerificationDocument.VerificationStatus.PENDING_REVIEW
+        assert document.verification_status == VerificationDocument.VerificationStatus.NEEDS_MANUAL_REVIEW
         assert document.cloudinary_public_id == "vendor_verification_documents/license"
         assert document.cloudinary_secure_url == "https://res.cloudinary.com/demo/license.pdf"
         assert document.secure_url == "https://res.cloudinary.com/demo/license.pdf"
+        assert document.odcr_status == "unavailable"
         assert document.temp_upload_path is None
         assert not default_storage.exists(temp_path)
 
@@ -572,21 +602,48 @@ class TestVerificationDocumentViews:
             mime_type="application/pdf",
             file_size=len(valid_pdf_bytes()),
             temp_upload_path=temp_path,
-            upload_status=VerificationDocument.UploadStatus.PENDING,
+            upload_status=VerificationDocument.UploadStatus.QUEUED,
         )
         monkeypatch.setattr(
             "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_file",
             lambda self, file_obj, folder="exports", public_id=None, resource_type="raw": (_ for _ in ()).throw(RuntimeError("network down")),
         )
 
-        upload_vendor_verification_document_task.request.retries = upload_vendor_verification_document_task.max_retries
-        result = upload_vendor_verification_document_task.run(str(document.id))
+        process_vendor_verification_document_task.request.retries = process_vendor_verification_document_task.max_retries
+        result = process_vendor_verification_document_task.run(str(document.id))
 
         document.refresh_from_db()
         assert result["status"] == "failed"
         assert document.upload_status == VerificationDocument.UploadStatus.FAILED
         assert document.verification_status == VerificationDocument.VerificationStatus.FAILED
         assert document.failure_reason == "Verification document upload failed. Please try again."
+
+    def test_deferred_document_command_processes_staged_documents(self, monkeypatch):
+        temp_path = default_storage.save("vendor_verification_uploads/test/deferred.pdf", ContentFile(valid_pdf_bytes()))
+        document = VerificationDocument.objects.create(
+            vendor=self.profile,
+            document_type="trade_license",
+            original_filename="deferred.pdf",
+            mime_type="application/pdf",
+            file_size=len(valid_pdf_bytes()),
+            temp_upload_path=temp_path,
+            upload_status=VerificationDocument.UploadStatus.PROCESSING_DEFERRED,
+        )
+        monkeypatch.setattr(
+            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_file",
+            lambda self, file_obj, folder="exports", public_id=None, resource_type="raw": {
+                "public_id": "vendor_verification_documents/deferred",
+                "secure_url": "https://res.cloudinary.com/demo/deferred.pdf",
+            },
+        )
+        stdout = StringIO()
+
+        call_command("process_deferred_vendor_documents", "--process-inline", stdout=stdout)
+
+        document.refresh_from_db()
+        assert document.upload_status == VerificationDocument.UploadStatus.COMPLETED
+        assert document.verification_status == VerificationDocument.VerificationStatus.NEEDS_MANUAL_REVIEW
+        assert "processed=1" in stdout.getvalue()
 
     def test_existing_cloudinary_document_records_serialize(self):
         VerificationDocument.objects.create(

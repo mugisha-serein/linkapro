@@ -145,12 +145,15 @@ class VerificationDocument(models.Model):
 
     class UploadStatus(models.TextChoices):
         PENDING = "pending", "Pending"
+        QUEUED = "queued", "Queued"
         PROCESSING = "processing", "Processing"
+        PROCESSING_DEFERRED = "processing_deferred", "Processing Deferred"
         COMPLETED = "completed", "Completed"
         FAILED = "failed", "Failed"
 
     class VerificationStatus(models.TextChoices):
         PENDING_REVIEW = "pending_review", "Pending Review"
+        NEEDS_MANUAL_REVIEW = "needs_manual_review", "Needs Manual Review"
         VERIFIED = "verified", "Verified"
         REJECTED = "rejected", "Rejected"
         FAILED = "failed", "Failed"
@@ -166,12 +169,15 @@ class VerificationDocument(models.Model):
     cloudinary_secure_url = models.URLField(blank=True, null=True)
     upload_status = models.CharField(max_length=20, choices=UploadStatus.choices, default=UploadStatus.PENDING)
     verification_status = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=VerificationStatus.choices,
         default=VerificationStatus.PENDING_REVIEW,
     )
     failure_reason = models.TextField(blank=True, null=True)
     temp_upload_path = models.CharField(max_length=500, blank=True, null=True)
+    odcr_status = models.CharField(max_length=40, blank=True, null=True)
+    odcr_score = models.PositiveSmallIntegerField(blank=True, null=True)
+    odcr_result_summary = models.TextField(blank=True, null=True)
     fraud_status = models.CharField(max_length=20, choices=FraudStatus.choices, default=FraudStatus.PENDING)
     fraud_score = models.PositiveSmallIntegerField(default=0)
     fraud_reasons = models.JSONField(default=list, blank=True)
