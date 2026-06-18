@@ -11,7 +11,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from django_app.identity.models import User
-from django_app.vendors.models import PortfolioImage, VerificationDocument, VendorProfile as DjangoProfile
+from django_app.vendors.models import PortfolioImage, ServicePackage, VerificationDocument, VendorProfile as DjangoProfile
 from tasks.document_tasks import process_vendor_verification_document_task
 from tasks.image_tasks import upload_vendor_portfolio_image_task
 
@@ -665,3 +665,150 @@ class TestVerificationDocumentViews:
         assert response.data[0]["cloudinary_secure_url"] == "https://res.cloudinary.com/demo/license.pdf"
         assert response.data[0]["upload_status"] == "completed"
         assert response.data[0]["verification_status"] == "pending_review"
+
+
+class TestServicePackageViews:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="package-vendor@example.com",
+            password="pass123",
+            first_name="Package",
+            last_name="Vendor",
+            role="vendor",
+        )
+        self.client.force_authenticate(user=self.user)
+        self.profile = DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Package Studio",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="packages@example.com",
+            contact_phone="123",
+            status="approved",
+        )
+
+    def package_payload(self, **overrides):
+        payload = {
+            "name": "Standard Wedding Package",
+            "description": "A detailed standard package with clear deliverables and timing.",
+            "price": "25000.00",
+            "currency": "RWF",
+            "package_tier": "standard",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_vendor_creates_package_waiting_approval_and_sees_it(self):
+        response = self.client.post(reverse("package-list"), self.package_payload(), format="json")
+
+        assert response.status_code == 201
+        assert response.data["approval_status"] == "waiting_approval"
+        assert response.data["package_tier"] == "standard"
+        package = ServicePackage.objects.get(id=response.data["id"])
+        assert package.vendor == self.profile
+        assert package.approval_status == ServicePackage.ApprovalStatus.WAITING_APPROVAL
+
+        list_response = self.client.get(reverse("package-list"))
+        assert list_response.status_code == 200
+        assert [item["id"] for item in list_response.data] == [str(package.id)]
+
+    def test_package_tier_rules_return_field_errors(self):
+        response = self.client.post(
+            reverse("package-list"),
+            self.package_payload(
+                name="Gold Guaranteed Success",
+                description="Too short",
+                price="999.00",
+                package_tier="gold",
+            ),
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "description" in response.data
+        assert "price" in response.data
+
+    def test_editing_approved_package_resets_to_waiting_approval(self):
+        package = ServicePackage.objects.create(
+            vendor=self.profile,
+            name="Approved Premier Package",
+            description="A premier package with enough detail for admin approval and planner clarity.",
+            price="75000.00",
+            currency="RWF",
+            package_tier="premier",
+            approval_status=ServicePackage.ApprovalStatus.APPROVED,
+            is_active=True,
+        )
+
+        response = self.client.patch(
+            reverse("package-detail", args=[package.id]),
+            {
+                "description": "Updated premier package with enough detail to explain deliverables and booking terms.",
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        package.refresh_from_db()
+        assert package.approval_status == ServicePackage.ApprovalStatus.WAITING_APPROVAL
+        assert response.data["approval_status"] == "waiting_approval"
+
+    def test_vendor_delete_soft_deletes_and_hides_package(self):
+        package = ServicePackage.objects.create(
+            vendor=self.profile,
+            name="Soft Delete Package",
+            description="A standard package with enough detail to pass validation.",
+            price="15000.00",
+            currency="RWF",
+            package_tier="standard",
+            approval_status=ServicePackage.ApprovalStatus.APPROVED,
+            is_active=True,
+        )
+
+        response = self.client.delete(reverse("package-detail", args=[package.id]))
+
+        assert response.status_code == 200
+        assert response.data["message"] == "Package removed from active listings."
+        package = ServicePackage.all_objects.get(id=package.id)
+        assert package.is_deleted is True
+        assert package.is_active is False
+        assert package.deleted_by == self.user
+        assert not ServicePackage.objects.filter(id=package.id).exists()
+        assert self.client.get(reverse("package-list")).data == []
+
+    def test_vendor_cannot_edit_or_delete_another_vendor_package(self):
+        other_user = User.objects.create_user(email="other-vendor@example.com", password="pass123", role="vendor")
+        other_profile = DjangoProfile.objects.create(
+            user=other_user,
+            business_name="Other Studio",
+            category="decor",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="other@example.com",
+            contact_phone="456",
+            status="approved",
+        )
+        package = ServicePackage.objects.create(
+            vendor=other_profile,
+            name="Other Package",
+            description="A standard package with enough detail to pass validation.",
+            price="15000.00",
+            currency="RWF",
+            package_tier="standard",
+        )
+
+        patch_response = self.client.patch(
+            reverse("package-detail", args=[package.id]),
+            {"name": "Hijacked Package"},
+            format="json",
+        )
+        delete_response = self.client.delete(reverse("package-detail", args=[package.id]))
+
+        package.refresh_from_db()
+        assert patch_response.status_code == 404
+        assert delete_response.status_code == 404
+        assert package.name == "Other Package"
+        assert package.is_deleted is False

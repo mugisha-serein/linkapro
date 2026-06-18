@@ -1,6 +1,7 @@
 import uuid
 from django.db import models
 from django.utils import timezone
+from django_app.common.models import SoftDeleteModel
 from django_app.identity.models import User
 
 class VendorProfile(models.Model):
@@ -99,19 +100,46 @@ class PortfolioImage(models.Model):
         return f"Image {self.order} for {self.vendor.business_name}"
 
 
-class ServicePackage(models.Model):
+class ServicePackage(SoftDeleteModel):
+    class PackageTier(models.TextChoices):
+        STANDARD = "standard", "Standard"
+        PREMIER = "premier", "Premier"
+        GOLD = "gold", "Gold"
+
+    class ApprovalStatus(models.TextChoices):
+        WAITING_APPROVAL = "waiting_approval", "Waiting Approval"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="packages")
     name = models.CharField(max_length=200)
     description = models.TextField()
     price = models.DecimalField(max_digits=12, decimal_places=2)
     currency = models.CharField(max_length=3, default="RWF")
+    package_tier = models.CharField(max_length=20, choices=PackageTier.choices, default=PackageTier.STANDARD)
+    approval_status = models.CharField(
+        max_length=30,
+        choices=ApprovalStatus.choices,
+        default=ApprovalStatus.WAITING_APPROVAL,
+    )
+    rejection_reason = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.name} - {self.vendor.business_name}"
+
+    def approve(self):
+        self.approval_status = self.ApprovalStatus.APPROVED
+        self.rejection_reason = None
+        self.save(update_fields=["approval_status", "rejection_reason", "updated_at"])
+
+    def reject(self, reason: str):
+        self.approval_status = self.ApprovalStatus.REJECTED
+        self.rejection_reason = reason
+        self.save(update_fields=["approval_status", "rejection_reason", "updated_at"])
 
 
 class Inquiry(models.Model):

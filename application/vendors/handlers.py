@@ -6,6 +6,7 @@ from domain.vendors.entities import (
     VendorProfile, PortfolioImage, ServicePackage, Inquiry,
     VendorStatus, ServiceCategory
 )
+from domain.vendors.package_rules import validate_service_package_rules
 from domain.vendors.interfaces import (
     IVendorProfileRepository, IPortfolioImageRepository,
     IServicePackageRepository, IInquiryRepository
@@ -152,7 +153,15 @@ class VendorCommandHandlers:
             description=cmd.description,
             price=cmd.price,
             currency=cmd.currency,
+            package_tier=cmd.package_tier,
+            approval_status="waiting_approval",
             is_active=False,
+        )
+        validate_service_package_rules(
+            name=package.name,
+            description=package.description,
+            price=package.price,
+            package_tier=package.package_tier,
         )
         saved = self.package_repo.save(package)
         return self._to_package_dto(saved)
@@ -161,7 +170,13 @@ class VendorCommandHandlers:
         package = self.package_repo.get_by_id(cmd.package_id)
         if not package:
             raise ValueError("Package not found")
-        package.update_details(cmd.name, cmd.description, cmd.price)
+        package.update_details(cmd.name, cmd.description, cmd.price, cmd.currency, cmd.package_tier)
+        validate_service_package_rules(
+            name=package.name,
+            description=package.description,
+            price=package.price,
+            package_tier=package.package_tier,
+        )
         saved = self.package_repo.save(package)
         return self._to_package_dto(saved)
 
@@ -169,7 +184,9 @@ class VendorCommandHandlers:
         package = self.package_repo.get_by_id(cmd.package_id)
         if not package:
             raise ValueError("Package not found")
-        self.package_repo.delete(cmd.package_id)
+        package.deactivate()
+        self.package_repo.save(package)
+        self.package_repo.delete(cmd.package_id, deleted_by_id=cmd.deleted_by_id)
         return self._to_package_dto(package)
 
     def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
@@ -219,7 +236,9 @@ class VendorCommandHandlers:
     def _to_package_dto(p: ServicePackage) -> ServicePackageDTO:
         return ServicePackageDTO(id=p.id, vendor_id=p.vendor_id, name=p.name,
                                  description=p.description, price=p.price, currency=p.currency,
-                                 is_active=p.is_active)
+                                 package_tier=p.package_tier, approval_status=p.approval_status,
+                                 rejection_reason=p.rejection_reason, is_active=p.is_active,
+                                 is_deleted=p.is_deleted, deleted_at=p.deleted_at)
 
     @staticmethod
     def _to_inquiry_dto(i: Inquiry) -> InquiryDTO:
@@ -270,7 +289,7 @@ class VendorQueryHandlers:
         images = self.image_repo.list_by_vendor(vendor_id)
 
         unread = sum(1 for inquiry in inquiries if not inquiry.is_read)
-        active_packages = sum(1 for package in packages if package.is_active)
+        active_packages = sum(1 for package in packages if package.is_active and package.approval_status == "approved")
 
         return {
             "profile_score": self._profile_completion_score(profile, images, packages),
@@ -289,7 +308,7 @@ class VendorQueryHandlers:
         profile = self.vendor_repo.get_by_id(vendor_id)
 
         unread = sum(1 for inquiry in inquiries if not inquiry.is_read)
-        active_packages = sum(1 for package in packages if package.is_active)
+        active_packages = sum(1 for package in packages if package.is_active and package.approval_status == "approved")
 
         return {
             "total_views": 0,

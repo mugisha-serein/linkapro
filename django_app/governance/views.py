@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from django_app.common.permissions import IsAdmin
 from django_app.identity.models import User
 from django_app.events.models import Event
-from django_app.vendors.models import VendorProfile
+from django_app.vendors.models import ServicePackage, VendorProfile
 from infrastructure.adapters.marketplace_projection import (
     delete_vendor_from_marketplace,
     sync_vendor_to_marketplace,
@@ -111,6 +111,26 @@ def _serialize_vendor(vendor: VendorProfile) -> dict:
         "approved_at": vendor.approved_at.isoformat() if vendor.approved_at else None,
         "rejected_at": vendor.rejected_at.isoformat() if vendor.rejected_at else None,
         "rejection_reason": vendor.rejection_reason,
+    }
+
+
+def _serialize_package(package: ServicePackage) -> dict:
+    return {
+        "id": str(package.id),
+        "vendor_id": str(package.vendor_id),
+        "vendor_business_name": package.vendor.business_name,
+        "name": package.name,
+        "description": package.description,
+        "price": str(package.price),
+        "currency": package.currency,
+        "package_tier": package.package_tier,
+        "approval_status": package.approval_status,
+        "rejection_reason": package.rejection_reason,
+        "is_active": package.is_active,
+        "is_deleted": package.is_deleted,
+        "deleted_at": package.deleted_at.isoformat() if package.deleted_at else None,
+        "created_at": package.created_at.isoformat(),
+        "updated_at": package.updated_at.isoformat(),
     }
 
 
@@ -324,6 +344,68 @@ class AdminVendorReinstateView(APIView):
         _sync_approved_vendor(vendor)
         _audit(request.user, AuditLog.ActionType.APPROVE_VENDOR, "vendor_profile", vendor.id, {"from": "suspended"})
         return Response(_serialize_vendor(vendor))
+
+
+class AdminVendorPackagePendingListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        packages = (
+            ServicePackage.objects.select_related("vendor")
+            .filter(approval_status=ServicePackage.ApprovalStatus.WAITING_APPROVAL)
+            .order_by("-updated_at", "-created_at")
+        )
+        return Response({"results": [_serialize_package(package) for package in packages], "count": packages.count()})
+
+
+class AdminVendorPackageApproveView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def post(self, request, package_id):
+        try:
+            package = ServicePackage.objects.select_related("vendor").get(id=package_id)
+        except ServicePackage.DoesNotExist:
+            return Response({"detail": "Package not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        package.approval_status = ServicePackage.ApprovalStatus.APPROVED
+        package.rejection_reason = None
+        package.is_active = True
+        package.save(update_fields=["approval_status", "rejection_reason", "is_active", "updated_at"])
+        _audit(request.user, AuditLog.ActionType.APPROVE_PACKAGE, "service_package", package.id)
+        return Response({"message": "Package approved.", "package": _serialize_package(package)})
+
+
+class AdminVendorPackageRejectView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def post(self, request, package_id):
+        reason = request.data.get("reason") or "Package rejected by administrator."
+        try:
+            package = ServicePackage.objects.select_related("vendor").get(id=package_id)
+        except ServicePackage.DoesNotExist:
+            return Response({"detail": "Package not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        package.approval_status = ServicePackage.ApprovalStatus.REJECTED
+        package.rejection_reason = reason
+        package.is_active = False
+        package.save(update_fields=["approval_status", "rejection_reason", "is_active", "updated_at"])
+        _audit(request.user, AuditLog.ActionType.REJECT_PACKAGE, "service_package", package.id, {"reason": reason})
+        return Response({"message": "Package rejected.", "package": _serialize_package(package)})
+
+
+class AdminVendorPackageHardDeleteView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def delete(self, request, package_id):
+        try:
+            package = ServicePackage.all_objects.select_related("vendor").get(id=package_id)
+        except ServicePackage.DoesNotExist:
+            return Response({"detail": "Package not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        package_id_value = package.id
+        _audit(request.user, AuditLog.ActionType.HARD_DELETE_PACKAGE, "service_package", package_id_value)
+        package.hard_delete()
+        return Response({"message": "Package permanently deleted.", "package_id": str(package_id_value)})
 
 
 class AdminFlagListView(APIView):

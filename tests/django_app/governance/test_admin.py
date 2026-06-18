@@ -4,7 +4,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from django_app.identity.models import User
-from django_app.vendors.models import VendorProfile
+from django_app.vendors.models import ServicePackage, VendorProfile
 
 pytestmark = pytest.mark.django_db
 
@@ -168,6 +168,75 @@ class TestVendorApprovalAdmin:
         assert reinstate_response.status_code == 200
         assert vendor.status == "approved"
         assert synced
+
+    def test_admin_package_review_and_hard_delete(self):
+        admin_user = User.objects.create_superuser("package-admin@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(email="package-owner@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Package Owner",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="a",
+            contact_email="owner@example.com",
+            contact_phone="1",
+            status="approved",
+        )
+        package = ServicePackage.objects.create(
+            vendor=vendor,
+            name="Pending Package",
+            description="A standard package with enough detail for review.",
+            price="25000.00",
+            currency="RWF",
+            package_tier="standard",
+            approval_status=ServicePackage.ApprovalStatus.WAITING_APPROVAL,
+            is_active=False,
+        )
+
+        pending_response = api_client.get(reverse("admin-vendor-package-pending"))
+        approve_response = api_client.post(reverse("admin-vendor-package-approve", args=[package.id]))
+        package.refresh_from_db()
+
+        assert pending_response.status_code == 200
+        assert pending_response.data["count"] == 1
+        assert approve_response.status_code == 200
+        assert package.approval_status == ServicePackage.ApprovalStatus.APPROVED
+        assert package.is_active is True
+
+        delete_response = api_client.delete(reverse("admin-vendor-package-hard-delete", args=[package.id]))
+
+        assert delete_response.status_code == 200
+        assert not ServicePackage.all_objects.filter(id=package.id).exists()
+
+    def test_vendor_cannot_hard_delete_package(self):
+        vendor_user = User.objects.create_user(email="not-admin@t.com", password="p", role="vendor")
+        api_client = APIClient()
+        api_client.force_authenticate(user=vendor_user)
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="No Hard Delete",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="a",
+            contact_email="nohard@example.com",
+            contact_phone="1",
+            status="approved",
+        )
+        package = ServicePackage.objects.create(
+            vendor=vendor,
+            name="Protected Package",
+            description="A standard package with enough detail for review.",
+            price="25000.00",
+            currency="RWF",
+            package_tier="standard",
+        )
+
+        response = api_client.delete(reverse("admin-vendor-package-hard-delete", args=[package.id]))
+
+        assert response.status_code == 403
+        assert ServicePackage.all_objects.filter(id=package.id).exists()
 
 
 class TestUserAdminActions:

@@ -41,6 +41,7 @@ class ServicePackageSerializer(serializers.Serializer):
     description = serializers.CharField()
     price = serializers.DecimalField(max_digits=12, decimal_places=2)
     currency = serializers.CharField(max_length=3, default="RWF")
+    package_tier = serializers.ChoiceField(choices=["standard", "premier", "gold"])
 
 class InquirySerializer(serializers.Serializer):
     client_name = serializers.CharField(max_length=200)

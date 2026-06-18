@@ -3,6 +3,7 @@ import uuid
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from django.conf import settings
 from django.core.files.storage import default_storage
@@ -43,6 +44,7 @@ from application.vendors.dtos import (
     ServicePackageDTO,
     InquiryDTO,
 )
+from domain.vendors.package_rules import PackageValidationError
 
 
 VENDOR_PROFILE_INCOMPLETE_CODE = "vendor_profile_incomplete"
@@ -375,10 +377,14 @@ class ServicePackageListView(APIView):
             description=data["description"],
             price=data["price"],
             currency=data.get("currency", "RWF"),
+            package_tier=data["package_tier"],
         )
 
         command_handlers = get_command_handlers()
-        package = command_handlers.create_service_package(cmd)
+        try:
+            package = command_handlers.create_service_package(cmd)
+        except PackageValidationError as exc:
+            raise DRFValidationError(exc.errors)
         return Response(self._serialize_package(package), status=status.HTTP_201_CREATED)
 
     def _serialize_package(self, dto: ServicePackageDTO) -> dict:
@@ -388,7 +394,12 @@ class ServicePackageListView(APIView):
             "description": dto.description,
             "price": str(dto.price),
             "currency": dto.currency,
+            "package_tier": dto.package_tier,
+            "approval_status": dto.approval_status,
+            "rejection_reason": dto.rejection_reason,
             "is_active": dto.is_active,
+            "is_deleted": dto.is_deleted,
+            "deleted_at": dto.deleted_at.isoformat() if dto.deleted_at else None,
         }
 
 
@@ -404,7 +415,7 @@ class ServicePackageDetailView(APIView):
 
         # Verify ownership
         packages = query_handlers.list_service_packages(profile.id)
-        pkg = next((p for p in packages if str(p.id) == package_id), None)
+        pkg = next((p for p in packages if p.id == package_id), None)
         if not pkg:
             return Response(
                 {"detail": "Package not found or does not belong to this vendor."},
@@ -416,14 +427,19 @@ class ServicePackageDetailView(APIView):
         data = serializer.validated_data
 
         cmd = UpdateServicePackageCommand(
-            package_id=uuid.UUID(package_id),
+            package_id=package_id,
             name=data.get("name"),
             description=data.get("description"),
             price=data.get("price"),
+            currency=data.get("currency"),
+            package_tier=data.get("package_tier"),
         )
 
         command_handlers = get_command_handlers()
-        updated = command_handlers.update_service_package(cmd)
+        try:
+            updated = command_handlers.update_service_package(cmd)
+        except PackageValidationError as exc:
+            raise DRFValidationError(exc.errors)
         return Response(ServicePackageListView._serialize_package(None, updated))
 
     def delete(self, request, package_id):
@@ -434,17 +450,23 @@ class ServicePackageDetailView(APIView):
         query_handlers = get_query_handlers()
 
         packages = query_handlers.list_service_packages(profile.id)
-        pkg = next((p for p in packages if str(p.id) == package_id), None)
+        pkg = next((p for p in packages if p.id == package_id), None)
         if not pkg:
             return Response(
                 {"detail": "Package not found or does not belong to this vendor."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        cmd = DeactivateServicePackageCommand(package_id=uuid.UUID(package_id))
+        cmd = DeactivateServicePackageCommand(package_id=package_id, deleted_by_id=request.user.id)
         command_handlers = get_command_handlers()
-        command_handlers.deactivate_package(cmd)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        package = command_handlers.deactivate_package(cmd)
+        return Response(
+            {
+                "message": "Package removed from active listings.",
+                "package": ServicePackageListView._serialize_package(None, package),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ServicePackageActivateView(APIView):
