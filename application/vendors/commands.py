@@ -58,6 +58,7 @@ class AddPortfolioImageCommand:
 @dataclass(frozen=True)
 class DeletePortfolioImageCommand:
     image_id: uuid.UUID
+    deleted_by_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class ReorderPortfolioImagesCommand:

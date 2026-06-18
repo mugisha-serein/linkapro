@@ -4,7 +4,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from django_app.identity.models import User
-from django_app.vendors.models import ServicePackage, VendorProfile
+from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile
 
 pytestmark = pytest.mark.django_db
 
@@ -237,6 +237,75 @@ class TestVendorApprovalAdmin:
 
         assert response.status_code == 403
         assert ServicePackage.all_objects.filter(id=package.id).exists()
+
+    def test_admin_portfolio_review_and_hard_delete(self):
+        admin_user = User.objects.create_superuser("portfolio-admin@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(email="portfolio-owner@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Portfolio Owner",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="a",
+            contact_email="portfolio@example.com",
+            contact_phone="1",
+            status="approved",
+        )
+        media = PortfolioImage.objects.create(
+            vendor=vendor,
+            media_type=PortfolioImage.MediaType.IMAGE,
+            public_id="portfolio/item",
+            secure_url="https://example.com/item.jpg",
+            upload_status=PortfolioImage.UploadStatus.UPLOADED,
+            quality_status=PortfolioImage.QualityStatus.PASSED,
+            visibility_status=PortfolioImage.VisibilityStatus.WAITING_APPROVAL,
+            is_active=True,
+        )
+
+        pending_response = api_client.get(reverse("admin-vendor-portfolio-pending"))
+        approve_response = api_client.post(reverse("admin-vendor-portfolio-approve", args=[media.id]))
+        media.refresh_from_db()
+
+        assert pending_response.status_code == 200
+        assert pending_response.data["count"] == 1
+        assert approve_response.status_code == 200
+        assert media.visibility_status == PortfolioImage.VisibilityStatus.APPROVED
+
+        delete_response = api_client.delete(reverse("admin-vendor-portfolio-hard-delete", args=[media.id]))
+
+        assert delete_response.status_code == 200
+        assert not PortfolioImage.all_objects.filter(id=media.id).exists()
+
+    def test_admin_cannot_approve_failed_portfolio_media(self):
+        admin_user = User.objects.create_superuser("portfolio-admin2@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(email="portfolio-failed@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Portfolio Failed",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="a",
+            contact_email="failed@example.com",
+            contact_phone="1",
+            status="approved",
+        )
+        media = PortfolioImage.objects.create(
+            vendor=vendor,
+            media_type=PortfolioImage.MediaType.IMAGE,
+            upload_status=PortfolioImage.UploadStatus.UPLOADED,
+            quality_status=PortfolioImage.QualityStatus.FAILED,
+            visibility_status=PortfolioImage.VisibilityStatus.PRIVATE,
+        )
+
+        response = api_client.post(reverse("admin-vendor-portfolio-approve", args=[media.id]))
+
+        assert response.status_code == 400
+        media.refresh_from_db()
+        assert media.visibility_status == PortfolioImage.VisibilityStatus.PRIVATE
 
 
 class TestUserAdminActions:

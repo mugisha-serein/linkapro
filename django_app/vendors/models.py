@@ -74,24 +74,67 @@ class VendorProfile(models.Model):
         return self.status != self.Status.DRAFT and self.is_profile_complete
 
 
-class PortfolioImage(models.Model):
+class PortfolioImage(SoftDeleteModel):
+    class MediaType(models.TextChoices):
+        IMAGE = "image", "Image"
+        VIDEO = "video", "Video"
+
     class UploadStatus(models.TextChoices):
-        PENDING = "pending", "Pending"
+        STAGED = "staged", "Staged"
+        QUEUED = "queued", "Queued"
         PROCESSING = "processing", "Processing"
-        COMPLETED = "completed", "Completed"
+        UPLOADED = "uploaded", "Uploaded"
+        PROCESSING_DEFERRED = "processing_deferred", "Processing Deferred"
         FAILED = "failed", "Failed"
+
+    class QualityStatus(models.TextChoices):
+        PENDING_ANALYSIS = "pending_analysis", "Pending Analysis"
+        PASSED = "passed", "Passed"
+        FAILED = "failed", "Failed"
+        NEEDS_MANUAL_REVIEW = "needs_manual_review", "Needs Manual Review"
+
+    class VisibilityStatus(models.TextChoices):
+        PRIVATE = "private", "Private"
+        WAITING_APPROVAL = "waiting_approval", "Waiting Approval"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="images")
     public_id = models.CharField(max_length=200, blank=True)
     secure_url = models.URLField(blank=True)
+    media_type = models.CharField(max_length=10, choices=MediaType.choices, default=MediaType.IMAGE)
     caption = models.CharField(max_length=500, blank=True, null=True)
     order = models.PositiveIntegerField(default=0)
-    upload_status = models.CharField(max_length=20, choices=UploadStatus.choices, default=UploadStatus.COMPLETED)
+    is_active = models.BooleanField(default=True)
+    upload_status = models.CharField(max_length=30, choices=UploadStatus.choices, default=UploadStatus.UPLOADED)
+    quality_status = models.CharField(
+        max_length=30,
+        choices=QualityStatus.choices,
+        default=QualityStatus.PASSED,
+    )
+    visibility_status = models.CharField(
+        max_length=30,
+        choices=VisibilityStatus.choices,
+        default=VisibilityStatus.APPROVED,
+    )
     upload_error = models.TextField(blank=True, null=True)
+    failure_reason = models.TextField(blank=True, null=True)
+    rejection_reason = models.TextField(blank=True, null=True)
     original_filename = models.CharField(max_length=255, blank=True, null=True)
+    mime_type = models.CharField(max_length=100, blank=True)
+    file_size = models.PositiveIntegerField(default=0)
     temp_upload_path = models.CharField(max_length=500, blank=True, null=True)
+    local_preview_url = models.URLField(blank=True, null=True)
+    cloudinary_public_id = models.CharField(max_length=255, blank=True, null=True)
+    cloudinary_secure_url = models.URLField(blank=True, null=True)
+    width = models.PositiveIntegerField(blank=True, null=True)
+    height = models.PositiveIntegerField(blank=True, null=True)
+    duration_seconds = models.PositiveIntegerField(blank=True, null=True)
+    analyzer_score = models.PositiveSmallIntegerField(blank=True, null=True)
+    analyzer_summary = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["order"]

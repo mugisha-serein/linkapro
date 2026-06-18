@@ -1,20 +1,20 @@
-Fix LinkaPro vendor packages with soft delete, admin verification, package tiers, immediate frontend updates, and backend-enforced package rules.
+Fix LinkaPro vendor portfolio media lifecycle with soft delete, async Cloudinary sync, local preview, image/video support, professional quality analysis, and marketplace visibility rules.
 
 Problem:
-Vendor packages currently need stronger production rules. Vendors should be able to add/edit/delete packages, but delete must be soft delete only: mark package inactive/deleted, not remove it from the database. Deleted/inactive packages should not show on vendor dashboard active package sections or marketplace/public views. Only admin should be allowed to hard delete packages. Before packages appear publicly/marketplace, they must be verified/approved by administration to prevent fraud, fake packages, or misleading offers.
+Vendor portfolio currently needs production-grade behavior. Vendors should be able to add/edit/delete portfolio items, but delete must be soft delete only. Portfolio records must not be physically removed from the database by vendor actions. Deleted/inactive portfolio items should not show on vendor dashboard default views or marketplace/public views.
 
-Also, packages must support different package tiers/categories:
+Portfolio upload should appear immediately in the vendor dashboard after the user adds it, without requiring page refresh/reload and without waiting for Cloudinary upload. The system should show a local/staged preview immediately, then sync to Cloudinary later through Celery/background jobs when available.
 
-* Standard
-* Premier
-* Gold
+Portfolio must support:
 
-Each package tier must have backend-enforced rules that vendors cannot bypass from frontend. Backend must return human-readable errors that guide the vendor to fix mistakes. Package approval state should support at least:
+* high-quality photos
+* highlight videos
+* video max size 10MB
+* reject files beyond size limits
+* reject low-quality images/videos
+* professional image/media analyzer must verify media quality before public visibility
 
-* waiting_approval
-* approved
-
-After vendor creates/edits/deletes a package, the vendor dashboard/package list must update immediately without requiring page refresh/reload.
+Everything important must be enforced by backend. Frontend only calls backend and displays states. Marketplace/public visibility must only happen when the vendor is approved. If vendor is not approved, portfolio/packages/profile remain invisible from marketplace.
 
 Repositories:
 
@@ -22,243 +22,375 @@ Repositories:
 * Frontend: linkapro-frontend
 
 Backend architecture requirement:
-Implement reusable soft-delete behavior in a backend/shared or common module that respects the system folder structure and architecture. Do not hardcode soft-delete logic only inside one view if the project has shared/domain/application patterns.
+Implement portfolio soft-delete and media state rules cleanly according to the existing architecture. Reuse shared/common soft-delete support if already created for packages. If no shared soft-delete exists yet, create it in the proper shared/common backend layer and apply it to portfolio media.
 
 Backend tasks:
 
-1. Inspect current package flow.
+1. Inspect current vendor portfolio flow.
 
    * django_app/vendors/models.py
    * django_app/vendors/views.py
    * django_app/vendors/serializers.py
+   * django_app/vendors/urls.py
    * application/vendors/commands.py
    * application/vendors/handlers.py
    * domain/vendors/entities.py
-   * infrastructure/repos/vendor/package repository files
-   * django_app/vendors/urls.py
-   * admin/governance views if admin vendor package review already exists
-   * frontend vendor package service/hooks/pages
+   * infrastructure/repos vendor portfolio repository
+   * tasks/image_tasks.py
+   * Cloudinary integration
+   * marketplace projection/sync code
+   * frontend vendor portfolio service/hooks/pages
 
-2. Add shared soft-delete support.
+2. Add or reuse shared soft-delete support.
 
-   * Create a shared backend soft-delete abstraction in the correct architecture layer, for example:
-     django_app/common/models.py
-     or django_app/shared/models.py
-     or infrastructure/shared/soft_delete.py
-     depending on existing project structure.
-   * Add fields like:
-     is_deleted = BooleanField(default=False)
-     deleted_at = DateTimeField(null=True, blank=True)
-     deleted_by = ForeignKey(User, null=True, blank=True) if appropriate
-   * Add reusable methods:
+   * Portfolio delete by vendor must not physically delete the row.
+   * Use shared fields:
+     is_deleted
+     deleted_at
+     deleted_by if available
+     is_active
+   * Add methods:
      soft_delete(user=None)
      restore(user=None) if needed
-     hard_delete only for admin/internal use
-   * Add queryset/manager helpers if suitable:
-     active()
-     deleted()
-     with_deleted()
-   * Apply this to vendor ServicePackage model.
+   * Only admin/internal code may hard delete.
    * Add migrations.
-   * Existing packages must migrate as not deleted.
+   * Existing portfolio media should migrate as not deleted and active.
 
-3. Vendor package delete must be soft delete.
+3. Portfolio media model requirements.
+   Update portfolio media model to support images and videos:
 
-   * Vendor DELETE /vendors/packages/{id}/ should not remove DB row.
-   * It should set:
-     is_deleted=true
-     deleted_at=now
-     is_active=false
-     approval_status maybe archived/deleted if needed
-   * Return a success response explaining package was removed from active listings.
-   * Deleted packages should not appear in normal vendor package lists unless explicitly requested.
-   * Deleted packages must never appear in public marketplace/public vendor package views.
-
-4. Admin hard delete only.
-
-   * Add/admin-only endpoint or service method for hard delete if needed.
-   * Only users with admin/staff/governance permission may hard delete package rows.
-   * Vendor users must never hard delete.
-   * Add tests proving vendor delete does not physically delete and admin hard delete can.
-
-5. Add package approval workflow.
-
-   * Add package approval status field:
-     approval_status:
-     draft
+   * id
+   * vendor/profile FK
+   * media_type: image | video
+   * caption
+   * order
+   * is_active
+   * is_deleted
+   * deleted_at
+   * upload_status:
+     staged
+     queued
+     processing
+     uploaded
+     processing_deferred
+     failed
+   * quality_status:
+     pending_analysis
+     passed
+     failed
+     needs_manual_review
+   * visibility_status:
+     private
      waiting_approval
      approved
      rejected
-     or if keeping minimal:
-     waiting_approval
-     approved
-     rejected
-   * Vendor-created or edited packages should default to waiting_approval, not approved.
-   * Any significant vendor edit to an approved package should move it back to waiting_approval unless admin-only safe fields are changed.
-   * Public marketplace/package visibility requires:
-     vendor.status == approved
-     package.is_active == true
-     package.is_deleted == false
-     package.approval_status == approved
-   * Vendor dashboard should show package status clearly:
-     Waiting approval
-     Approved
-     Rejected
-     Inactive
-   * Do not show waiting_approval packages publicly.
+   * local_preview_url or staged_storage_key/path
+   * cloudinary_public_id nullable
+   * cloudinary_secure_url nullable
+   * original_filename
+   * mime_type
+   * file_size
+   * width nullable
+   * height nullable
+   * duration_seconds nullable for video
+   * analyzer_score nullable
+   * analyzer_summary nullable
+   * failure_reason nullable
+   * rejection_reason nullable
+   * created_at/updated_at
 
-6. Admin package review.
+   Do not store raw media bytes in database.
 
-   * Add admin/governance endpoints if missing:
-     GET /api/django/governance/vendors/packages/pending/
-     POST /api/django/governance/vendors/packages/{package_id}/approve/
-     POST /api/django/governance/vendors/packages/{package_id}/reject/
-     DELETE /api/django/governance/vendors/packages/{package_id}/hard-delete/
-   * Approval should set approval_status=approved.
-   * Rejection should set approval_status=rejected and store rejection_reason.
-   * Hard delete should physically delete only when admin requests it.
-   * Return human-readable messages.
-   * Audit log these actions if governance audit logging already exists.
+4. Upload endpoint behavior.
+   Endpoint:
+   POST /api/django/vendors/portfolio/
 
-7. Package tier/category support.
+   It must:
 
-   * Add package_tier or package_category field with choices:
-     standard
-     premier
-     gold
-   * Display labels:
-     Standard
-     Premier
-     Gold
-   * Add backend validation rules for each tier.
-   * Start with clear, realistic rules and centralize them in one place, for example:
-     domain/vendors/package_rules.py
-     or application/vendors/package_rules.py
+   * validate authenticated vendor and ownership
+   * validate vendor workspace access according to current rules
+   * accept image/video file
+   * enforce allowed image types:
+     image/jpeg
+     image/png
+     image/webp
+   * enforce allowed video types:
+     video/mp4
+     video/webm
+     video/quicktime only if supported
+   * enforce size limits:
+     images <= configured image limit, default 4MB unless current project standard exists
+     videos <= 10MB
+   * run basic immediate preflight:
+     file extension/type
+     magic header where possible
+     file size
+     image dimensions readable
+     video metadata readable if possible
+   * save file to safe temporary/local storage
+   * create portfolio record with:
+     upload_status=queued or processing_deferred
+     quality_status=pending_analysis
+     visibility_status=private or waiting_approval
+     is_active=true
+     is_deleted=false
+   * enqueue Celery task for Cloudinary sync and media quality analysis
+   * return HTTP 202 Accepted or 201 Created with the new portfolio item immediately
+   * response must include local preview/staged URL if safe to serve
+   * never block request waiting for Cloudinary
+   * if Celery/Redis unavailable, return success with processing_deferred=true, not 500
 
-   Example rules:
-   Standard:
+5. Immediate dashboard visibility.
 
-   * price must be greater than 0
-   * name required
-   * description minimum length 30
-   * max included services/items if the model supports items/features
-   * cannot claim premium/exclusive/VIP terms in name unless allowed
-     Premier:
-   * price must be greater than Standard minimum
-   * description minimum length 50
-   * must include stronger details/benefits if model supports features
-     Gold:
-   * description minimum length 80
-   * price must meet Gold minimum
-   * must include clear deliverables/terms
-   * cannot use misleading guarantee words unless backend allows them
+   * Newly added portfolio item must appear immediately in vendor’s own dashboard/portfolio list.
+   * It may show staged/local preview first.
+   * If Cloudinary URL is not ready yet, frontend should use backend-provided safe preview URL or local object preview.
+   * Backend list endpoint should include staged/queued items for the owning vendor.
+   * Public/marketplace endpoints must not expose staged/private/waiting items.
 
-   If the current package model only has name, description, price, currency, is_active:
-   enforce rules using those fields only.
-   Do not invent complex feature tables unless needed.
+6. Cloudinary sync task.
+   Add/update Celery task:
+   process_vendor_portfolio_media_task(media_id)
 
-8. Human-readable backend errors.
+   Task must:
 
-   * Validation errors must be field-level and easy to understand.
-   * Example:
-     {
-     "package_tier": ["Choose Standard, Premier, or Gold."],
-     "description": ["Gold packages must include at least 80 characters explaining deliverables and terms."],
-     "price": ["Gold packages must be priced at least RWF 100,000."]
-     }
-   * Avoid vague errors like:
-     "Invalid input"
-     "Bad request"
-   * Frontend should display these errors near fields or in a clear toast.
+   * re-fetch media record from DB
+   * be idempotent
+   * if already uploaded and quality passed, exit safely
+   * mark upload_status=processing
+   * upload image/video to Cloudinary using correct resource_type:
+     image for images
+     video for videos
+   * store:
+     cloudinary_public_id
+     cloudinary_secure_url
+     width/height
+     duration for video
+     file metadata
+   * clean up local staged file after successful Cloudinary upload
+   * retry transient Cloudinary/network failures with exponential backoff
+   * on final failure, mark upload_status=failed and store safe failure_reason
+   * do not delete DB row on failure
 
-9. Package create/edit behavior.
+7. Professional media analyzer.
+   Add media quality analyzer adapter:
+   infrastructure/adapters/media_quality_analyzer.py
+   or equivalent clean architecture location.
 
-   * Vendor can create package:
-     POST /vendors/packages/
-     returns created package immediately with approval_status=waiting_approval.
-   * Vendor can edit package:
-     PATCH /vendors/packages/{id}/
-     returns updated package immediately.
-     If edited package was approved, move it back to waiting_approval if public-facing fields changed.
-   * Vendor can soft delete package:
-     DELETE /vendors/packages/{id}/
-     returns success.
-   * All operations must check vendor ownership.
-   * Vendor cannot edit/delete another vendor’s package.
-   * Suspended/rejected/incomplete vendors should be blocked according to current workspace rules.
+   It should support:
 
-10. Frontend vendor package UX.
+   * image quality checks
+   * video quality checks
+   * optional external professional analyzer provider if configured
 
-* Inspect:
-  src/services/vendorService.ts
-  src/hooks/useVendor.ts
-  vendor packages page/components
-  dashboard package summary/widgets
-* After create package:
-  update React Query cache immediately or invalidate/refetch so the package appears without reload.
-  Show toast:
-  "Package created and sent for approval."
-* After edit package:
-  update UI immediately.
-  If approval reset:
-  "Package updated and sent for approval."
-* After soft delete:
-  remove from visible active list immediately.
-  Show toast:
-  "Package removed from active listings."
-* Show package status badges:
+   Add env vars if external analyzer exists:
+   MEDIA_ANALYZER_ENABLED=true/false
+   MEDIA_ANALYZER_API_URL
+   MEDIA_ANALYZER_API_KEY
+   MEDIA_ANALYZER_TIMEOUT_SECONDS
+
+   If external analyzer is unavailable:
+
+   * do not crash
+   * set quality_status=needs_manual_review
+   * keep item private/not public
+   * admin can review manually later
+
+   Local fallback checks must include:
+   Images:
+
+   * minimum dimensions, for example 800x600 or current project standard
+   * reject extremely low resolution
+   * reject unreadable/corrupt images
+   * reject empty/tiny files
+   * optional blur/quality heuristic if dependencies already exist
+
+   Videos:
+
+   * max size 10MB
+   * metadata readable
+   * minimum resolution if possible
+   * duration reasonable for highlight video if business rule exists
+   * reject corrupt/unreadable videos
+
+   Do not claim perfect fraud/fake detection. Treat analyzer as quality/preflight + review support.
+
+8. Visibility and approval rules.
+   Portfolio marketplace/public visibility requires:
+
+   * vendor.status == approved
+   * media.is_active == true
+   * media.is_deleted == false
+   * media.upload_status == uploaded
+   * media.quality_status == passed or approved by admin/manual review
+   * media.visibility_status == approved
+
+   If vendor is not approved:
+
+   * portfolio must remain invisible from marketplace/public views
+   * packages must remain invisible
+   * public marketplace listing must not show vendor media
+
+   If vendor becomes approved:
+
+   * approved portfolio media can appear publicly
+   * waiting/private/failed/deleted media remains hidden
+
+9. Admin review for portfolio media.
+   Add admin/governance endpoints if missing:
+
+   * GET /api/django/governance/vendors/portfolio/pending/
+   * POST /api/django/governance/vendors/portfolio/{media_id}/approve/
+   * POST /api/django/governance/vendors/portfolio/{media_id}/reject/
+   * DELETE /api/django/governance/vendors/portfolio/{media_id}/hard-delete/
+
+   Admin approval should set visibility_status=approved if upload_status and quality_status allow it.
+   Rejection stores rejection_reason.
+   Hard delete physically removes only for admin.
+   Add audit log if governance audit already exists.
+
+10. Vendor edit behavior.
+    Vendors can edit:
+
+* caption
+* order
+* maybe active/inactive
+* replace media only 
+
+If media file is replaced:
+
+* create a new staged upload or reset upload_status/quality_status
+* visibility_status returns to waiting_approval/private
+* public old media must not remain visible unless explicitly designed
+
+If only caption/order changes:
+
+* backend decides whether approval resets; prefer no reset for order, optional reset for caption if public-facing fraud risk exists.
+
+11. Vendor soft delete behavior.
+    Endpoint:
+    DELETE /api/django/vendors/portfolio/{media_id}/
+
+Vendor delete must:
+
+* set is_deleted=true
+* set is_active=false
+* set deleted_at
+* remove from vendor default visible list immediately
+* remove from marketplace/public immediately
+* not physically delete DB row
+* return success response:
+  "Portfolio item removed from active listings."
+
+Only admin hard delete can physically remove the row.
+
+12. API list behavior.
+    Vendor private list:
+
+* shows active non-deleted portfolio items, including staged/queued/processing/uploaded/failed
+* returns status fields so UI can show processing/failed/private/approved
+
+Vendor dashboard:
+
+* shows newly added item immediately
+* hides soft-deleted items
+
+Public/marketplace list:
+
+* only shows public-eligible media according to visibility rules
+
+13. Marketplace projection.
+    If FastAPI marketplace projection includes portfolio media:
+
+* sync only public-eligible portfolio media
+* do not sync staged/queued/failed/deleted/private media
+* invalidate marketplace cache after portfolio approval/delete if needed
+
+If FastAPI currently only stores vendor listing:
+
+* do not invent a large new projection unless existing public profile needs media.
+* At minimum, Django public vendor profile endpoints must enforce approved-only portfolio visibility.
+
+14. Frontend vendor portfolio UX.
+    Inspect:
+
+* src/services/vendorService.ts
+* src/hooks/useVendor.ts
+* vendor portfolio page/components
+* vendor dashboard portfolio widgets
+* marketplace/public vendor profile if it displays portfolio
+
+Requirements:
+
+* Allow image upload and video upload.
+* File input accept:
+  image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime
+* Client-side enforce:
+  video <= 10MB
+  image <= configured frontend max matching backend
+* Backend remains source of truth.
+* On upload response:
+  immediately insert item into React Query cache or invalidate/refetch
+  show item without page refresh
+  if local preview is available, show it
+  show status badge:
+  Processing
   Waiting approval
   Approved
-  Rejected
-  Inactive
-* Do not show deleted packages in default list.
-* Optionally show filter/toggle for inactive/deleted only if backend supports it.
-* Do not show waiting_approval packages as public/marketplace-ready.
+  Failed
+  Private
+* Do not pretend marketplace/public visibility before approval.
+* On soft delete:
+  remove item from visible list immediately
+  show toast:
+  "Portfolio item removed from active listings."
+* On failed quality analysis:
+  show human-readable reason from backend if available.
+* Do not show technical words like Celery, Redis, Cloudinary, or analyzer provider names to vendor.
 
-11. Frontend package tier/category field.
+15. Frontend marketplace/public visibility.
 
-* Add required package tier selector:
-  Standard
-  Premier
-  Gold
-* Send package_tier to backend.
-* Show backend validation messages clearly.
-* Apply helpful frontend validation, but backend remains source of truth.
-* Do not allow frontend to bypass tier rules.
+* Marketplace/public vendor pages should display portfolio only if backend returns it.
+* Do not display local staged/private media publicly.
+* If vendor is not approved, do not show vendor portfolio/packages in marketplace.
 
-12. Marketplace/public visibility.
+16. Human-readable errors.
+    Backend must return clear errors:
 
-* Ensure only approved packages appear on any public vendor profile or marketplace package sections.
-* If FastAPI marketplace projection includes packages now or later:
-  only sync packages with approval_status=approved and is_deleted=false and is_active=true.
-* If packages are not currently projected to FastAPI, do not invent a large new marketplace package projection unless needed. At minimum, keep Django public package endpoints approved-only.
+* "Videos must be 10MB or smaller."
+* "Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."
+* "This image is too small. Upload a clearer, higher-resolution photo."
+* "This video could not be read. Upload a valid highlight video."
+* "This portfolio item is waiting for review before it appears publicly."
 
-13. Tests.
+17. Tests.
     Backend tests:
 
-* vendor creates package -> approval_status waiting_approval
-* package appears in vendor own package list immediately
-* package does not appear in public/marketplace until approved
-* admin approves package -> appears publicly if vendor approved and package active
-* vendor edits approved package public fields -> status returns to waiting_approval
-* vendor soft deletes package -> DB row remains, is_deleted=true, is_active=false
-* soft-deleted package hidden from vendor default list and public views
+* image upload returns success/202 and creates staged item
+* video upload <=10MB accepted
+* video >10MB rejected with clear 400
+* invalid media type rejected
+* low-resolution image rejected or marked failed/needs_manual_review according to design
+* Celery unavailable returns success with processing_deferred=true, not 500
+* Cloudinary task uploads and stores metadata
+* analyzer unavailable marks needs_manual_review, not 500
+* vendor soft delete keeps DB row and hides from default list
 * admin hard delete physically removes row
-* vendor cannot hard delete
-* vendor cannot edit/delete another vendor’s package
-* Standard/Premier/Gold validation rules enforced
-* human-readable field errors returned
+* public portfolio excludes non-approved vendor media
+* public portfolio includes approved vendor + approved media only
+* vendor cannot edit/delete another vendor’s media
 
-Frontend validation/manual tests:
+Frontend/manual tests:
 
-* create package appears immediately without refresh
-* edit package updates immediately
-* delete removes from visible list immediately
-* tier field required
-* backend validation errors render clearly
-* waiting approval/approved states display correctly
+* upload image appears immediately without refresh
+* upload video <=10MB appears immediately
+* upload video >10MB blocked before request and also rejected by backend if sent
+* soft delete removes item immediately
+* status badges display correctly
+* marketplace does not show unapproved vendor portfolio
+* approved vendor public page shows approved portfolio only
 
-14. Validation commands.
+18. Validation commands.
     Backend:
     python manage.py makemigrations
     python manage.py check
@@ -270,27 +402,30 @@ npm run build
 
 Rules:
 
-* Do not hard delete vendor packages from vendor actions.
-* Only admin may hard delete.
-* Implement soft-delete in shared/common backend structure.
-* Do not show inactive/deleted/waiting_approval packages publicly.
-* Do not rely on frontend for package tier rules.
-* Backend must enforce Standard/Premier/Gold rules.
-* Backend must return human-readable errors.
-* Do not introduce mocked package data.
-* Do not break existing vendor dashboard.
+* Vendor delete = soft delete only.
+* Admin delete = hard delete only.
+* Do not store raw media bytes in database.
+* Do not wait for Cloudinary upload before showing item in vendor dashboard.
+* Do not expose staged/private media in marketplace.
+* Backend enforces media type, size, quality, and visibility rules.
+* Frontend is only a caller/display layer.
+* Videos max size is 10MB.
+* Low-quality media must not become public.
+* Do not claim fake/fraud detection is perfect; analyzer is quality/review support.
+* Approved marketplace visibility requires approved vendor and approved media.
+* No mocked media URLs.
 * Keep light UI only.
-* Keep current route constants and API service structure.
 
 Return:
 
-* Root cause of current package behavior
+* Root cause of current portfolio behavior
 * Files changed
 * Migration names
 * New API response examples
-* Package tier rules implemented
 * Soft-delete design location
-* Admin approval flow
+* Media quality/analyzer rules implemented
+* Cloudinary deferred-sync behavior
+* Marketplace visibility rules
 * Validation results
 * Suggested backend branch/commit
 * Suggested frontend branch/commit

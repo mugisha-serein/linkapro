@@ -1,5 +1,5 @@
 import uuid
-from io import StringIO
+from io import BytesIO, StringIO
 
 import pytest
 from django.core.files.base import ContentFile
@@ -13,7 +13,7 @@ from rest_framework.test import APIClient
 from django_app.identity.models import User
 from django_app.vendors.models import PortfolioImage, ServicePackage, VerificationDocument, VendorProfile as DjangoProfile
 from tasks.document_tasks import process_vendor_verification_document_task
-from tasks.image_tasks import upload_vendor_portfolio_image_task
+from tasks.image_tasks import process_vendor_portfolio_media_task, upload_vendor_portfolio_image_task
 
 pytestmark = pytest.mark.django_db
 
@@ -327,24 +327,53 @@ class TestPortfolioImageViews:
     def test_upload_image_returns_202_and_queues_task(self, monkeypatch):
         queued = []
         monkeypatch.setattr(
-            "tasks.image_tasks.upload_vendor_portfolio_image_task.delay",
+            "tasks.image_tasks.process_vendor_portfolio_media_task.delay",
             lambda image_id: queued.append(image_id),
         )
 
         url = reverse("portfolio-list")
-        image = SimpleUploadedFile("portfolio.jpg", b"fake-image", content_type="image/jpeg")
-        response = self.client.post(url, {"image": image, "caption": "My photo"}, format="multipart")
+        image = SimpleUploadedFile("portfolio.jpg", valid_image_bytes(), content_type="image/jpeg")
+        response = self.client.post(url, {"media": image, "caption": "My photo"}, format="multipart")
 
         assert response.status_code == 202
-        assert response.data["status"] == "processing"
+        assert response.data["status"] == "queued"
+        assert response.data["processing_deferred"] is False
         assert response.data["job_id"]
-        assert response.data["message"] == "Portfolio image upload is processing."
+        assert response.data["message"] == "Portfolio item received. Review will continue automatically."
+        assert response.data["item"]["local_preview_url"]
         assert self.profile.images.count() == 1
         stored = self.profile.images.get()
-        assert stored.upload_status == PortfolioImage.UploadStatus.PENDING
+        assert stored.media_type == PortfolioImage.MediaType.IMAGE
+        assert stored.upload_status == PortfolioImage.UploadStatus.QUEUED
+        assert stored.quality_status == PortfolioImage.QualityStatus.PENDING_ANALYSIS
+        assert stored.visibility_status == PortfolioImage.VisibilityStatus.PRIVATE
         assert stored.original_filename == "portfolio.jpg"
         assert stored.temp_upload_path
         assert queued == [str(stored.id)]
+
+    def test_upload_video_returns_202_when_under_10mb(self, monkeypatch):
+        queued = []
+        monkeypatch.setattr(
+            "tasks.image_tasks.process_vendor_portfolio_media_task.delay",
+            lambda image_id: queued.append(image_id),
+        )
+        video = SimpleUploadedFile("highlight.mp4", b"\x00\x00\x00\x18ftypmp42" + b"0" * 128, content_type="video/mp4")
+
+        response = self.client.post(reverse("portfolio-list"), {"media": video}, format="multipart")
+
+        assert response.status_code == 202
+        stored = PortfolioImage.objects.get()
+        assert stored.media_type == PortfolioImage.MediaType.VIDEO
+        assert stored.upload_status == PortfolioImage.UploadStatus.QUEUED
+        assert queued == [str(stored.id)]
+
+    def test_upload_video_over_10mb_returns_400(self):
+        video = SimpleUploadedFile("large.mp4", b"\x00\x00\x00\x18ftypmp42" + (b"0" * (10 * 1024 * 1024 + 1)), content_type="video/mp4")
+
+        response = self.client.post(reverse("portfolio-list"), {"media": video}, format="multipart")
+
+        assert response.status_code == 400
+        assert response.data["media"][0] == "Videos must be 10MB or smaller."
 
     def test_upload_invalid_file_type_returns_400(self):
         image = SimpleUploadedFile("portfolio.txt", b"not-image", content_type="text/plain")
@@ -352,18 +381,26 @@ class TestPortfolioImageViews:
         response = self.client.post(reverse("portfolio-list"), {"image": image}, format="multipart")
 
         assert response.status_code == 400
-        assert "Unsupported image type" in response.data["detail"]
+        assert "Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed." in response.data["media"][0]
         assert self.profile.images.count() == 0
 
     @override_settings(VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE=4)
     def test_upload_oversized_file_returns_400(self):
         image = SimpleUploadedFile("portfolio.jpg", b"too-large", content_type="image/jpeg")
 
-        response = self.client.post(reverse("portfolio-list"), {"image": image}, format="multipart")
+        response = self.client.post(reverse("portfolio-list"), {"media": image}, format="multipart")
 
         assert response.status_code == 400
-        assert "too large" in response.data["detail"]
+        assert "too large" in response.data["media"][0]
         assert self.profile.images.count() == 0
+
+    def test_upload_low_resolution_image_returns_400(self):
+        image = SimpleUploadedFile("tiny.jpg", valid_image_bytes(size=(320, 240)), content_type="image/jpeg")
+
+        response = self.client.post(reverse("portfolio-list"), {"media": image}, format="multipart")
+
+        assert response.status_code == 400
+        assert response.data["media"][0] == "This image is too small. Upload a clearer, higher-resolution photo."
 
     def test_list_includes_upload_status_for_existing_completed_images(self):
         PortfolioImage.objects.create(
@@ -371,22 +408,25 @@ class TestPortfolioImageViews:
             public_id="portfolio/existing",
             secure_url="https://example.com/existing.jpg",
             caption="Existing",
-            upload_status=PortfolioImage.UploadStatus.COMPLETED,
+            upload_status=PortfolioImage.UploadStatus.UPLOADED,
         )
 
         response = self.client.get(reverse("portfolio-list"))
 
         assert response.status_code == 200
         assert response.data[0]["secure_url"] == "https://example.com/existing.jpg"
-        assert response.data[0]["upload_status"] == "completed"
+        assert response.data[0]["upload_status"] == "uploaded"
 
     def test_celery_task_marks_image_completed_on_cloudinary_success(self, monkeypatch):
-        temp_path = default_storage.save("vendor_portfolio_uploads/test/portfolio.jpg", ContentFile(b"image"))
+        temp_path = default_storage.save("vendor_portfolio_uploads/test/portfolio.jpg", ContentFile(valid_image_bytes()))
         image = PortfolioImage.objects.create(
             vendor=self.profile,
             caption="Queued",
-            upload_status=PortfolioImage.UploadStatus.PENDING,
+            upload_status=PortfolioImage.UploadStatus.QUEUED,
+            quality_status=PortfolioImage.QualityStatus.PENDING_ANALYSIS,
+            visibility_status=PortfolioImage.VisibilityStatus.PRIVATE,
             original_filename="portfolio.jpg",
+            media_type=PortfolioImage.MediaType.IMAGE,
             temp_upload_path=temp_path,
         )
 
@@ -402,19 +442,23 @@ class TestPortfolioImageViews:
 
         image.refresh_from_db()
         assert result["status"] == "completed"
-        assert image.upload_status == PortfolioImage.UploadStatus.COMPLETED
+        assert image.upload_status == PortfolioImage.UploadStatus.UPLOADED
+        assert image.quality_status == PortfolioImage.QualityStatus.PASSED
+        assert image.visibility_status == PortfolioImage.VisibilityStatus.WAITING_APPROVAL
         assert image.secure_url == "https://res.cloudinary.com/demo/portfolio.jpg"
         assert image.public_id == "vendor_portfolio/portfolio"
+        assert image.cloudinary_secure_url == "https://res.cloudinary.com/demo/portfolio.jpg"
         assert image.temp_upload_path is None
         assert not default_storage.exists(temp_path)
 
     def test_celery_task_marks_image_failed_on_cloudinary_failure(self, monkeypatch):
-        temp_path = default_storage.save("vendor_portfolio_uploads/test/failure.jpg", ContentFile(b"image"))
+        temp_path = default_storage.save("vendor_portfolio_uploads/test/failure.jpg", ContentFile(valid_image_bytes()))
         image = PortfolioImage.objects.create(
             vendor=self.profile,
             caption="Queued",
-            upload_status=PortfolioImage.UploadStatus.PENDING,
+            upload_status=PortfolioImage.UploadStatus.QUEUED,
             original_filename="failure.jpg",
+            media_type=PortfolioImage.MediaType.IMAGE,
             temp_upload_path=temp_path,
         )
 
@@ -423,13 +467,36 @@ class TestPortfolioImageViews:
             lambda self, file, fallback_to_storage=False: (_ for _ in ()).throw(RuntimeError("network down")),
         )
 
-        upload_vendor_portfolio_image_task.request.retries = upload_vendor_portfolio_image_task.max_retries
-        result = upload_vendor_portfolio_image_task.run(str(image.id))
+        process_vendor_portfolio_media_task.request.retries = process_vendor_portfolio_media_task.max_retries
+        result = process_vendor_portfolio_media_task.run(str(image.id))
 
         image.refresh_from_db()
         assert result["status"] == "failed"
         assert image.upload_status == PortfolioImage.UploadStatus.FAILED
-        assert image.upload_error == "Portfolio image upload failed. Please try again."
+        assert image.upload_error == "Portfolio media upload failed. Please try again."
+
+    def test_delete_image_soft_deletes_and_hides_from_default_list(self):
+        image = PortfolioImage.objects.create(
+            vendor=self.profile,
+            public_id="portfolio/delete",
+            secure_url="https://example.com/delete.jpg",
+            caption="Delete me",
+            upload_status=PortfolioImage.UploadStatus.UPLOADED,
+            quality_status=PortfolioImage.QualityStatus.PASSED,
+            visibility_status=PortfolioImage.VisibilityStatus.APPROVED,
+            is_active=True,
+        )
+
+        response = self.client.delete(reverse("portfolio-detail", args=[image.id]))
+
+        assert response.status_code == 200
+        assert response.data["message"] == "Portfolio item removed from active listings."
+        image = PortfolioImage.all_objects.get(id=image.id)
+        assert image.is_deleted is True
+        assert image.is_active is False
+        assert image.deleted_by == self.user
+        assert not PortfolioImage.objects.filter(id=image.id).exists()
+        assert self.client.get(reverse("portfolio-list")).data == []
 
     def test_delete_image_not_found(self):
         url = reverse("portfolio-detail", args=[uuid.uuid4()])
@@ -445,6 +512,14 @@ def valid_pdf_bytes() -> bytes:
         b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
         b"%%EOF\n"
     )
+
+
+def valid_image_bytes(size=(800, 600)) -> bytes:
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", size, color="white").save(buffer, format="JPEG")
+    return buffer.getvalue()
 
 
 class TestVerificationDocumentViews:

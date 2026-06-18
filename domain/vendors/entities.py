@@ -119,16 +119,41 @@ class PortfolioImage:
     secure_url: str          # Cloudinary URL
     caption: Optional[str] = None
     order: int = 0
-    upload_status: str = "completed"
+    media_type: str = "image"
+    upload_status: str = "uploaded"
+    quality_status: str = "passed"
+    visibility_status: str = "approved"
     upload_error: Optional[str] = None
+    failure_reason: Optional[str] = None
+    rejection_reason: Optional[str] = None
     original_filename: Optional[str] = None
+    mime_type: str = ""
+    file_size: int = 0
+    local_preview_url: Optional[str] = None
+    cloudinary_public_id: Optional[str] = None
+    cloudinary_secure_url: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration_seconds: Optional[int] = None
+    analyzer_score: Optional[int] = None
+    analyzer_summary: Optional[str] = None
+    is_active: bool = True
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
 
     def update_caption(self, caption: Optional[str]) -> None:
         self.caption = caption
 
     def reorder(self, new_order: int) -> None:
         self.order = new_order
+
+    def deactivate(self) -> None:
+        self.is_active = False
+        self.is_deleted = True
+        self.deleted_at = utc_now()
+        self.updated_at = utc_now()
 
 
 @dataclass

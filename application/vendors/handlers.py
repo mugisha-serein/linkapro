@@ -131,7 +131,7 @@ class VendorCommandHandlers:
         return self._to_image_dto(saved)
 
     def delete_portfolio_image(self, cmd: DeletePortfolioImageCommand) -> None:
-        self.image_repo.delete(cmd.image_id)
+        self.image_repo.delete(cmd.image_id, deleted_by_id=cmd.deleted_by_id)
 
     def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> List[PortfolioImageDTO]:
         images = self.image_repo.list_by_vendor(cmd.vendor_id)
@@ -228,9 +228,27 @@ class VendorCommandHandlers:
     def _to_image_dto(i: PortfolioImage) -> PortfolioImageDTO:
         return PortfolioImageDTO(id=i.id, vendor_id=i.vendor_id, secure_url=i.secure_url,
                                  caption=i.caption, order=i.order,
+                                 media_type=i.media_type,
                                  upload_status=i.upload_status,
+                                 quality_status=i.quality_status,
+                                 visibility_status=i.visibility_status,
                                  upload_error=i.upload_error,
-                                 original_filename=i.original_filename)
+                                 failure_reason=i.failure_reason,
+                                 rejection_reason=i.rejection_reason,
+                                 original_filename=i.original_filename,
+                                 mime_type=i.mime_type,
+                                 file_size=i.file_size,
+                                 local_preview_url=i.local_preview_url,
+                                 cloudinary_public_id=i.cloudinary_public_id,
+                                 cloudinary_secure_url=i.cloudinary_secure_url,
+                                 width=i.width,
+                                 height=i.height,
+                                 duration_seconds=i.duration_seconds,
+                                 analyzer_score=i.analyzer_score,
+                                 analyzer_summary=i.analyzer_summary,
+                                 is_active=i.is_active,
+                                 is_deleted=i.is_deleted,
+                                 deleted_at=i.deleted_at)
 
     @staticmethod
     def _to_package_dto(p: ServicePackage) -> ServicePackageDTO:
