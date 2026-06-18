@@ -1,14 +1,11 @@
 import uuid
-import json
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.conf import settings
-from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db.models import Max
-from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
@@ -25,6 +22,7 @@ from .serializers import (
     VerificationDocumentUploadSerializer,
 )
 from .models import PortfolioImage as PortfolioImageModel
+from .models import VerificationDocument
 from .models import VendorProfile as VendorProfileModel
 from .services import get_command_handlers, get_query_handlers
 from application.vendors.commands import (
@@ -52,6 +50,7 @@ VENDOR_PROFILE_SETUP_REDIRECT = "/vendor/profile"
 VENDOR_SUSPENDED_CODE = "vendor_suspended"
 VENDOR_SUSPENDED_DETAIL = "Your vendor account is suspended. Please contact support."
 ALLOWED_PORTFOLIO_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+PDF_MIME_TYPE = "application/pdf"
 
 
 def _profile_completion_errors(profile: VendorProfileDTO) -> dict[str, list[str]]:
@@ -62,6 +61,8 @@ def _profile_completion_errors(profile: VendorProfileDTO) -> dict[str, list[str]
             errors[field_name] = ["This field is required."]
     if profile.description and len(profile.description.strip()) < 20:
         errors["description"] = ["Use at least 20 characters for your description."]
+    if profile.category == VendorProfileModel.Category.OTHER and not (profile.custom_category or "").strip():
+        errors["custom_category"] = ["Describe what you do when category is Other."]
     return errors
 
 
@@ -113,6 +114,7 @@ def _serialize_profile(dto: VendorProfileDTO) -> dict:
         "user_id": str(dto.user_id),
         "business_name": dto.business_name,
         "category": dto.category,
+        "custom_category": dto.custom_category,
         "description": dto.description,
         "service_area": dto.service_area,
         "contact_email": dto.contact_email,
@@ -151,6 +153,7 @@ class VendorProfileView(APIView):
             service_area=data["service_area"],
             contact_email=data["contact_email"],
             contact_phone=data["contact_phone"],
+            custom_category=data.get("custom_category"),
             website=data.get("website"),
         )
 
@@ -179,6 +182,7 @@ class VendorProfileView(APIView):
             service_area=data.get("service_area"),
             contact_email=data.get("contact_email"),
             contact_phone=data.get("contact_phone"),
+            custom_category=data.get("custom_category"),
             website=data.get("website"),
         )
 
@@ -493,8 +497,8 @@ class VendorVerificationDocumentView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        documents = self._load_documents(profile.id)
-        return Response(documents)
+        documents = VerificationDocument.objects.filter(vendor_id=profile.id).order_by("-created_at")
+        return Response([self._serialize_document(document) for document in documents])
 
     def post(self, request):
         query_handlers = get_query_handlers()
@@ -515,75 +519,91 @@ class VendorVerificationDocumentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        secure_url = None
-        cloudinary_ready = bool(
-            settings.CLOUDINARY_CLOUD_NAME
-            and settings.CLOUDINARY_API_KEY
-            and settings.CLOUDINARY_API_SECRET
+        validation_error = self._validate_pdf(uploaded_document)
+        if validation_error:
+            return Response(validation_error, status=status.HTTP_400_BAD_REQUEST)
+
+        safe_filename = get_valid_filename(uploaded_document.name)
+        temp_path = default_storage.save(
+            f"vendor_verification_uploads/{profile.id}/{uuid.uuid4().hex}_{safe_filename}",
+            uploaded_document,
+        )
+        document = VerificationDocument.objects.create(
+            vendor_id=profile.id,
+            document_type=serializer.validated_data["document_type"],
+            original_filename=uploaded_document.name,
+            mime_type=PDF_MIME_TYPE,
+            file_size=uploaded_document.size,
+            upload_status=VerificationDocument.UploadStatus.PENDING,
+            verification_status=VerificationDocument.VerificationStatus.PENDING_REVIEW,
+            fraud_status=VerificationDocument.FraudStatus.REVIEW_REQUIRED,
+            fraud_reasons=["PDF preflight passed; awaiting admin review."],
+            temp_upload_path=temp_path,
         )
 
-        if cloudinary_ready:
-            try:
-                from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
+        from tasks.document_tasks import upload_vendor_verification_document_task
 
-                adapter = CloudinaryAdapter()
-                result = adapter.upload_file(
-                    uploaded_document,
-                    folder="vendor_verification_documents",
-                    resource_type="raw",
-                )
-                secure_url = result["secure_url"]
-            except Exception:
-                secure_url = None
+        upload_vendor_verification_document_task.delay(str(document.id))
+        return Response(
+            {
+                "status": "processing",
+                "document_id": str(document.id),
+                "message": "Verification document upload is processing.",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
-        if not secure_url:
+    def _validate_pdf(self, uploaded_document) -> dict | None:
+        max_size = int(getattr(settings, "VENDOR_VERIFICATION_DOCUMENT_MAX_SIZE_MB", 5)) * 1024 * 1024
+        filename = uploaded_document.name or ""
+        content_type = (getattr(uploaded_document, "content_type", "") or "").lower()
+        if content_type != PDF_MIME_TYPE:
+            return {"document": ["Verification documents must be uploaded as PDF files."]}
+        if not filename.lower().endswith(".pdf"):
+            return {"document": ["Verification document filename must end with .pdf."]}
+        if uploaded_document.size > max_size:
+            return {"document": [f"Verification document is too large. Maximum size is {max_size // (1024 * 1024)}MB."]}
+
+        current_position = uploaded_document.tell() if hasattr(uploaded_document, "tell") else None
+        try:
+            uploaded_document.seek(0)
+            content = uploaded_document.read()
+        finally:
             try:
-                uploaded_document.seek(0)
+                uploaded_document.seek(current_position or 0)
             except Exception:
                 pass
 
-            saved_path = default_storage.save(
-                f"vendor_verification_documents/{profile.id}/{uploaded_document.name}",
-                uploaded_document,
-            )
-            secure_url = request.build_absolute_uri(f"/{settings.MEDIA_URL.lstrip('/')}{saved_path}")
+        if not content.startswith(b"%PDF"):
+            return {"document": ["Verification document is not a valid PDF file."]}
+        if b"%%EOF" not in content[-2048:]:
+            return {"document": ["Verification document appears to be incomplete or corrupt."]}
+        if b"/Encrypt" in content[:4096] or b"/Encrypt" in content:
+            return {"document": ["Password-protected PDFs cannot be processed."]}
+        if not self._has_pdf_page(content):
+            return {"document": ["Verification document must contain at least one page."]}
+        return None
 
-        document = {
-            "id": str(uuid.uuid4()),
-            "document_type": serializer.validated_data["document_type"],
-            "original_filename": uploaded_document.name,
-            "secure_url": secure_url,
-            "fraud_status": "pending",
-            "fraud_score": 0,
-            "fraud_reasons": [],
-            "created_at": timezone.now().isoformat(),
+    def _has_pdf_page(self, content: bytes) -> bool:
+        return b"/Type /Page" in content or b"/Type/Page" in content
+
+    def _serialize_document(self, document: VerificationDocument) -> dict:
+        return {
+            "id": str(document.id),
+            "document_type": document.document_type,
+            "original_filename": document.original_filename,
+            "mime_type": document.mime_type,
+            "file_size": document.file_size,
+            "secure_url": document.cloudinary_secure_url or document.secure_url,
+            "cloudinary_secure_url": document.cloudinary_secure_url or document.secure_url,
+            "upload_status": document.upload_status,
+            "verification_status": document.verification_status,
+            "failure_reason": document.failure_reason,
+            "fraud_status": document.fraud_status,
+            "fraud_score": document.fraud_score,
+            "fraud_reasons": document.fraud_reasons,
+            "created_at": document.created_at.isoformat(),
         }
-        documents = self._load_documents(profile.id)
-        documents.insert(0, document)
-        self._save_documents(profile.id, documents)
-        return Response(document, status=status.HTTP_201_CREATED)
-
-    def _index_path(self, vendor_id) -> str:
-        return f"vendor_verification_documents/{vendor_id}/index.json"
-
-    def _load_documents(self, vendor_id) -> list[dict]:
-        index_path = self._index_path(vendor_id)
-        if not default_storage.exists(index_path):
-            return []
-
-        try:
-            with default_storage.open(index_path, "r") as handle:
-                data = json.load(handle)
-                return data if isinstance(data, list) else []
-        except Exception:
-            return []
-
-    def _save_documents(self, vendor_id, documents: list[dict]) -> None:
-        index_path = self._index_path(vendor_id)
-        payload = json.dumps(documents).encode("utf-8")
-        if default_storage.exists(index_path):
-            default_storage.delete(index_path)
-        default_storage.save(index_path, ContentFile(payload))
 
 
 class PublicInquiryView(APIView):
@@ -662,6 +682,7 @@ class AdminPendingVendorListView(APIView):
                 "user_id": str(profile.user_id),
                 "business_name": profile.business_name,
                 "category": profile.category,
+                "custom_category": profile.custom_category,
                 "description": profile.description,
                 "service_area": profile.service_area,
                 "contact_email": profile.contact_email,

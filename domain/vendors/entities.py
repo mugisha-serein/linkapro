@@ -36,6 +36,7 @@ class VendorProfile:
     service_area: str  # e.g., "Kigali, Rwanda"
     contact_email: str
     contact_phone: str
+    custom_category: Optional[str] = None
     website: Optional[str] = None
     status: VendorStatus = VendorStatus.DRAFT
     submitted_at: Optional[datetime] = None
@@ -64,6 +65,8 @@ class VendorProfile:
                 errors[field_name] = ["This field is required."]
         if self.description and len(self.description.strip()) < 20:
             errors["description"] = ["Use at least 20 characters for your description."]
+        if self.category == ServiceCategory.OTHER and not (self.custom_category or "").strip():
+            errors["custom_category"] = ["Describe what you do when category is Other."]
         return errors
 
     @property

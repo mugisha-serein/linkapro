@@ -46,6 +46,7 @@ class VendorCommandHandlers:
             service_area=cmd.service_area,
             contact_email=cmd.contact_email,
             contact_phone=cmd.contact_phone,
+            custom_category=cmd.custom_category,
             website=cmd.website,
         )
         saved = self.vendor_repo.save(profile)
@@ -61,6 +62,7 @@ class VendorCommandHandlers:
         if cmd.service_area: profile.service_area = cmd.service_area
         if cmd.contact_email: profile.contact_email = cmd.contact_email
         if cmd.contact_phone: profile.contact_phone = cmd.contact_phone
+        if cmd.custom_category is not None: profile.custom_category = cmd.custom_category
         if cmd.website is not None: profile.website = cmd.website
         saved = self.vendor_repo.save(profile)
         return self._to_profile_dto(saved)
@@ -200,7 +202,7 @@ class VendorCommandHandlers:
         return VendorProfileDTO(
             id=p.id, user_id=p.user_id, business_name=p.business_name, category=p.category.value,
             description=p.description, service_area=p.service_area, contact_email=p.contact_email,
-            contact_phone=p.contact_phone, website=p.website, status=p.status.value,
+            contact_phone=p.contact_phone, custom_category=p.custom_category, website=p.website, status=p.status.value,
             submitted_at=p.submitted_at, approved_at=p.approved_at, rejected_at=p.rejected_at,
             rejection_reason=p.rejection_reason
         )

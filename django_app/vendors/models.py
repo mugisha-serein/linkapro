@@ -25,6 +25,7 @@ class VendorProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="vendor_profile")
     business_name = models.CharField(max_length=200)
     category = models.CharField(max_length=30, choices=Category.choices)
+    custom_category = models.CharField(max_length=120, blank=True, null=True)
     description = models.TextField()
     service_area = models.CharField(max_length=200)
     contact_email = models.EmailField()
@@ -60,6 +61,8 @@ class VendorProfile(models.Model):
                 errors[field_name] = ["This field is required."]
         if self.description and len(self.description.strip()) < 20:
             errors["description"] = ["Use at least 20 characters for your description."]
+        if self.category == self.Category.OTHER and not (self.custom_category or "").strip():
+            errors["custom_category"] = ["Describe what you do when category is Other."]
         return errors
 
     @property
@@ -140,15 +143,40 @@ class VerificationDocument(models.Model):
         REVIEW_REQUIRED = "review_required", "Review Required"
         REJECTED = "rejected", "Rejected"
 
+    class UploadStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    class VerificationStatus(models.TextChoices):
+        PENDING_REVIEW = "pending_review", "Pending Review"
+        VERIFIED = "verified", "Verified"
+        REJECTED = "rejected", "Rejected"
+        FAILED = "failed", "Failed"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="verification_documents")
     document_type = models.CharField(max_length=40, choices=DocumentType.choices)
     original_filename = models.CharField(max_length=255)
-    secure_url = models.URLField()
+    mime_type = models.CharField(max_length=100, blank=True)
+    file_size = models.PositiveIntegerField(default=0)
+    secure_url = models.URLField(blank=True)
+    cloudinary_public_id = models.CharField(max_length=255, blank=True, null=True)
+    cloudinary_secure_url = models.URLField(blank=True, null=True)
+    upload_status = models.CharField(max_length=20, choices=UploadStatus.choices, default=UploadStatus.PENDING)
+    verification_status = models.CharField(
+        max_length=20,
+        choices=VerificationStatus.choices,
+        default=VerificationStatus.PENDING_REVIEW,
+    )
+    failure_reason = models.TextField(blank=True, null=True)
+    temp_upload_path = models.CharField(max_length=500, blank=True, null=True)
     fraud_status = models.CharField(max_length=20, choices=FraudStatus.choices, default=FraudStatus.PENDING)
     fraud_score = models.PositiveSmallIntegerField(default=0)
     fraud_reasons = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.document_type} for {self.vendor.business_name}"

@@ -13,6 +13,7 @@ class VendorProfileDTO:
     service_area: str
     contact_email: str
     contact_phone: str
+    custom_category: Optional[str]
     website: Optional[str]
     status: str
     submitted_at: Optional[datetime]

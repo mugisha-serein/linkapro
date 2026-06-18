@@ -44,6 +44,7 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         obj.service_area = domain.service_area
         obj.contact_email = domain.contact_email
         obj.contact_phone = domain.contact_phone
+        obj.custom_category = domain.custom_category
         obj.website = domain.website
         obj.status = domain.status.value
         obj.submitted_at = domain.submitted_at
@@ -68,6 +69,7 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
             service_area=model.service_area,
             contact_email=model.contact_email,
             contact_phone=model.contact_phone,
+            custom_category=model.custom_category,
             website=model.website,
             status=VendorStatus(model.status),
             submitted_at=model.submitted_at,
