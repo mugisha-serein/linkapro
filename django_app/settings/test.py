@@ -34,6 +34,7 @@ SIMPLE_JWT = {
 }
 PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
 EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
+TOKEN_ENV = os.environ.get("TOKEN_ENV", "test")
 
 # Celery always eager for tests (tasks run synchronously)
 CELERY_TASK_ALWAYS_EAGER = True

@@ -110,6 +110,32 @@ def test_production_settings_pass_with_required_email_env():
     assert "ok" in result.stdout
 
 
+def test_production_settings_default_token_env_is_production():
+    result = _run_settings_snippet(
+        "\n".join(
+            [
+                "from django_app.settings import production as settings",
+                "assert settings.TOKEN_ENV == 'production'",
+                "print('ok')",
+            ]
+        ),
+        _production_env(TOKEN_ENV=None, PAYMENT_ENV="live"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
+def test_production_settings_reject_empty_token_env():
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(TOKEN_ENV=""),
+    )
+
+    assert result.returncode != 0
+    assert "TOKEN_ENV must be set for production identity tokens." in result.stderr
+
+
 def test_rediss_redis_url_sets_celery_ssl_options_to_cert_required():
     result = _run_settings_snippet(
         "\n".join(

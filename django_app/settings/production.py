@@ -38,6 +38,10 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "").strip()
 if not FRONTEND_URL:
     raise ImproperlyConfigured("FRONTEND_URL must be set for password reset links.")
 
+TOKEN_ENV = os.environ.get("TOKEN_ENV", "production").strip()
+if not TOKEN_ENV:
+    raise ImproperlyConfigured("TOKEN_ENV must be set for production identity tokens.")
+
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.sendgrid.net")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))

@@ -7,6 +7,7 @@ from django.core.cache import cache
 
 from payments.application.ports import ITokenBlacklist
 from payments.domain.step_up_policy import StepUpPolicy, StepUpPolicyResult
+from infrastructure.adapters.jwt_token_service import accepted_identity_token_env, identity_token_env
 
 
 class TokenCommandHandlers:
@@ -14,10 +15,7 @@ class TokenCommandHandlers:
         self.blacklist = blacklist
 
     def _token_env(self) -> str:
-        env = getattr(settings, "PAYMENT_ENV", None)
-        if not env:
-            raise ValueError("PAYMENT_ENV must be configured")
-        return env
+        return identity_token_env()
 
     def refresh_access_token(self, refresh_token: str) -> Tuple[str, str, dict]:
         """Validate refresh token, rotate, and return new access + refresh pair."""
@@ -38,7 +36,7 @@ class TokenCommandHandlers:
             raise ValueError("Malformed refresh token")
         if not family:
             raise ValueError("Malformed refresh token family")
-        if token_env != expected_env:
+        if accepted_identity_token_env(token_env, context="refresh_token_rotation") is None:
             raise ValueError("Token environment mismatch")
 
         # Check if token is blacklisted
@@ -94,7 +92,7 @@ class TokenCommandHandlers:
             raise ValueError("Malformed refresh token")
         if not family:
             raise ValueError("Malformed refresh token family")
-        if token_env != expected_env:
+        if accepted_identity_token_env(token_env, context="refresh_token_revoke") is None:
             raise ValueError("Token environment mismatch")
 
         ttl = self._remaining_ttl(token)
@@ -111,7 +109,7 @@ class TokenCommandHandlers:
         token_env = original_token.get("env")
         expected_env = self._token_env()
         family = original_token.get("family")
-        if token_env != expected_env:
+        if accepted_identity_token_env(token_env, context="step_up_token_issue") is None:
             raise ValueError("Token environment mismatch")
         if not family:
             raise ValueError("Malformed token family")

@@ -168,6 +168,24 @@ JWE_PRIVATE_KEY = os.environ.get("JWE_PRIVATE_KEY", "")
 PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
 EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
 
+
+def _default_token_env() -> str:
+    settings_module = os.environ.get("DJANGO_SETTINGS_MODULE", "").lower()
+    if settings_module.endswith(".test"):
+        return "test"
+    if settings_module.endswith(".development"):
+        return "development"
+    return "development" if DEBUG else "production"
+
+
+TOKEN_ENV = os.environ.get(
+    "TOKEN_ENV",
+    os.environ.get("APP_ENV", os.environ.get("DJANGO_ENV", _default_token_env())),
+)
+ACCEPT_LEGACY_PAYMENT_ENV_TOKENS = (
+    os.environ.get("ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", "true").lower() == "true"
+)
+
 # Celery
 REDIS_URL = get_redis_url()
 CELERY_BROKER_URL = REDIS_URL
