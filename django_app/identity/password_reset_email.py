@@ -24,32 +24,47 @@ def request_password_reset_email(email: str) -> bool:
         )
         return False
 
+    token = JWTTokenService().create_password_reset_token(str(user.id))
     logger.info(
         "forgot_password_email_queued",
         extra={"user_id": str(user.id), "email_domain": email_domain},
     )
 
     try:
-        token = JWTTokenService().create_password_reset_token(str(user.id))
-        reset_url = build_password_reset_url(token)
-        send_mail(
-            subject="Reset your LinkaPro password",
-            message=build_password_reset_text(reset_url),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-            html_message=build_password_reset_html(reset_url),
-        )
+        from tasks.email_tasks import send_password_reset_email_task
+
+        send_password_reset_email_task.delay(str(user.id), token)
     except Exception as exc:
-        logger.exception(
-            "forgot_password_email_failed",
+        logger.error(
+            "forgot_password_email_dispatch_deferred",
             extra={
                 "user_id": str(user.id),
                 "email_domain": email_domain,
                 "error_type": exc.__class__.__name__,
             },
+            exc_info=True,
         )
         return False
+
+    return True
+
+
+def send_password_reset_email(user_id: str, token: str) -> bool:
+    user = User.objects.filter(id=user_id, is_active=True).first()
+    if not user:
+        logger.info("forgot_password_email_skipped", extra={"user_id": str(user_id), "reason": "no_active_user"})
+        return False
+
+    email_domain = _email_domain(user.email)
+    reset_url = build_password_reset_url(token)
+    send_mail(
+        subject="Reset your LinkaPro password",
+        message=build_password_reset_text(reset_url),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        fail_silently=False,
+        html_message=build_password_reset_html(reset_url),
+    )
 
     logger.info(
         "forgot_password_email_sent",
