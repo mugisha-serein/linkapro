@@ -1,15 +1,15 @@
-Fix LinkaPro identity token environment so password reset/email verification/2FA tokens do not depend on PAYMENT_ENV.
+Fix LinkaPro password reset tokens so reset links are single-use and cannot be reused after a successful password reset.
 
 Problem:
-`JWTTokenService._token_env()` currently reads `PAYMENT_ENV`. This is semantically wrong because identity/security tokens are not payment tokens.
+Current password reset flow verifies a JWT reset token and then sets the new password. The token appears reusable until expiry because there is no nonce/jti tracking, password-reset token table, used-token blacklist, reset version, or password timestamp validation.
 
-Current behavior:
+Current risk:
 
-* Password reset token includes `env` from PAYMENT_ENV.
-* Email verification token includes `env` from PAYMENT_ENV.
-* 2FA temp token includes `env` from PAYMENT_ENV.
-* Verification rejects tokens if token env != current PAYMENT_ENV.
-* If PAYMENT_ENV changes from test to live, existing password reset links can become invalid even though identity environment did not change.
+* User requests password reset.
+* User receives reset link.
+* User resets password successfully.
+* Same reset link can potentially be submitted again before token expiry.
+* This is not production-grade security.
 
 Repository:
 
@@ -18,166 +18,223 @@ Repository:
 Files to inspect:
 
 * infrastructure/adapters/jwt_token_service.py
-* django_app/settings/base.py
-* django_app/settings/production.py
-* django_app/settings/development.py
-* django_app/settings/test.py if present
+* django_app/identity/views.py
+* django_app/identity/serializers.py
+* django_app/identity/models.py
+* django_app/identity/urls.py
+* application/identity handlers/services if existing
 * tests/infrastructure/adapters/test_jwt_token_service.py
-* identity forgot/reset password tests
-* any code relying on PAYMENT_ENV in JWT claims
+* tests/django_app/identity
+* migrations
 
 Goal:
-Separate identity token environment from payment environment.
+Make password reset tokens single-use while keeping the user-facing reset flow simple and secure.
 
 Backend tasks:
 
-1. Add dedicated identity token environment setting.
-   In settings, add:
+1. Inspect current password reset token creation and verification.
+   Current code likely:
 
-   TOKEN_ENV = os.environ.get(
-   "TOKEN_ENV",
-   os.environ.get("APP_ENV", os.environ.get("DJANGO_ENV", "development" if DEBUG else "production"))
-   )
+   * creates JWT with user_id, token_type=password_reset, env, exp, iat
+   * verifies JWT and returns user_id
+   * ResetPasswordView sets password directly
 
-   Or equivalent clean helper.
+2. Add a unique reset token identifier.
+   Update `create_password_reset_token` to include:
 
-   Requirements:
+   * jti: UUID string
+   * purpose/token_type: password_reset
+   * user_id
+   * env/TOKEN_ENV
+   * exp
+   * iat
 
-   * Production should default to "production" if not explicitly set.
-   * Development should default to "development".
-   * Test should default to "test".
-   * Do not read PAYMENT_ENV for identity token environment.
-   * Keep PAYMENT_ENV only for payments.
+   Do not log jti with token together.
 
-2. Update JWTTokenService.
-   Replace `_token_env()` behavior.
+3. Add persistent token tracking.
+   Add model, for example:
 
-   Current:
+   PasswordResetToken
 
-   * reads settings.PAYMENT_ENV
+   Fields:
 
-   New:
+   * id UUID primary key
+   * user FK to identity.User
+   * jti unique indexed
+   * token_hash indexed
+   * status: active, used, expired, revoked
+   * requested_at
+   * used_at nullable
+   * expires_at
+   * requested_ip_hash nullable
+   * requested_user_agent_hash nullable
+   * used_ip_hash nullable
+   * used_user_agent_hash nullable
+   * created_at
+   * updated_at
 
-   * reads settings.TOKEN_ENV
-   * if missing/empty, raise clear ValueError:
-     "TOKEN_ENV must be configured"
+   Security rule:
 
-   All identity/security tokens should use TOKEN_ENV:
+   * Never store raw reset token.
+   * Store a hash of token or jti only.
+   * Prefer HMAC hash using SECRET_KEY or a dedicated RESET_TOKEN_HASH_KEY.
 
-   * access tokens
-   * refresh tokens
-   * password reset tokens
-   * email verification tokens
-   * 2FA temp tokens
+4. Token issuance behavior.
+   When forgot-password creates a reset token:
 
-3. Backward compatibility plan.
-   Decide how to handle currently issued tokens that used PAYMENT_ENV.
+   * create JWT with jti
+   * store PasswordResetToken row with jti/token_hash, user, active, expires_at
+   * enqueue email task with raw token only in task payload
+   * do not store raw token in database
+   * do not log raw token or reset URL
 
-   Safe short-term approach:
+5. Token verification behavior.
+   Add method/service:
+   verify_password_reset_token_once(token)
 
-   * For password reset/email verification/2FA tokens, accept either:
-     a) current TOKEN_ENV
-     b) legacy PAYMENT_ENV only during a short transitional window
-   * Log event:
-     legacy_identity_token_env_accepted
-   * Do not create new tokens with PAYMENT_ENV.
-   * Optionally remove legacy acceptance later.
+   It should:
 
-   More strict approach:
+   * decode JWT signature and expiry
+   * verify token_type=password_reset
+   * verify env/TOKEN_ENV
+   * extract user_id and jti
+   * hash token
+   * find active PasswordResetToken row by jti/token_hash/user
+   * reject if not active
+   * reject if used/revoked/expired
+   * reject if expires_at < now
+   * return user_id and token record
 
-   * Do not accept legacy PAYMENT_ENV.
-   * Existing links become invalid.
+6. Token consume behavior.
+   ResetPasswordView should be atomic:
 
-   Recommended:
+   * validate serializer
+   * verify token once
+   * fetch active user
+   * set new password
+   * mark PasswordResetToken used with used_at
+   * optionally revoke other active reset tokens for same user
+   * commit transaction
 
-   * Accept legacy PAYMENT_ENV for password reset/email verification for 24–72 hours or until deployment stabilizes.
-   * Do not accept legacy for long-term session tokens if security policy says no.
-   * Add clear TODO/comment with removal date or setting:
-     ACCEPT_LEGACY_PAYMENT_ENV_TOKENS = os.environ.get("ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", "true").lower() == "true"
+   Use `transaction.atomic()` and row locking:
 
-4. Avoid breaking logged-in sessions unexpectedly.
-   Access/refresh tokens may currently carry PAYMENT_ENV.
-   If you change verification for auth tokens, ensure authenticated users are not immediately logged out unless intended.
-   Search all token verification/authentication code:
+   * select_for_update() on PasswordResetToken
+   * prevents race condition where two requests reuse same token at the same time
 
-   * HardenedJWTAuthentication
-   * auth session facade
-   * refresh token handling
-   * token blacklist/family logic
+7. Reuse response.
+   If used token is submitted again, return controlled 400:
+   {
+   "code": "password_reset_token_invalid",
+   "message": "This reset link has expired or is invalid.",
+   "field_errors": {
+   "token": ["Invalid or expired reset token."]
+   }
+   }
 
-   Apply a safe transition if these tokens also enforce env.
+   Do not say “already used” to avoid leaking token state.
 
-5. Add production config validation.
-   In production settings:
+8. Expired token cleanup.
+   Add periodic cleanup or management command:
 
-   * TOKEN_ENV should be set or default to production.
-   * It must not equal empty string.
-   * It must not be derived from PAYMENT_ENV.
-   * PAYMENT_ENV can remain test/live for payment behavior only.
+   * expire old active tokens whose expires_at is in the past
+   * delete/retain old records according to audit policy
 
-6. Update documentation / Render env.
-   Add:
-   TOKEN_ENV=production
+   If Celery beat exists, add task:
+   expire_password_reset_tokens_task
 
-   Keep:
-   PAYMENT_ENV=test or live depending on Flutterwave mode
+   Or management command:
+   python manage.py expire_password_reset_tokens
 
-   Explain:
+9. Invalidate older active reset links.
+   Recommended behavior:
 
-   * TOKEN_ENV controls identity/security token validity.
-   * PAYMENT_ENV controls payment provider mode.
-   * Changing PAYMENT_ENV must not invalidate password reset links.
+   * When a new reset link is requested, revoke previous active reset tokens for that user.
+   * Only the newest reset link remains usable.
+   * This avoids multiple reset links being valid at once.
 
-7. Update tests.
-   Add/update tests:
+   If this is too disruptive, at least revoke all other active tokens after a successful reset.
 
-   * create_password_reset_token uses TOKEN_ENV, not PAYMENT_ENV
-   * changing PAYMENT_ENV does not invalidate password reset token
-   * changing TOKEN_ENV does invalidate password reset token
-   * email verification token uses TOKEN_ENV
-   * temp 2FA token uses TOKEN_ENV
-   * access/refresh tokens use TOKEN_ENV
-   * legacy PAYMENT_ENV token accepted only when compatibility flag is enabled
-   * legacy token rejected when compatibility flag disabled
-   * TOKEN_ENV missing raises clear error if applicable
+10. Password change invalidation.
+    Optional extra safety:
 
-8. Security logging.
-   Add structured logs for:
+* Add password_changed_at field on User if not present.
+* Include password_version or password_changed_at timestamp in reset token claims.
+* If password changes after token issuance, token becomes invalid.
+* This helps invalidate old tokens even if token tracking has an edge case.
 
-   * identity_token_env_mismatch
-   * legacy_identity_token_env_accepted
-   * identity_token_env_missing
+Do not overcomplicate if single-use table is enough for this phase.
 
-   Do not log token contents.
+11. Logging.
+    Add structured logs:
 
-9. Validation commands.
-   Run:
-   python manage.py check
-   pytest tests/infrastructure/adapters/test_jwt_token_service.py tests/django_app/identity -q
+* password_reset_token_issued
+* password_reset_token_consumed
+* password_reset_token_rejected
+* password_reset_token_reuse_attempt
+* password_reset_token_expired
 
-10. Deployment check.
-    In Render env for Django web and Celery worker/beat, set:
-    TOKEN_ENV=production
+Do not log:
 
-Leave payment env separate:
-PAYMENT_ENV=test or PAYMENT_ENV=live depending on current payment mode.
+* raw token
+* full reset URL
+* password
+* full email address
+
+12. Tests.
+    Add tests:
+
+* token contains jti
+* issuing reset creates PasswordResetToken row
+* valid token resets password
+* same token cannot be reused
+* two concurrent submissions cannot both succeed
+* expired token fails
+* revoked token fails
+* new reset request revokes previous active token
+* successful reset marks token used
+* inactive user cannot reset
+* response for used/revoked/expired token is same generic invalid-token response
+* raw token is never stored in database
+* raw token is never logged
+
+13. Migration.
+    Add migration for PasswordResetToken model.
+    Existing users do not need data backfill.
+    Existing reset links issued before this deployment may become invalid unless compatibility is implemented.
+    Decide and document:
+
+* Strict: old JWT-only reset links are invalid after deploy.
+* Transitional: accept legacy JWT-only reset links only for current expiry window, then remove.
+
+Recommended:
+
+* Strict is acceptable if reset timeout is 1 hour.
+* Users can request a new reset link.
+
+14. Validation commands.
+    Run:
+    python manage.py makemigrations identity
+    python manage.py check
+    pytest tests/django_app/identity tests/infrastructure/adapters/test_jwt_token_service.py -q
 
 Rules:
 
-* Identity tokens must not depend on PAYMENT_ENV.
-* PAYMENT_ENV remains only for payments.
-* New identity tokens must be minted with TOKEN_ENV.
-* Existing reset links should not be invalidated unnecessarily during migration.
-* Do not log tokens.
-* Keep password reset secure and predictable.
+* Reset tokens must be single-use.
+* Do not store raw tokens.
+* Do not log raw tokens or full reset URLs.
+* Reused/expired/revoked tokens must return same generic invalid-token response.
+* Use transaction/locking to prevent race reuse.
+* Backend is source of truth.
+* Frontend contract can stay the same unless response shape changed.
 
 Return:
 
-* Root cause
+* Root cause of reusable reset token
 * Files changed
-* New settings added
-* Backward compatibility decision
-* Tests added
-* Render env changes
+* Migration name
+* New model fields
+* Token lifecycle
+* Reuse/race protection design
+* Response examples
 * Validation results
 * Suggested branch and commit message

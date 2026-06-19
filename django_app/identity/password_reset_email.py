@@ -46,7 +46,7 @@ def request_password_reset_email(email: str) -> bool:
         status=PasswordResetEmailDelivery.Status.QUEUED,
         provider=provider,
     )
-    token = JWTTokenService().create_password_reset_token(str(user.id))
+    token = JWTTokenService().issue_password_reset_token(user)
     logger.info(
         "forgot_password_email_dispatch_attempted",
         extra={
