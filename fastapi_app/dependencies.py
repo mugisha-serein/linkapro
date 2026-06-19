@@ -5,6 +5,7 @@ from fastapi import Depends
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from application.marketplace.search_service import (
     MarketplaceSearchCache,
@@ -12,7 +13,7 @@ from application.marketplace.search_service import (
     MarketplaceSearchService,
 )
 from fastapi_app.database import get_session
-from fastapi_app.config import require_env, require_int
+from fastapi_app.config import mask_redis_url_for_logs, normalize_redis_url, require_env, require_int
 from fastapi_app.repositories import (
     AsyncVendorListingRepository,
     AsyncReviewRepository,
@@ -30,11 +31,16 @@ logger = logging.getLogger(__name__)
 @lru_cache(maxsize=1)
 def get_redis_client() -> Redis | None:
     try:
-        redis_url = require_env("REDIS_URL")
-    except RuntimeError:
-        logger.warning("REDIS_URL is not configured; marketplace search will skip Redis cache and rate limiting.")
+        redis_url = normalize_redis_url(require_env("REDIS_URL"))
+        return Redis.from_url(redis_url, decode_responses=True)
+    except (RuntimeError, RedisError, ValueError) as exc:
+        safe_url = mask_redis_url_for_logs(locals().get("redis_url", ""))
+        logger.warning(
+            "marketplace_redis_unavailable",
+            extra={"reason": exc.__class__.__name__, "redis_url": safe_url},
+            exc_info=True,
+        )
         return None
-    return Redis.from_url(redis_url, decode_responses=True)
 
 
 def get_marketplace_search_cache() -> MarketplaceSearchCache | None:

@@ -489,6 +489,20 @@ celery -A tasks.celery beat --loglevel=info
 ```
 
 ---
+### Render FastAPI Marketplace
+
+Required Render environment variables for the FastAPI service:
+
+```env
+FASTAPI_ENV=production
+FASTAPI_CORS_ORIGINS=https://www.linkapro.rw,https://linkapro.rw,https://linkapro.vercel.app
+REDIS_URL=rediss://default:<PASSWORD>@relevant-eft-112987.upstash.io:6379?ssl_cert_reqs=required
+FASTAPI_DATABASE_URL=postgresql+asyncpg://<USER>:<PASSWORD>@<HOST>:<PORT>/<DATABASE>
+```
+
+FastAPI marketplace search treats Redis cache/rate limiting as optional. If Redis is unavailable, public search continues against PostgreSQL and logs `marketplace_redis_unavailable` without exposing Redis credentials.
+
+---
 ### Production Email / Password Reset
 
 Password reset emails use Django's SMTP email backend with SendGrid SMTP in production. Production settings fail fast when password reset email requirements are missing, while the forgot-password API still returns a generic `202 Accepted` response to avoid account enumeration.

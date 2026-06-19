@@ -3,6 +3,7 @@ import pytest
 from datetime import datetime, timezone
 from httpx import AsyncClient, ASGITransport
 from unittest.mock import AsyncMock, Mock
+from redis.exceptions import RedisError
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_app.main import app
 from fastapi_app.dependencies import get_query_handlers, get_command_handlers, get_marketplace_search_service
 from fastapi_app.database import get_session
+from fastapi_app.config import get_cors_origins, normalize_database_url, normalize_redis_url
 from fastapi_app.marketplace.models import VendorListingModel
-from application.marketplace.search_service import MarketplaceSearchCriteria, MarketplaceSearchService
+from application.marketplace.search_service import MarketplaceSearchCache, MarketplaceSearchCriteria, MarketplaceSearchService
 from application.marketplace.dtos import SearchResultDTO, VendorListingDTO
 
 
@@ -129,7 +131,27 @@ async def test_search_database_failure_returns_controlled_503():
 
     assert response.status_code == 503
     assert response.headers["access-control-allow-origin"] == "https://linkapro.vercel.app"
-    assert response.json()["detail"] == "Marketplace search is temporarily unavailable."
+    assert response.json()["detail"]["message"] == "Marketplace search is temporarily unavailable."
+    assert response.json()["detail"]["request_id"]
+
+
+@pytest.mark.asyncio
+async def test_search_error_includes_cors_for_custom_domain():
+    service = FakeSearchService(error=SQLAlchemyError("database unavailable"))
+    app.dependency_overrides[get_marketplace_search_service] = lambda: service
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/marketplace/search?page=1&q=",
+                headers={"Origin": "https://www.linkapro.rw"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    assert response.headers["access-control-allow-origin"] == "https://www.linkapro.rw"
+    assert response.json()["detail"]["request_id"]
 
 
 @pytest.mark.asyncio
@@ -146,6 +168,22 @@ async def test_cors_preflight_allows_primary_production_origin():
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://linkapro.vercel.app"
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight_allows_linkapro_custom_domain():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.options(
+            "/api/v1/marketplace/search?page=1&q=",
+            headers={
+                "Origin": "https://www.linkapro.rw",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://www.linkapro.rw"
 
 
 @pytest.mark.asyncio
@@ -270,6 +308,72 @@ async def test_search_filters_approved_only_and_partial_location(session: AsyncS
 
     assert result.total == 1
     assert result.items[0].business_name == "Kigali Photo"
+
+
+@pytest.mark.asyncio
+async def test_redis_unavailable_does_not_make_search_fail(session: AsyncSession):
+    await session.execute(delete(VendorListingModel))
+    await session.commit()
+    session.add(
+        VendorListingModel(
+            vendor_id=uuid.uuid4(),
+            business_name="No Redis Vendor",
+            category="photography",
+            description="Visible listing",
+            service_area="Kigali",
+            approval_status="approved",
+        )
+    )
+    await session.commit()
+
+    class BrokenRedis:
+        async def incr(self, *args, **kwargs):
+            raise RedisError("redis unavailable")
+
+    cache = MarketplaceSearchCache(
+        redis_client=BrokenRedis(),
+        ttl_seconds=60,
+        rate_limit_requests=10,
+        rate_limit_window_seconds=60,
+    )
+    service = MarketplaceSearchService(session=session, cache=cache)
+
+    result = await service.search(MarketplaceSearchCriteria(page=1), client_id="test-client")
+
+    assert result.total == 1
+    assert result.items[0].business_name == "No Redis Vendor"
+
+
+def test_get_cors_origins_includes_custom_domain(monkeypatch):
+    monkeypatch.delenv("FASTAPI_CORS_ORIGINS", raising=False)
+    monkeypatch.setenv("FASTAPI_ENV", "development")
+
+    origins = get_cors_origins()
+
+    assert "https://www.linkapro.rw" in origins
+    assert "https://linkapro.rw" in origins
+    assert "https://linkapro.vercel.app" in origins
+
+
+def test_production_cors_requires_custom_domains(monkeypatch):
+    monkeypatch.setenv("FASTAPI_ENV", "production")
+    monkeypatch.setenv("FASTAPI_CORS_ORIGINS", "https://linkapro.vercel.app")
+
+    with pytest.raises(RuntimeError, match="https://www.linkapro.rw"):
+        get_cors_origins()
+
+
+def test_rediss_cert_required_is_normalized():
+    url = normalize_redis_url("rediss://default:secret@example.redis:6379?ssl_cert_reqs=CERT_REQUIRED")
+
+    assert "ssl_cert_reqs=required" in url
+    assert "CERT_REQUIRED" not in url
+
+
+def test_database_url_normalization_requires_asyncpg():
+    assert normalize_database_url("postgresql://u:p@example.com/db").startswith("postgresql+asyncpg://")
+    with pytest.raises(RuntimeError, match="FASTAPI_DATABASE_URL must use postgresql\\+asyncpg://"):
+        normalize_database_url("mysql://u:p@example.com/db")
 
 
 @pytest.mark.asyncio

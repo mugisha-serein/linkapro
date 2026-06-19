@@ -1,15 +1,18 @@
-Fix LinkaPro password reset tokens so reset links are single-use and cannot be reused after a successful password reset.
+Fix LinkaPro FastAPI marketplace CORS and 500 error for custom domain https://www.linkapro.rw.
 
 Problem:
-Current password reset flow verifies a JWT reset token and then sets the new password. The token appears reusable until expiry because there is no nonce/jti tracking, password-reset token table, used-token blacklist, reset version, or password timestamp validation.
+Frontend marketplace request fails:
 
-Current risk:
+Access to XMLHttpRequest at
+https://linkapro-fastapi.onrender.com/api/v1/marketplace/search?page=1
+from origin https://www.linkapro.rw has been blocked by CORS policy:
+No Access-Control-Allow-Origin header is present.
 
-* User requests password reset.
-* User receives reset link.
-* User resets password successfully.
-* Same reset link can potentially be submitted again before token expiry.
-* This is not production-grade security.
+Also:
+GET /api/v1/marketplace/search?page=1 net::ERR_FAILED 500
+
+Root cause:
+FastAPI CORS config does not include the custom production domain https://www.linkapro.rw / https://linkapro.rw. The browser reports CORS, but the endpoint is also returning 500, likely because marketplace search dependencies such as Redis or database config fail.
 
 Repository:
 
@@ -17,224 +20,126 @@ Repository:
 
 Files to inspect:
 
-* infrastructure/adapters/jwt_token_service.py
-* django_app/identity/views.py
-* django_app/identity/serializers.py
-* django_app/identity/models.py
-* django_app/identity/urls.py
-* application/identity handlers/services if existing
-* tests/infrastructure/adapters/test_jwt_token_service.py
-* tests/django_app/identity
-* migrations
+* fastapi_app/main.py
+* fastapi_app/config.py
+* fastapi_app/dependencies.py
+* fastapi_app/database.py
+* fastapi_app/routers/marketplace.py
+* application/marketplace/search_service.py
+* requirements/fastapi.txt
+* Render env documentation
 
-Goal:
-Make password reset tokens single-use while keeping the user-facing reset flow simple and secure.
+Tasks:
 
-Backend tasks:
+1. Fix FastAPI production CORS origins.
+   In fastapi_app/config.py, update production default origins to include:
 
-1. Inspect current password reset token creation and verification.
-   Current code likely:
+   * https://www.linkapro.rw
+   * https://linkapro.rw
+   * https://linkapro.vercel.app
 
-   * creates JWT with user_id, token_type=password_reset, env, exp, iat
-   * verifies JWT and returns user_id
-   * ResetPasswordView sets password directly
+2. Also keep support for FASTAPI_CORS_ORIGINS env var.
 
-2. Add a unique reset token identifier.
-   Update `create_password_reset_token` to include:
+3. Ensure production requires custom domain origins.
+   If FASTAPI_ENV=production, get_cors_origins should require:
 
-   * jti: UUID string
-   * purpose/token_type: password_reset
-   * user_id
-   * env/TOKEN_ENV
-   * exp
-   * iat
+   * https://www.linkapro.rw
+   * https://linkapro.rw
+   * https://linkapro.vercel.app
 
-   Do not log jti with token together.
+4. Error message should clearly name missing origins.
 
-3. Add persistent token tracking.
-   Add model, for example:
+5. Confirm CORSMiddleware wraps all responses.
+   Ensure app.add_middleware(CORSMiddleware, ...) is registered before routers and exception handlers are okay.
+   Error responses should still include CORS headers when Origin is allowed.
 
-   PasswordResetToken
+6. Fix FastAPI Redis TLS config.
+   Current dependency uses:
+   Redis.from_url(redis_url, decode_responses=True)
 
-   Fields:
+   For rediss:// Upstash URL:
 
-   * id UUID primary key
-   * user FK to identity.User
-   * jti unique indexed
-   * token_hash indexed
-   * status: active, used, expired, revoked
-   * requested_at
-   * used_at nullable
-   * expires_at
-   * requested_ip_hash nullable
-   * requested_user_agent_hash nullable
-   * used_ip_hash nullable
-   * used_user_agent_hash nullable
-   * created_at
-   * updated_at
+   * env URL should use ssl_cert_reqs=required
+   * normalize CERT_REQUIRED to required if accidentally configured
+   * do not use CERT_NONE in production
+   * do not log Redis password
 
-   Security rule:
+   Add helper:
 
-   * Never store raw reset token.
-   * Store a hash of token or jti only.
-   * Prefer HMAC hash using SECRET_KEY or a dedicated RESET_TOKEN_HASH_KEY.
+   * normalize_redis_url
+   * mask_redis_url_for_logs
 
-4. Token issuance behavior.
-   When forgot-password creates a reset token:
+7. Make Redis cache/rate limiting fail soft for marketplace search.
+   Marketplace search should work even if Redis cache is unavailable.
+   If Redis.from_url or ping/cache operations fail:
 
-   * create JWT with jti
-   * store PasswordResetToken row with jti/token_hash, user, active, expires_at
-   * enqueue email task with raw token only in task payload
-   * do not store raw token in database
-   * do not log raw token or reset URL
+   * log marketplace_redis_unavailable
+   * skip cache/rate limiting
+   * continue database search
+   * do not return 500 just because Redis cache failed
 
-5. Token verification behavior.
-   Add method/service:
-   verify_password_reset_token_once(token)
+   Redis should not be required for public marketplace browsing.
 
-   It should:
+8. Fix database 500 if present.
+   Inspect fastapi_app/database.py.
+   Ensure FastAPI uses async SQLAlchemy URL:
 
-   * decode JWT signature and expiry
-   * verify token_type=password_reset
-   * verify env/TOKEN_ENV
-   * extract user_id and jti
-   * hash token
-   * find active PasswordResetToken row by jti/token_hash/user
-   * reject if not active
-   * reject if used/revoked/expired
-   * reject if expires_at < now
-   * return user_id and token record
+   * postgresql+asyncpg://...
 
-6. Token consume behavior.
-   ResetPasswordView should be atomic:
+   If DATABASE_URL is postgresql://, convert it safely for FastAPI or require FASTAPI_DATABASE_URL.
 
-   * validate serializer
-   * verify token once
-   * fetch active user
-   * set new password
-   * mark PasswordResetToken used with used_at
-   * optionally revoke other active reset tokens for same user
-   * commit transaction
+   Startup/check should give clear error:
+   "FASTAPI_DATABASE_URL must use postgresql+asyncpg://"
 
-   Use `transaction.atomic()` and row locking:
+9. Improve marketplace search error logging.
+   In /api/v1/marketplace/search:
 
-   * select_for_update() on PasswordResetToken
-   * prevents race condition where two requests reuse same token at the same time
+   * log request_id
+   * log safe reason for DB/Redis/config failure
+   * return JSON error with request_id
+   * do not leak secrets
 
-7. Reuse response.
-   If used token is submitted again, return controlled 400:
-   {
-   "code": "password_reset_token_invalid",
-   "message": "This reset link has expired or is invalid.",
-   "field_errors": {
-   "token": ["Invalid or expired reset token."]
-   }
-   }
+10. Add tests.
 
-   Do not say “already used” to avoid leaking token state.
+    * get_cors_origins includes https://www.linkapro.rw
+    * production config fails if custom domain origins missing
+    * CORS preflight from https://www.linkapro.rw returns allow-origin
+    * search endpoint returns CORS headers on error
+    * Redis unavailable does not make search return 500
+    * bad Redis TLS string CERT_REQUIRED is normalized to required
+    * database URL validation requires async driver
+    * marketplace health returns ok when schema exists
 
-8. Expired token cleanup.
-   Add periodic cleanup or management command:
+11. Render env documentation.
+    FastAPI service env must include:
+    FASTAPI_ENV=production
+    FASTAPI_CORS_ORIGINS=https://www.linkapro.rw,https://linkapro.rw,https://linkapro.vercel.app
+    REDIS_URL=rediss://default:@relevant-eft-112987.upstash.io:6379?ssl_cert_reqs=required
+    FASTAPI_DATABASE_URL=postgresql+asyncpg://:@/
 
-   * expire old active tokens whose expires_at is in the past
-   * delete/retain old records according to audit policy
+12. Validation commands.
+    python -m pytest tests/fastapi_app -q
+    python -c "from fastapi_app.config import get_cors_origins; print(get_cors_origins())"
 
-   If Celery beat exists, add task:
-   expire_password_reset_tokens_task
-
-   Or management command:
-   python manage.py expire_password_reset_tokens
-
-9. Invalidate older active reset links.
-   Recommended behavior:
-
-   * When a new reset link is requested, revoke previous active reset tokens for that user.
-   * Only the newest reset link remains usable.
-   * This avoids multiple reset links being valid at once.
-
-   If this is too disruptive, at least revoke all other active tokens after a successful reset.
-
-10. Password change invalidation.
-    Optional extra safety:
-
-* Add password_changed_at field on User if not present.
-* Include password_version or password_changed_at timestamp in reset token claims.
-* If password changes after token issuance, token becomes invalid.
-* This helps invalidate old tokens even if token tracking has an edge case.
-
-Do not overcomplicate if single-use table is enough for this phase.
-
-11. Logging.
-    Add structured logs:
-
-* password_reset_token_issued
-* password_reset_token_consumed
-* password_reset_token_rejected
-* password_reset_token_reuse_attempt
-* password_reset_token_expired
-
-Do not log:
-
-* raw token
-* full reset URL
-* password
-* full email address
-
-12. Tests.
-    Add tests:
-
-* token contains jti
-* issuing reset creates PasswordResetToken row
-* valid token resets password
-* same token cannot be reused
-* two concurrent submissions cannot both succeed
-* expired token fails
-* revoked token fails
-* new reset request revokes previous active token
-* successful reset marks token used
-* inactive user cannot reset
-* response for used/revoked/expired token is same generic invalid-token response
-* raw token is never stored in database
-* raw token is never logged
-
-13. Migration.
-    Add migration for PasswordResetToken model.
-    Existing users do not need data backfill.
-    Existing reset links issued before this deployment may become invalid unless compatibility is implemented.
-    Decide and document:
-
-* Strict: old JWT-only reset links are invalid after deploy.
-* Transitional: accept legacy JWT-only reset links only for current expiry window, then remove.
-
-Recommended:
-
-* Strict is acceptable if reset timeout is 1 hour.
-* Users can request a new reset link.
-
-14. Validation commands.
-    Run:
-    python manage.py makemigrations identity
-    python manage.py check
-    pytest tests/django_app/identity tests/infrastructure/adapters/test_jwt_token_service.py -q
+Manual:
+curl -i "https://linkapro-fastapi.onrender.com/api/v1/marketplace/search?page=1" -H "Origin: https://www.linkapro.rw"
+curl -i "https://linkapro-fastapi.onrender.com/api/v1/marketplace/health" -H "Origin: https://www.linkapro.rw"
 
 Rules:
 
-* Reset tokens must be single-use.
-* Do not store raw tokens.
-* Do not log raw tokens or full reset URLs.
-* Reused/expired/revoked tokens must return same generic invalid-token response.
-* Use transaction/locking to prevent race reuse.
+* Custom domain https://www.linkapro.rw must be allowed.
+* Public marketplace search must not fail just because Redis cache/rate limiting fails.
+* Do not log Redis or DB secrets.
+* Use rediss ssl_cert_reqs=required in URL.
+* Use postgresql+asyncpg:// for FastAPI database.
 * Backend is source of truth.
-* Frontend contract can stay the same unless response shape changed.
 
 Return:
 
-* Root cause of reusable reset token
+* Root cause
 * Files changed
-* Migration name
-* New model fields
-* Token lifecycle
-* Reuse/race protection design
-* Response examples
+* Required Render env vars
+* CORS test result
+* Marketplace search test result
 * Validation results
 * Suggested branch and commit message
