@@ -133,3 +133,35 @@ class PasswordResetEmailDelivery(models.Model):
 
     def __str__(self):
         return f"{self.email_domain} password reset email {self.status}"
+
+
+class PasswordResetToken(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        USED = "used", "Used"
+        EXPIRED = "expired", "Expired"
+        REVOKED = "revoked", "Revoked"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="password_reset_tokens")
+    jti = models.CharField(max_length=36, unique=True, db_index=True)
+    token_hash = models.CharField(max_length=64, db_index=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE, db_index=True)
+    requested_at = models.DateTimeField(default=timezone.now, db_index=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(db_index=True)
+    requested_ip_hash = models.CharField(max_length=64, blank=True, null=True)
+    requested_user_agent_hash = models.CharField(max_length=64, blank=True, null=True)
+    used_ip_hash = models.CharField(max_length=64, blank=True, null=True)
+    used_user_agent_hash = models.CharField(max_length=64, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "status", "expires_at"]),
+            models.Index(fields=["status", "expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} password reset token {self.status}"

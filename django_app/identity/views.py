@@ -3,7 +3,9 @@ import logging
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.db import transaction
 from django.shortcuts import redirect
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
@@ -40,8 +42,8 @@ from .services import (
 from application.identity.oauth_state import build_oauth_state, parse_oauth_state, ALLOWED_OAUTH_SIGNUP_ROLES
 from .cookies import clear_auth_cookies, set_refresh_cookie
 from .password_reset_email import GENERIC_FORGOT_PASSWORD_DETAIL, request_password_reset_email
-from django_app.identity.models import User
-from infrastructure.adapters.jwt_token_service import JWTTokenService
+from django_app.identity.models import PasswordResetToken, User
+from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_value_hash
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,13 @@ def _password_reset_token_invalid_response():
         },
         status=status.HTTP_400_BAD_REQUEST,
     )
+
+
+def _client_ip(request):
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    return request.META.get("REMOTE_ADDR", "")
 
 
 def _frontend_url() -> str:
@@ -413,18 +422,41 @@ class ResetPasswordView(APIView):
             )
             return _password_reset_invalid_response(serializer.errors)
 
-        user_id = JWTTokenService().verify_password_reset_token(serializer.validated_data["token"])
-        if not user_id:
-            logger.info("reset_password_invalid_token")
-            return _password_reset_token_invalid_response()
+        with transaction.atomic():
+            verification = JWTTokenService().verify_password_reset_token_once(serializer.validated_data["token"])
+            if not verification:
+                logger.info("reset_password_invalid_token")
+                return _password_reset_token_invalid_response()
 
-        user = User.objects.filter(id=user_id, is_active=True).first()
-        if not user:
-            logger.info("reset_password_user_missing_or_inactive", extra={"user_id": str(user_id)})
-            return _password_reset_token_invalid_response()
+            user_id, token_record = verification
+            user = User.objects.select_for_update().filter(id=user_id, is_active=True).first()
+            if not user:
+                logger.info("reset_password_user_missing_or_inactive", extra={"user_id": str(user_id)})
+                return _password_reset_token_invalid_response()
 
-        user.set_password(serializer.validated_data["new_password"])
-        user.save(update_fields=["password", "updated_at"])
+            user.set_password(serializer.validated_data["new_password"])
+            user.save(update_fields=["password", "updated_at"])
+            token_record.status = PasswordResetToken.Status.USED
+            token_record.used_at = timezone.now()
+            token_record.used_ip_hash = password_reset_value_hash(_client_ip(request))
+            token_record.used_user_agent_hash = password_reset_value_hash(request.META.get("HTTP_USER_AGENT", ""))
+            token_record.save(
+                update_fields=[
+                    "status",
+                    "used_at",
+                    "used_ip_hash",
+                    "used_user_agent_hash",
+                    "updated_at",
+                ]
+            )
+            PasswordResetToken.objects.filter(
+                user=user,
+                status=PasswordResetToken.Status.ACTIVE,
+            ).exclude(id=token_record.id).update(status=PasswordResetToken.Status.REVOKED, updated_at=timezone.now())
+            logger.info(
+                "password_reset_token_consumed",
+                extra={"user_id": str(user.id), "jti": token_record.jti},
+            )
         return Response(
             {"status": "password_reset", "message": "Password updated successfully."},
             status=status.HTTP_200_OK,

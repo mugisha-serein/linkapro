@@ -16,6 +16,7 @@ def test_password_reset_token_roundtrip():
     assert service.verify_password_reset_token(token) == user_id
     payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
     assert payload["env"] == settings.TOKEN_ENV
+    assert payload["jti"]
 
 def test_invalid_token_returns_none():
     service = JWTTokenService()
@@ -134,8 +135,10 @@ def test_legacy_payment_env_password_reset_token_accepted(caplog):
         {
             "user_id": "user-123",
             "token_type": "password_reset",
+            "jti": str(uuid.uuid4()),
             "env": "legacy-test",
             "exp": datetime_utc_plus(now),
+            "iat": datetime_utc_plus(timedelta(seconds=0)),
         },
         settings.SECRET_KEY,
         algorithm="HS256",
@@ -152,8 +155,10 @@ def test_legacy_payment_env_password_reset_token_rejected_when_disabled():
         {
             "user_id": "user-123",
             "token_type": "password_reset",
+            "jti": str(uuid.uuid4()),
             "env": "legacy-test",
             "exp": datetime_utc_plus(settings.PASSWORD_RESET_TIMEOUT),
+            "iat": datetime_utc_plus(timedelta(seconds=0)),
         },
         settings.SECRET_KEY,
         algorithm="HS256",

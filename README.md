@@ -493,6 +493,8 @@ celery -A tasks.celery beat --loglevel=info
 
 Password reset emails use Django's SMTP email backend with SendGrid SMTP in production. Production settings fail fast when password reset email requirements are missing, while the forgot-password API still returns a generic `202 Accepted` response to avoid account enumeration.
 
+Password reset links are single-use. Django stores only a reset token `jti` and HMAC token hash, never the raw token or full reset URL. Requesting a new reset link revokes older active links for that user, and a successful reset marks the token as used. Legacy JWT-only reset links issued before single-use tracking are invalid after deployment; users can request a fresh reset link.
+
 Required Render environment variables for Django web, Celery Worker, and Celery Beat:
 
 ```env

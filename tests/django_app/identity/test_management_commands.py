@@ -1,11 +1,13 @@
 from io import StringIO
+from datetime import timedelta
 
 import pytest
 from django.core import mail
 from django.core.management import call_command
 from django.test import override_settings
+from django.utils import timezone
 
-from django_app.identity.models import User
+from django_app.identity.models import PasswordResetToken, User
 
 
 pytestmark = pytest.mark.django_db
@@ -80,3 +82,35 @@ class TestSendTestEmailCommand:
         assert mail.outbox[0].from_email == "no-reply@example.test"
         assert mail.outbox[0].to == ["ops@example.com"]
         assert "Test email sent to ops@example.com" in stdout.getvalue()
+
+
+class TestExpirePasswordResetTokensCommand:
+    def test_marks_expired_active_tokens(self):
+        user = User.objects.create_user(
+            email="expire-reset@example.com",
+            password="StrongPass1",
+            first_name="Expire",
+            last_name="Reset",
+            role="planner",
+        )
+        expired = PasswordResetToken.objects.create(
+            user=user,
+            jti="11111111-1111-1111-1111-111111111111",
+            token_hash="a" * 64,
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        current = PasswordResetToken.objects.create(
+            user=user,
+            jti="22222222-2222-2222-2222-222222222222",
+            token_hash="b" * 64,
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+        stdout = StringIO()
+
+        call_command("expire_password_reset_tokens", stdout=stdout)
+
+        expired.refresh_from_db()
+        current.refresh_from_db()
+        assert expired.status == PasswordResetToken.Status.EXPIRED
+        assert current.status == PasswordResetToken.Status.ACTIVE
+        assert "Expired 1 password reset token(s)." in stdout.getvalue()

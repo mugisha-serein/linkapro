@@ -1,10 +1,13 @@
 import logging
+import hashlib
+import hmac
 import uuid
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 import jwt
 from django.conf import settings
+from django.utils import timezone as django_timezone
 from rest_framework_simplejwt.tokens import (
     AccessToken as SimpleAccessToken,
     RefreshToken,
@@ -89,13 +92,48 @@ class JWTTokenService:
         payload = {
             "user_id": user_id,
             "token_type": "password_reset",
+            "jti": str(uuid.uuid4()),
             "env": self._token_env(),
             "exp": now + settings.PASSWORD_RESET_TIMEOUT,
             "iat": now,
         }
         return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
 
+    def issue_password_reset_token(self, user) -> str:
+        from django.db import transaction
+        from django_app.identity.models import PasswordResetToken
+
+        token = self.create_password_reset_token(str(user.id))
+        payload = self.decode_password_reset_token_payload(token)
+        if not payload:
+            raise ValueError("Unable to issue password reset token")
+
+        now = django_timezone.now()
+        with transaction.atomic():
+            PasswordResetToken.objects.filter(
+                user=user,
+                status=PasswordResetToken.Status.ACTIVE,
+            ).update(status=PasswordResetToken.Status.REVOKED, updated_at=now)
+            PasswordResetToken.objects.create(
+                user=user,
+                jti=payload["jti"],
+                token_hash=password_reset_token_hash(token),
+                status=PasswordResetToken.Status.ACTIVE,
+                requested_at=payload.get("iat_datetime", now),
+                expires_at=payload["exp_datetime"],
+            )
+
+        logger.info(
+            "password_reset_token_issued",
+            extra={"user_id": str(user.id), "jti": payload["jti"]},
+        )
+        return token
+
     def verify_password_reset_token(self, token_str: str) -> Optional[str]:
+        payload = self.decode_password_reset_token_payload(token_str)
+        return payload.get("user_id") if payload else None
+
+    def decode_password_reset_token_payload(self, token_str: str) -> Optional[dict]:
         try:
             payload = jwt.decode(
                 token_str, settings.SECRET_KEY, algorithms=["HS256"]
@@ -104,9 +142,60 @@ class JWTTokenService:
                 return None
             if self._enforce_env(payload) is None:
                 return None
-            return payload.get("user_id")
+            if not payload.get("user_id") or not payload.get("jti") or not payload.get("exp"):
+                logger.warning("password_reset_token_rejected", extra={"reason": "missing_required_claim"})
+                return None
+            payload["exp_datetime"] = _timestamp_to_datetime(payload["exp"])
+            payload["iat_datetime"] = _timestamp_to_datetime(payload["iat"]) if payload.get("iat") else None
+            return payload
         except jwt.PyJWTError:
             return None
+
+    def verify_password_reset_token_once(self, token_str: str):
+        from django_app.identity.models import PasswordResetToken
+
+        payload = self.decode_password_reset_token_payload(token_str)
+        if not payload:
+            logger.warning("password_reset_token_rejected", extra={"reason": "invalid_jwt"})
+            return None
+
+        now = django_timezone.now()
+        token_hash = password_reset_token_hash(token_str)
+        token_record = (
+            PasswordResetToken.objects.select_for_update()
+            .filter(
+                user_id=payload.get("user_id"),
+                jti=payload.get("jti"),
+                token_hash=token_hash,
+            )
+            .first()
+        )
+        if not token_record:
+            logger.warning(
+                "password_reset_token_rejected",
+                extra={"reason": "not_tracked", "user_id": payload.get("user_id"), "jti": payload.get("jti")},
+            )
+            return None
+        if token_record.status != PasswordResetToken.Status.ACTIVE:
+            event_name = (
+                "password_reset_token_reuse_attempt"
+                if token_record.status == PasswordResetToken.Status.USED
+                else "password_reset_token_rejected"
+            )
+            logger.warning(
+                event_name,
+                extra={"reason": token_record.status, "user_id": str(token_record.user_id), "jti": token_record.jti},
+            )
+            return None
+        if token_record.expires_at <= now:
+            token_record.status = PasswordResetToken.Status.EXPIRED
+            token_record.save(update_fields=["status", "updated_at"])
+            logger.info(
+                "password_reset_token_expired",
+                extra={"user_id": str(token_record.user_id), "jti": token_record.jti},
+            )
+            return None
+        return payload.get("user_id"), token_record
 
     def create_email_verification_token(self, user_id: str) -> str:
         now = datetime.now(timezone.utc)
@@ -182,3 +271,21 @@ def accepted_identity_token_env(token_env: str | None, context: str) -> Optional
         extra={"context": context, "token_env": token_env, "expected_env": expected_env},
     )
     return None
+
+
+def password_reset_token_hash(token_str: str) -> str:
+    key = str(getattr(settings, "RESET_TOKEN_HASH_KEY", "") or settings.SECRET_KEY).encode("utf-8")
+    return hmac.new(key, token_str.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def password_reset_value_hash(value: str | None) -> str | None:
+    if not value:
+        return None
+    key = str(getattr(settings, "RESET_TOKEN_HASH_KEY", "") or settings.SECRET_KEY).encode("utf-8")
+    return hmac.new(key, value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _timestamp_to_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return datetime.fromtimestamp(int(value), tz=timezone.utc)
