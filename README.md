@@ -447,9 +447,22 @@ DJANGO_SETTINGS_MODULE=django_app.settings.production
 DJANGO_SECRET_KEY=<production-secret>
 DATABASE_URL=<production-database-url>
 DATABASE_SSL=true
-REDIS_URL=<redis-url>
+REDIS_URL=<redis-or-rediss-url>
 FASTAPI_INTERNAL_URL=<fastapi-internal-url>
 FASTAPI_INTERNAL_SHARED_SECRET=<shared-secret>
+```
+
+For Render/Upstash TLS Redis, `REDIS_URL` can use `rediss://`. The Django settings automatically configure Celery with `ssl.CERT_REQUIRED`; including the query parameter is also valid:
+
+```env
+REDIS_URL=rediss://default:PASSWORD@HOST:PORT?ssl_cert_reqs=CERT_REQUIRED
+```
+
+Verify Celery Redis TLS settings from a Render shell:
+
+```bash
+python manage.py shell -c "from django.conf import settings; print(settings.CELERY_BROKER_URL); print(getattr(settings, 'CELERY_BROKER_USE_SSL', None)); print(getattr(settings, 'CELERY_REDIS_BACKEND_USE_SSL', None))"
+python -c "from tasks.celery import app; print(app.conf.broker_url); print(app.conf.broker_use_ssl); print(app.conf.redis_backend_use_ssl)"
 ```
 
 Worker command:

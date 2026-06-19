@@ -1,7 +1,7 @@
 from .base import *
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
-from .base import _csv_env
+from .base import _csv_env, _redis_ssl_options, _redis_uses_tls
 
 DEBUG = False
 ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS")
@@ -46,18 +46,18 @@ EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
 SERVER_EMAIL = os.environ.get("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
 
 # Celery settings
-CELERY_BROKER_URL = os.environ.get('REDIS_URL')
-CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
 # caching settings
+_redis_cache_options = _redis_ssl_options(REDIS_URL) if _redis_uses_tls(REDIS_URL) else {}
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': os.environ.get('REDIS_URL'),
+        'LOCATION': REDIS_URL,
+        **({"OPTIONS": _redis_cache_options} if _redis_cache_options else {}),
     }
 }
 
