@@ -6,10 +6,9 @@ import json
 import logging
 from typing import Optional
 from django.http import HttpResponse, JsonResponse
-from django.conf import settings
 from django.core.cache import cache
-from redis import Redis
 
+from django_app.common.redis_config import get_redis_client
 from payments.application.ports import IApiKeyRepository
 from payments.infrastructure.repositories import DjangoApiKeyRepository
 
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 class HmacRequestValidator:
     def __init__(self, get_response):
         self.get_response = get_response
-        self.redis_client = Redis.from_url(settings.REDIS_URL)
+        self._redis_client = None
         self.api_key_repo = DjangoApiKeyRepository()
         self.max_time_diff = 300  # 5 minutes
         self.nonce_ttl = 900      # 15 minutes
@@ -51,6 +50,16 @@ class HmacRequestValidator:
 
         return self.get_response(request)
 
+    @property
+    def redis_client(self):
+        if self._redis_client is None:
+            self._redis_client = get_redis_client()
+        return self._redis_client
+
+    @redis_client.setter
+    def redis_client(self, value):
+        self._redis_client = value
+
     def _validate_request(self, request) -> Optional[HttpResponse]:
         # Extract headers
         timestamp_str = request.headers.get("X-Timestamp")
@@ -73,7 +82,17 @@ class HmacRequestValidator:
 
         # Replay protection
         nonce_key = f"nonce:{nonce}"
-        if self.redis_client.exists(nonce_key):
+        redis_client = self._get_redis_client_or_none()
+        if redis_client is None:
+            return self._redis_unavailable_response()
+
+        try:
+            nonce_exists = redis_client.exists(nonce_key)
+        except Exception:
+            logger.exception("hmac_redis_unavailable")
+            return self._redis_unavailable_response()
+
+        if nonce_exists:
             self._record_failure(request)
             return JsonResponse({"error": "Nonce already used"}, status=401)
 
@@ -109,7 +128,11 @@ class HmacRequestValidator:
             return JsonResponse({"error": "Invalid signature"}, status=401)
 
         # Success: store nonce and mark key used
-        self.redis_client.setex(nonce_key, self.nonce_ttl, "1")
+        try:
+            redis_client.setex(nonce_key, self.nonce_ttl, "1")
+        except Exception:
+            logger.exception("hmac_redis_unavailable")
+            return self._redis_unavailable_response()
         self.api_key_repo.mark_used(key_id)
         # Store user_id in request for downstream use
         request.api_user_id = key_data["user_id"]
@@ -136,7 +159,12 @@ class HmacRequestValidator:
             # Emit SecurityEvent (simplified: log critical)
             logger.critical("HMAC_FAILURE_BLOCK", extra={"ip": ip})
             # Could also add to Redis blocklist
-            self.redis_client.setex(f"blocked_ip:{ip}", 3600, "1")
+            redis_client = self._get_redis_client_or_none()
+            if redis_client is not None:
+                try:
+                    redis_client.setex(f"blocked_ip:{ip}", 3600, "1")
+                except Exception:
+                    logger.exception("hmac_redis_unavailable")
 
     def _get_client_ip(self, request) -> str:
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
@@ -145,3 +173,16 @@ class HmacRequestValidator:
         else:
             ip = request.META.get('REMOTE_ADDR')
         return ip
+
+    def _get_redis_client_or_none(self):
+        try:
+            return self.redis_client
+        except Exception:
+            logger.exception("hmac_redis_unavailable")
+            return None
+
+    def _redis_unavailable_response(self) -> JsonResponse:
+        return JsonResponse(
+            {"error": "Payment request verification is temporarily unavailable"},
+            status=503,
+        )

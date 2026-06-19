@@ -1,135 +1,165 @@
-Fix LinkaPro Celery Redis TLS configuration for rediss:// Redis URLs.
+Fix LinkaPro Django startup crash caused by payments HMAC middleware Redis.from_url(settings.REDIS_URL).
 
-Problem:
-Forgot password async email dispatch now works at HTTP level, but Celery dispatch is deferred with this error:
+Production traceback:
+ValueError: Redis URL must specify one of the following schemes (redis://, rediss://, unix://)
 
-ValueError:
-A rediss:// URL must have parameter ssl_cert_reqs and this must be set to CERT_REQUIRED, CERT_OPTIONAL, or CERT_NONE
-
-Logs:
-
-* forgot_password_email_queued
-* Secure redis scheme specified (rediss) with no ssl options, defaulting to insecure SSL behaviour.
-* forgot_password_email_dispatch_deferred
+Crash location:
+payments/infrastructure/middleware.py
+HmacRequestValidator.**init**
+self.redis_client = Redis.from_url(settings.REDIS_URL)
 
 Root cause:
-Production REDIS_URL uses rediss://, but Celery/redis-py/Kombu requires explicit SSL certificate options. Current Django settings use REDIS_URL directly for CELERY_BROKER_URL and CELERY_RESULT_BACKEND without CELERY_BROKER_USE_SSL / CELERY_REDIS_BACKEND_USE_SSL or ssl_cert_reqs query parameter.
+The middleware creates a Redis client during Django middleware initialization. If REDIS_URL is missing, empty, malformed, quoted incorrectly, or rediss:// TLS params are not handled, Gunicorn cannot boot. Redis should not crash the whole Django app at startup, especially for non-payment routes.
 
 Repository:
 
 * Backend: linkapro
 
-Files to inspect:
-
-* django_app/settings/base.py
-* django_app/settings/production.py
-* tasks/celery.py
-* tasks/email_tasks.py
-* requirements files
-* deployment docs/env docs
-
-Goal:
-Make Celery worker, beat, and Django web process work with secure rediss:// Redis in production without insecure SSL warnings or ValueError.
-
 Tasks:
 
-1. Add Redis TLS helper in settings.
-   In django_app/settings/base.py, add:
+1. Inspect current files:
 
-   * import ssl
-   * from urllib.parse import urlparse
-   * helper `_redis_uses_tls(url)`
-   * helper `_redis_ssl_options(url)`
+   * payments/infrastructure/middleware.py
+   * django_app/settings/base.py
+   * django_app/settings/production.py
+   * tasks/celery.py
+   * any Redis/cache helpers
+   * deployment docs
 
-   Required behavior:
+2. Add centralized Redis configuration helper.
+   Create a helper in a shared location, for example:
 
-   * if REDIS_URL starts with rediss://, set ssl_cert_reqs to ssl.CERT_REQUIRED
-   * if REDIS_URL starts with redis://, no SSL options
-   * never default production to CERT_NONE
+   * django_app/common/redis.py
+     or
+   * django_app/common/redis_config.py
 
-2. Configure Celery SSL options.
-   Ensure settings contain:
+   It should expose:
 
-   REDIS_URL = os.environ.get("REDIS_URL")
-   CELERY_BROKER_URL = REDIS_URL
-   CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+   * get_redis_url()
+   * redis_uses_tls(url)
+   * redis_ssl_options(url)
+   * get_redis_client(optional=False)
 
-   If REDIS_URL uses rediss://:
-   CELERY_BROKER_USE_SSL = {"ssl_cert_reqs": ssl.CERT_REQUIRED}
-   CELERY_REDIS_BACKEND_USE_SSL = {"ssl_cert_reqs": ssl.CERT_REQUIRED}
+   Behavior:
 
-3. Remove duplicate unsafe overrides.
-   production.py currently sets CELERY_BROKER_URL and CELERY_RESULT_BACKEND directly from REDIS_URL.
-   Update production.py so it does not override or wipe out SSL settings from base.py.
-   It may keep serializer/timezone settings, but must not lose SSL config.
+   * trim REDIS_URL
+   * reject malformed URLs with clear ImproperlyConfigured in production checks
+   * support redis:// and rediss://
+   * for rediss:// use ssl_cert_reqs=CERT_REQUIRED
+   * never log Redis password
+   * do not use CERT_NONE in production
 
-4. Configure Django Redis cache TLS if needed.
-   Current production cache uses:
-   CACHES["default"]["LOCATION"] = REDIS_URL
+3. Fix settings.
+   In base.py:
 
-   If Django RedisCache also warns/fails with rediss://, add proper OPTIONS for TLS.
-   Keep this compatible with Django’s built-in RedisCache backend.
+   * REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+   * configure Celery broker/result from REDIS_URL
+   * if rediss://, set:
+     CELERY_BROKER_USE_SSL = {"ssl_cert_reqs": ssl.CERT_REQUIRED}
+     CELERY_REDIS_BACKEND_USE_SSL = {"ssl_cert_reqs": ssl.CERT_REQUIRED}
 
-5. Production env guidance.
-   Document that Render/Upstash REDIS_URL can also include:
-   ?ssl_cert_reqs=CERT_REQUIRED
+   In production.py:
 
-   Example:
-   REDIS_URL=rediss://default:PASSWORD@HOST:PORT?ssl_cert_reqs=CERT_REQUIRED
+   * do not override Celery broker/backend in a way that removes SSL config
+   * validate REDIS_URL has valid scheme if Redis is required
+   * fail with clear message:
+     "REDIS_URL must start with redis:// or rediss://"
 
-   But code should also safely configure Celery SSL options.
+4. Fix payments HMAC middleware.
+   Current issue:
 
-6. Add validation command/check.
-   Add or document a shell check:
+   * Redis client is created in **init**
+   * bad Redis kills entire Django app
 
-   python manage.py shell -c "from django.conf import settings; print(settings.CELERY_BROKER_URL); print(getattr(settings, 'CELERY_BROKER_USE_SSL', None)); print(getattr(settings, 'CELERY_REDIS_BACKEND_USE_SSL', None))"
+   Change:
 
-   Expected:
+   * Do not create Redis client in **init**
+   * Lazy initialize Redis only when HMAC validation needs Redis
+   * For non-payment routes, middleware should pass through without touching Redis
+   * For payment routes requiring HMAC, if Redis is unavailable/misconfigured:
+     return controlled JSON 503 or 500 depending on security policy
+     do not crash app startup
+   * Webhook and JWT-authenticated dashboard payment requests should continue bypassing HMAC as current logic intends.
 
-   * broker URL starts rediss://
-   * CELERY_BROKER_USE_SSL contains ssl.CERT_REQUIRED
-   * CELERY_REDIS_BACKEND_USE_SSL contains ssl.CERT_REQUIRED
+5. HMAC security rule.
+   For HMAC-protected external payment routes:
 
-7. Test Celery import/dispatch.
-   Run:
-   python -c "from tasks.celery import app; print(app.conf.broker_url); print(app.conf.broker_use_ssl); print(app.conf.redis_backend_use_ssl)"
+   * Redis is required for nonce replay protection.
+   * If Redis is unavailable, fail closed:
+     return 503 {"error": "Payment request verification is temporarily unavailable"}
+   * Do not allow HMAC-protected requests without nonce checking.
+   * Do not fail open.
 
-   Then:
-   celery -A tasks.celery inspect ping
+6. Replace direct Redis.from_url(settings.REDIS_URL).
+   Use the centralized helper.
+   Ensure rediss:// works with:
 
-   Or start worker:
-   celery -A tasks.celery worker --loglevel=info
+   * ssl_cert_reqs=CERT_REQUIRED
+   * URL query param ssl_cert_reqs=CERT_REQUIRED if present
+   * no insecure warning
 
-8. Verify forgot-password queue.
-   Trigger forgot-password again.
-   Expected logs:
+7. Add safe startup diagnostics.
+   Add a management command or Django check:
+   python manage.py check_redis
 
-   * forgot_password_email_queued
-   * no rediss ssl warning
-   * no forgot_password_email_dispatch_deferred ValueError
-   * worker receives send_password_reset_email_task
+   It should:
 
-9. Tests.
-   Add settings tests if project has settings tests:
+   * validate REDIS_URL scheme
+   * mask password in output
+   * attempt ping if requested
+   * show whether TLS is enabled
+   * never print secret
 
-   * rediss:// REDIS_URL sets Celery SSL options to ssl.CERT_REQUIRED
-   * redis:// REDIS_URL does not set SSL options
-   * production settings do not remove SSL options
+8. Add tests.
+   Backend tests:
+
+   * middleware **init** does not call Redis.from_url
+   * non-payment route passes through even if REDIS_URL missing in local/test
+   * HMAC route fails closed if Redis misconfigured
+   * rediss:// URL builds Redis client with ssl_cert_reqs CERT_REQUIRED
+   * production settings reject missing/malformed REDIS_URL with clear ImproperlyConfigured
+   * Celery SSL config exists for rediss://
+
+9. Render env documentation.
+   Document exact value format:
+   REDIS_URL=rediss://default:<PASSWORD>@relevant-eft-112987.upstash.io:6379?ssl_cert_reqs=CERT_REQUIRED
+
+   Apply to:
+
+   * Django web service
+   * Celery worker
+   * Celery beat
+
+   Warn:
+
+   * no quotes
+   * no spaces
+   * no line breaks
+   * rotate credential if exposed
+
+10. Validation commands:
+    python manage.py check
+    python manage.py shell -c "from django.conf import settings; print(settings.REDIS_URL[:8]); print(getattr(settings, 'CELERY_BROKER_USE_SSL', None))"
+    pytest tests/django_app tests/payments -q
+
+Start:
+gunicorn django_app.wsgi:application --bind 0.0.0.0:$PORT
 
 Rules:
 
-* Use CERT_REQUIRED in production.
-* Do not use CERT_NONE unless explicitly local/dev-only.
-* Do not leave insecure rediss warning.
-* Do not let production.py override base SSL config.
+* Do not let bad Redis config crash all non-payment pages at middleware import/startup.
+* HMAC-protected payment routes must fail closed if Redis is unavailable.
+* Use CERT_REQUIRED for rediss:// in production.
 * Do not log Redis password.
-* Forgot-password endpoint must still return 202 quickly.
+* Do not use CERT_NONE in production.
+* Keep forgot-password 202 behavior intact.
 
 Return:
 
 * Root cause
 * Files changed
-* Exact settings added
-* Render REDIS_URL example
+* New Redis helper location
+* Middleware behavior before/after
+* Render env value example
 * Validation results
 * Suggested branch and commit message
