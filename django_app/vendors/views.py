@@ -65,6 +65,8 @@ VIDEO_PORTFOLIO_MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 PDF_MIME_TYPE = "application/pdf"
 DOCUMENT_RECEIVED_MESSAGE = "Document received. Verification will continue automatically."
 logger = logging.getLogger(__name__)
+PORTFOLIO_MEDIA_INVALID_CODE = "portfolio_media_invalid"
+PORTFOLIO_MEDIA_INVALID_MESSAGE = "Upload a valid portfolio image or highlight video."
 
 
 def _profile_completion_errors(profile: VendorProfileDTO) -> dict[str, list[str]]:
@@ -178,6 +180,34 @@ def _has_submitted_verification_document(vendor_id) -> bool:
             VerificationDocument.VerificationStatus.REJECTED,
         ],
     ).exists()
+
+
+def _portfolio_media_error(message: str, *, status_code=status.HTTP_400_BAD_REQUEST) -> Response:
+    return Response(
+        {
+            "code": PORTFOLIO_MEDIA_INVALID_CODE,
+            "message": PORTFOLIO_MEDIA_INVALID_MESSAGE,
+            "field_errors": {"media": [message]},
+        },
+        status=status_code,
+    )
+
+
+def _log_portfolio_validation_failure(request, profile, uploaded_media, message: str) -> None:
+    filename = getattr(uploaded_media, "name", "") or ""
+    logger.warning(
+        "Portfolio media upload rejected.",
+        extra={
+            "user_id": str(getattr(request.user, "id", "")),
+            "vendor_id": str(getattr(profile, "id", "")) if profile else None,
+            "upload_filename": filename,
+            "upload_content_type": (getattr(uploaded_media, "content_type", "") or "").lower() if uploaded_media else None,
+            "upload_file_size": getattr(uploaded_media, "size", None),
+            "upload_extension": Path(filename).suffix.lower(),
+            "validation_code": PORTFOLIO_MEDIA_INVALID_CODE,
+            "validation_message": message,
+        },
+    )
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -352,19 +382,35 @@ class PortfolioImageView(APIView):
 
     def post(self, request):
         """Upload a new portfolio image/video (via Celery task)."""
-        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        profile, error_response = _get_current_vendor_profile(request)
         if error_response:
+            if getattr(error_response, "status_code", None) == status.HTTP_404_NOT_FOUND:
+                return _portfolio_media_error(
+                    "Complete your vendor profile before uploading portfolio media.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
             return error_response
+        if profile.status in {VendorProfileModel.Status.REJECTED, VendorProfileModel.Status.SUSPENDED}:
+            onboarding = build_vendor_onboarding_contract(profile)
+            return Response(
+                {
+                    "code": VENDOR_SUSPENDED_CODE if profile.status == VendorProfileModel.Status.SUSPENDED else VENDOR_PROFILE_INCOMPLETE_CODE,
+                    "message": onboarding["message"],
+                    "field_errors": {"media": [onboarding["message"]]},
+                    "redirect_to": onboarding["redirect_to"],
+                    "onboarding": onboarding,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         uploaded_media = request.FILES.get("media") or request.FILES.get("image")
         if not uploaded_media:
-            return Response(
-                {"detail": "No portfolio media file provided."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return _portfolio_media_error("No portfolio media file provided.")
 
         validation_error, media_type, dimensions = self._validate_portfolio_media(uploaded_media)
         if validation_error:
+            message = validation_error["field_errors"]["media"][0]
+            _log_portfolio_validation_failure(request, profile, uploaded_media, message)
             return Response(validation_error, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = PortfolioImageSerializer(data={"caption": request.data.get("caption", "")})
@@ -501,10 +547,22 @@ class PortfolioImageView(APIView):
         content_type = (getattr(uploaded_media, "content_type", "") or "").lower()
         filename = uploaded_media.name or ""
         extension = Path(filename).suffix.lower()
-        if content_type not in ALLOWED_PORTFOLIO_MEDIA_TYPES:
-            return {"media": ["Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."]}, None, {}
+        current_position = uploaded_media.tell() if hasattr(uploaded_media, "tell") else None
+        try:
+            uploaded_media.seek(0)
+            header = uploaded_media.read(128)
+        finally:
+            try:
+                uploaded_media.seek(current_position or 0)
+            except Exception:
+                pass
 
-        media_type = PortfolioImageModel.MediaType.IMAGE if content_type in ALLOWED_PORTFOLIO_IMAGE_TYPES else PortfolioImageModel.MediaType.VIDEO
+        inferred_type = self._infer_media_content_type(extension, header)
+        effective_content_type = content_type if content_type in ALLOWED_PORTFOLIO_MEDIA_TYPES else inferred_type
+        if not effective_content_type:
+            return self._invalid_media("Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."), None, {}
+
+        media_type = PortfolioImageModel.MediaType.IMAGE if effective_content_type in ALLOWED_PORTFOLIO_IMAGE_TYPES else PortfolioImageModel.MediaType.VIDEO
         max_upload_size = (
             getattr(settings, "VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE", 4 * 1024 * 1024)
             if media_type == PortfolioImageModel.MediaType.IMAGE
@@ -512,37 +570,23 @@ class PortfolioImageView(APIView):
         )
         if uploaded_media.size > max_upload_size:
             if media_type == PortfolioImageModel.MediaType.VIDEO:
-                return {"media": ["Videos must be 10MB or smaller."]}, None, {}
-            return {"media": [f"Image file is too large. Maximum size is {max_upload_size // (1024 * 1024)}MB."]}, None, {}
-
-        current_position = uploaded_media.tell() if hasattr(uploaded_media, "tell") else None
-        try:
-            uploaded_media.seek(0)
-            header = uploaded_media.read(32)
-        finally:
-            try:
-                uploaded_media.seek(current_position or 0)
-            except Exception:
-                pass
+                return self._invalid_media("Videos must be 10MB or smaller."), None, {}
+            return self._invalid_media(f"Image file is too large. Maximum size is {max_upload_size // (1024 * 1024)}MB."), None, {}
 
         if media_type == PortfolioImageModel.MediaType.IMAGE:
             if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
-                return {"media": ["Only JPEG, PNG, or WEBP image files are allowed."]}, None, {}
-            if not (
-                header.startswith(b"\xff\xd8\xff")
-                or header.startswith(b"\x89PNG\r\n\x1a\n")
-                or header.startswith(b"RIFF")
-            ):
-                return {"media": ["Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."]}, None, {}
+                return self._invalid_media("Only JPEG, PNG, or WEBP image files are allowed."), None, {}
+            if effective_content_type != self._infer_media_content_type(extension, header):
+                return self._invalid_media("Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."), None, {}
             dimensions_error, dimensions = self._image_dimensions(uploaded_media)
             if dimensions_error:
                 return dimensions_error, None, {}
             return None, media_type, dimensions
 
         if extension not in {".mp4", ".webm", ".mov"}:
-            return {"media": ["Only MP4, WEBM, or MOV highlight videos are allowed."]}, None, {}
-        if b"ftyp" not in header and not header.startswith(b"\x1aE\xdf\xa3"):
-            return {"media": ["This video could not be read. Upload a valid highlight video."]}, None, {}
+            return self._invalid_media("Only MP4, WEBM, or MOV highlight videos are allowed."), None, {}
+        if effective_content_type != self._infer_media_content_type(extension, header):
+            return self._invalid_media("This video could not be read. Upload a valid MP4, WEBM, or MOV highlight video."), None, {}
         return None, media_type, {}
 
     def _image_dimensions(self, uploaded_media) -> tuple[dict | None, dict]:
@@ -551,19 +595,43 @@ class PortfolioImageView(APIView):
             from PIL import Image
 
             uploaded_media.seek(0)
-            image = Image.open(uploaded_media)
-            image.verify()
-            width, height = image.size
+            with Image.open(uploaded_media) as image:
+                image.verify()
+            uploaded_media.seek(0)
+            with Image.open(uploaded_media) as image:
+                width, height = image.size
         except Exception:
-            return {"media": ["This image could not be read. Upload a valid image."]}, {}
+            return self._invalid_media("This image could not be read. Upload a valid image."), {}
         finally:
             try:
                 uploaded_media.seek(current_position or 0)
             except Exception:
                 pass
-        if width < 800 or height < 600:
-            return {"media": ["This image is too small. Upload a clearer, higher-resolution photo."]}, {}
+        min_width = int(getattr(settings, "VENDOR_PORTFOLIO_MIN_IMAGE_WIDTH", 800))
+        min_height = int(getattr(settings, "VENDOR_PORTFOLIO_MIN_IMAGE_HEIGHT", 600))
+        if width < min_width or height < min_height:
+            return self._invalid_media("This image is too small. Upload a clearer, higher-resolution photo."), {}
         return None, {"width": width, "height": height}
+
+    def _infer_media_content_type(self, extension: str, header: bytes) -> str | None:
+        if extension in {".jpg", ".jpeg"} and header.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if extension == ".png" and header.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if extension == ".webp" and header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+            return "image/webp"
+        if extension in {".mp4", ".mov"} and b"ftyp" in header[:128]:
+            return "video/mp4" if extension == ".mp4" else "video/quicktime"
+        if extension == ".webm" and header.startswith(b"\x1aE\xdf\xa3"):
+            return "video/webm"
+        return None
+
+    def _invalid_media(self, message: str) -> dict:
+        return {
+            "code": PORTFOLIO_MEDIA_INVALID_CODE,
+            "message": PORTFOLIO_MEDIA_INVALID_MESSAGE,
+            "field_errors": {"media": [message]},
+        }
 
 
 class PortfolioImageReorderView(APIView):
