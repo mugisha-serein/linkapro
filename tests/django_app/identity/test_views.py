@@ -11,12 +11,23 @@ from domain.identity.value_objects import Email, PasswordHash, PlainPassword
 from infrastructure.repos.django_user_repository import DjangoUserRepository
 from infrastructure.adapters.password_hasher import DjangoPasswordHasher
 from infrastructure.adapters.jwt_token_service import JWTTokenService
-from django_app.identity.models import User as DjangoUser
+from django_app.identity.models import PasswordResetEmailDelivery, User as DjangoUser
+from django_app.identity.password_reset_email import send_password_reset_email
 from tasks.email_tasks import send_password_reset_email_task
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 GENERIC_FORGOT_PASSWORD_DETAIL = "If an account exists for that email, password reset instructions have been sent."
+
+
+def _create_delivery(user: DjangoUser, status=PasswordResetEmailDelivery.Status.QUEUED):
+    return PasswordResetEmailDelivery.objects.create(
+        user=user,
+        email_hash="a" * 64,
+        email_domain=user.email.rsplit("@", 1)[1],
+        status=status,
+        provider="locmem",
+    )
 
 
 class TestIdentityViews:
@@ -260,9 +271,10 @@ class TestIdentityViews:
             role="planner",
         )
 
-        def capture_delay(user_id, token):
+        def capture_delay(user_id, token, delivery_id):
             enqueued["user_id"] = user_id
             enqueued["token"] = token
+            enqueued["delivery_id"] = delivery_id
 
         monkeypatch.setattr("tasks.email_tasks.send_password_reset_email_task.delay", capture_delay)
 
@@ -272,6 +284,12 @@ class TestIdentityViews:
         assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
         assert enqueued["user_id"]
         assert enqueued["token"]
+        assert enqueued["delivery_id"]
+        delivery = PasswordResetEmailDelivery.objects.get(id=enqueued["delivery_id"])
+        assert delivery.status == PasswordResetEmailDelivery.Status.QUEUED
+        assert delivery.user.email == "reset@example.com"
+        assert delivery.email_hash != "reset@example.com"
+        assert delivery.email_domain == "example.com"
         assert mail.outbox == []
 
     @override_settings(
@@ -290,6 +308,7 @@ class TestIdentityViews:
         assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
         assert mail.outbox == []
         assert enqueued == []
+        assert PasswordResetEmailDelivery.objects.count() == 0
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
@@ -315,6 +334,7 @@ class TestIdentityViews:
         assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
         assert mail.outbox == []
         assert enqueued == []
+        assert PasswordResetEmailDelivery.objects.count() == 0
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
@@ -332,9 +352,10 @@ class TestIdentityViews:
             role="planner",
         )
 
-        def capture_delay(user_id, token):
+        def capture_delay(user_id, token, delivery_id):
             enqueued["user_id"] = user_id
             enqueued["token"] = token
+            enqueued["delivery_id"] = delivery_id
 
         monkeypatch.setattr("tasks.email_tasks.send_password_reset_email_task.delay", capture_delay)
         caplog.set_level(logging.INFO, logger="django_app.identity.password_reset_email")
@@ -374,7 +395,11 @@ class TestIdentityViews:
         assert response.status_code == 202
         assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
         assert mail.outbox == []
+        assert "password_reset_email_dispatch_failed" in caplog.text
         assert "forgot_password_email_dispatch_deferred" in caplog.text
+        delivery = PasswordResetEmailDelivery.objects.get()
+        assert delivery.status == PasswordResetEmailDelivery.Status.DEFERRED
+        assert delivery.failure_reason == "RuntimeError"
         assert "/auth/reset-password?token=" not in caplog.text
 
     @override_settings(
@@ -392,10 +417,15 @@ class TestIdentityViews:
             role="planner",
         )
         token = JWTTokenService().create_password_reset_token(str(user.id))
+        delivery = _create_delivery(user)
 
-        result = send_password_reset_email_task.apply(args=[str(user.id), token]).get()
+        result = send_password_reset_email_task.apply(args=[str(user.id), token, str(delivery.id)]).get()
 
         assert result is True
+        delivery.refresh_from_db()
+        assert delivery.status == PasswordResetEmailDelivery.Status.SENT
+        assert delivery.attempts == 1
+        assert delivery.sent_at is not None
         assert len(mail.outbox) == 1
         message = mail.outbox[0]
         assert message.subject == "Reset your LinkaPro password"
@@ -427,6 +457,40 @@ class TestIdentityViews:
         assert missing_result is False
         assert inactive_result is False
         assert mail.outbox == []
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_password_reset_email_delivery_failure_is_recorded(self, monkeypatch, caplog):
+        user = DjangoUser.objects.create_user(
+            email="task-fail@example.com",
+            password="StrongPass1",
+            first_name="Task",
+            last_name="Fail",
+            role="planner",
+        )
+        delivery = _create_delivery(user)
+        token = JWTTokenService().create_password_reset_token(str(user.id))
+
+        def fail_send_mail(*args, **kwargs):
+            raise RuntimeError("provider unavailable")
+
+        monkeypatch.setattr("django_app.identity.password_reset_email.send_mail", fail_send_mail)
+        caplog.set_level(logging.ERROR, logger="django_app.identity.password_reset_email")
+
+        with pytest.raises(RuntimeError):
+            send_password_reset_email(str(user.id), token, delivery_id=str(delivery.id), task_id="task-1", attempt=2)
+
+        delivery.refresh_from_db()
+        assert delivery.status == PasswordResetEmailDelivery.Status.FAILED
+        assert delivery.failure_reason == "RuntimeError"
+        assert delivery.attempts == 2
+        assert delivery.failed_at is not None
+        assert "password_reset_email_failed" in caplog.text
+        assert token not in caplog.text
+        assert "task-fail@example.com" not in caplog.text
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
