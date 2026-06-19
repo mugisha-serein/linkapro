@@ -1,198 +1,150 @@
-Fix LinkaPro production email sending configuration for forgot password and reset-password emails.
+Fix LinkaPro reset-password returning “An unexpected error occurred” by standardizing backend reset-password errors and hardening frontend error extraction.
 
 Problem:
-`django_app/settings/base.py` defines `SENDGRID_API_KEY`, but there is no confirmed `EMAIL_BACKEND`, `DEFAULT_FROM_EMAIL`, SendGrid backend wiring, SMTP host config, or production email validation. `ForgotPasswordView` uses Django `send_mail()`, so in production password reset emails may silently fail or use Django’s default local SMTP backend.
+When a user tries to reset password, the form shows “An unexpected error occurred.” This text comes from frontend `apiClient.normalizeAppError`, not from the backend directly. It appears when backend errors do not include `detail`, `error`, or `message`, or when the response is non-JSON/empty/wrong URL.
 
-Current evidence:
-
-* `ForgotPasswordView` calls `send_mail()` directly.
-* `base.py` has `SENDGRID_API_KEY`, but no complete Django email backend config was found.
-* In production, `send_mail()` catches exceptions, logs failure, and still returns 202 for security.
-* User-facing response should stay generic, but the backend must actually send email and fail loudly in deployment/config checks when email is not configured.
-
-Repository:
+Repositories:
 
 * Backend: linkapro
+* Frontend: linkapro-frontend
+
+Current flow:
+
+* Frontend page: src/app/auth/reset-password/page.tsx
+* Frontend service: src/services/authService.ts
+* Frontend client/error normalizer: src/services/apiClient.ts and src/lib/apiErrors.ts
+* Backend endpoint: POST /api/django/identity/reset-password/
+* Backend view: django_app/identity/views.py ResetPasswordView
+* Backend serializer: django_app/identity/serializers.py ResetPasswordSerializer
 
 Goal:
-Configure production email sending properly and make forgot-password email delivery production-safe, testable, and observable.
+Make reset-password errors clear and backend-driven. The frontend should never show “An unexpected error occurred” when backend provides useful password/token validation errors.
 
 Backend tasks:
 
-1. Inspect current email-related code/settings.
-   Check:
+1. Inspect ResetPasswordView and ResetPasswordSerializer.
 
-   * django_app/settings/base.py
-   * django_app/settings/production.py
-   * django_app/identity/views.py
-   * requirements files
-   * existing SendGrid package usage
-   * Render env documentation
-   * tests for forgot password/reset password
+2. Stop relying on DRF default serializer error shape for reset-password.
+   In ResetPasswordView:
 
-2. Add production email backend configuration.
-   Choose one stable implementation.
+   * instantiate serializer
+   * if not valid, return controlled 400:
+     {
+     "code": "password_reset_invalid",
+     "message": "Please fix the highlighted fields.",
+     "field_errors": serializer.errors
+     }
 
-   Preferred simple option:
-   Use Django SMTP backend with SendGrid SMTP:
-
-   * EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-   * EMAIL_HOST = "smtp.sendgrid.net"
-   * EMAIL_PORT = 587
-   * EMAIL_USE_TLS = True
-   * EMAIL_HOST_USER = "apikey"
-   * EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
-   * DEFAULT_FROM_EMAIL from env
-   * SERVER_EMAIL from env or DEFAULT_FROM_EMAIL
-
-   Required env vars:
-
-   * SENDGRID_API_KEY
-   * DEFAULT_FROM_EMAIL
-   * FRONTEND_URL
-
-3. Add production config validation.
-   In production settings, fail fast if required email env vars are missing:
-
-   * SENDGRID_API_KEY
-   * DEFAULT_FROM_EMAIL
-   * FRONTEND_URL
-
-   Use `ImproperlyConfigured` with clear messages:
-
-   * "SENDGRID_API_KEY must be set for production password reset emails."
-   * "DEFAULT_FROM_EMAIL must be set for production emails."
-   * "FRONTEND_URL must be set for password reset links."
-
-   Do not require SendGrid in local development/test.
-
-4. Keep development/test safe.
-   In development:
-
-   * allow console email backend or locmem backend
-   * do not require SendGrid API key
-   * print reset email/link in console if appropriate
-
-   In tests:
-
-   * use locmem email backend
-   * assert email sent without hitting external network
-
-5. Refactor forgot-password email sending out of the view if appropriate.
-   Create a small service, for example:
-
-   * application/identity/password_reset_service.py
-   * infrastructure/adapters/email_service.py
-   * django_app/identity/email.py
-
-   The service should:
-
-   * generate reset token
-   * build reset URL using FRONTEND_URL
-   * send email with subject/body
-   * log structured result
-   * keep user-facing response generic
-
-   Do not expose whether email exists to the user.
-
-6. Improve email content.
-   Send both plain text and optional HTML if project supports it.
-
-   Plain text should include:
-
-   * LinkaPro password reset request
-   * reset link
-   * expiration time, currently 1 hour
-   * ignore message if user did not request it
-
-   Example subject:
-   "Reset your LinkaPro password"
-
-7. Preserve security behavior.
-   Forgot-password endpoint must always return 202 with generic message:
+3. Invalid/expired token should return controlled 400:
    {
-   "detail": "If an account exists for that email, password reset instructions have been sent."
+   "code": "password_reset_token_invalid",
+   "message": "This reset link has expired or is invalid.",
+   "field_errors": {
+   "token": ["Invalid or expired reset token."]
+   }
    }
 
-   Do not reveal whether the email exists.
-   Do not return 500 to the user just because email provider fails.
-   But production logs must clearly show provider/config failure.
+4. Inactive/missing user should return the same token-invalid response.
+   Do not reveal whether user exists.
 
-8. Add observability.
-   Log structured information:
+5. Successful reset remains:
+   {
+   "status": "password_reset",
+   "message": "Password updated successfully."
+   }
 
-   * forgot_password_email_queued/sent/failed
-   * target user id if found
-   * email domain only or safely masked email
-   * provider error safely
-   * do not log full reset token
-   * do not log full reset URL
+6. Add structured logging for reset failures:
 
-9. Add management command for email smoke test.
-   Add:
-   python manage.py send_test_email --to [someone@example.com](mailto:someone@example.com)
+   * invalid token
+   * serializer validation failed
+   * user not found/inactive
+     Do not log token value or full reset URL.
 
-   It should:
+7. Add backend tests:
 
-   * send a simple test email using configured backend
-   * print success/failure clearly
-   * never expose API key
-   * useful for Render shell/job verification
+   * missing token returns code password_reset_invalid with field_errors.token
+   * weak password returns field_errors.new_password
+   * invalid token returns password_reset_token_invalid
+   * inactive/missing user returns same token invalid response
+   * valid token resets password successfully
+   * reset response never exposes account existence
 
-10. Tests.
-    Add/update tests:
+Frontend tasks:
 
-* forgot-password existing active user sends one email
-* forgot-password nonexistent email returns same 202 and sends no email
-* forgot-password inactive user returns same 202 and sends no email
-* email contains /auth/reset-password?token=
-* email uses FRONTEND_URL
-* reset token is not logged
-* production settings raise ImproperlyConfigured if SENDGRID_API_KEY missing
-* production settings raise ImproperlyConfigured if DEFAULT_FROM_EMAIL missing
-* local/test settings do not require SendGrid
+8. Inspect current:
 
-11. Documentation / Render env.
-    Update README or deployment docs with required production env:
-    SENDGRID_API_KEY=<sendgrid-api-key>
-    DEFAULT_FROM_EMAIL=[no-reply@linkapro.rw](mailto:no-reply@linkapro.rw)
-    FRONTEND_URL=https://www.linkapro.rw
+   * src/app/auth/reset-password/page.tsx
+   * src/lib/apiErrors.ts
+   * src/services/apiClient.ts
+   * src/services/errors.ts
 
-Also include:
-EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
-EMAIL_HOST=smtp.sendgrid.net
-EMAIL_PORT=587
-EMAIL_USE_TLS=true
-EMAIL_HOST_USER=apikey
+9. Harden `getApiMessage`.
+   Do not let generic AppError message “An unexpected error occurred” override useful field errors.
+   Add helper:
 
-If these are hardcoded from settings, document only the envs that must be set.
+   * getFirstApiFieldError(error)
+   * getApiCode(error)
 
-12. Validation commands.
-    Run:
-    python manage.py check
-    python manage.py test django_app.identity
-    or:
-    pytest tests/django_app/identity -q
+10. In reset-password page catch block, handle in this order:
 
-Also run the smoke command locally with console/locmem backend if possible.
+* token/reset_token field errors OR code password_reset_token_invalid -> show expired/invalid link state
+* new_password/password field errors -> set password field error
+* non_field_errors -> show form error
+* backend message/detail/error -> show form error
+* fallback -> “We couldn’t update your password right now. Please try again.”
+
+11. Ensure missing token is handled before submit.
+    It is already present, but verify it works.
+
+12. Ensure `useWatch` is used, not `watch`.
+    It is already present, but verify no React Hook Form compiler warning remains.
+
+13. Add temporary safe console diagnostics only in development:
+
+* status code
+* backend code
+* field error keys
+  Do not log reset token.
+
+14. Verify production API URL.
+    Confirm Vercel env:
+    NEXT_PUBLIC_API_URL=https://linkapro-django.onrender.com/api/django
+
+If missing, frontend may call /api/django on the frontend domain and receive non-JSON/HTML, causing generic errors.
+
+15. Manual tests:
+
+* /auth/reset-password without token -> invalid link screen
+* invalid token -> invalid/expired link screen
+* weak backend-rejected password -> password field error
+* valid token + valid password -> success screen
+* backend 500/network error -> retry message, not “unexpected”
+* no token printed in logs
+
+Validation:
+Backend:
+python manage.py check
+pytest tests/django_app/identity -q
+
+Frontend:
+npm run lint
+npm run build
 
 Rules:
 
+* Frontend only calls backend.
+* Backend is source of truth.
+* Do not log reset token.
 * Do not reveal account existence.
-* Do not expose reset token in logs.
-* Do not fail user-facing forgot-password request with 500 for email provider outage.
-* Do fail production startup/config check if required email env vars are missing.
-* Keep reset URL using FRONTEND_URL.
-* Keep reset endpoint contract unchanged unless tests require standardization.
-* No frontend changes yet unless route contract is broken.
+* Do not show generic “An unexpected error occurred” when backend gives useful errors.
+* Keep light UI only.
 
 Return:
 
-* Root cause of current email weakness
+* Exact root cause found
 * Files changed
-* New env vars required
-* Email backend selected
-* Forgot-password response examples
-* Test results
-* Render setup instructions
-* Suggested branch and commit message
+* Backend response examples
+* Frontend error mapping
+* Env var/API URL verification
+* Validation results
+* Suggested branch/commit for backend and frontend
