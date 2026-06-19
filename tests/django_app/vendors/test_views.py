@@ -1,7 +1,9 @@
 import uuid
+import importlib
 from io import BytesIO, StringIO
 
 import pytest
+from django.apps import apps
 from django.core.files.base import ContentFile
 from django.core.management import call_command
 from django.core.files.storage import default_storage
@@ -16,6 +18,9 @@ from tasks.document_tasks import process_vendor_verification_document_task
 from tasks.image_tasks import process_vendor_portfolio_media_task, upload_vendor_portfolio_image_task
 
 pytestmark = pytest.mark.django_db
+clear_private_portfolio_preview_urls = importlib.import_module(
+    "django_app.vendors.migrations.0010_clear_portfolio_local_preview_urls"
+).clear_private_portfolio_preview_urls
 
 
 class TestVendorProfileViews:
@@ -392,7 +397,9 @@ class TestPortfolioImageViews:
         assert response.data["processing_deferred"] is False
         assert response.data["job_id"]
         assert response.data["message"] == "Portfolio item received. Review will continue automatically."
-        assert response.data["item"]["local_preview_url"]
+        assert response.data["item"]["local_preview_url"] is None
+        assert response.data["item"]["display_url"] is None
+        assert "temp_upload_path" not in response.data["item"]
         assert self.profile.images.count() == 1
         stored = self.profile.images.get()
         assert stored.media_type == PortfolioImage.MediaType.IMAGE
@@ -400,6 +407,7 @@ class TestPortfolioImageViews:
         assert stored.quality_status == PortfolioImage.QualityStatus.PENDING_ANALYSIS
         assert stored.visibility_status == PortfolioImage.VisibilityStatus.PRIVATE
         assert stored.original_filename == "portfolio.jpg"
+        assert stored.local_preview_url is None
         assert stored.temp_upload_path
         assert queued == [str(stored.id)]
 
@@ -550,7 +558,48 @@ class TestPortfolioImageViews:
 
         assert response.status_code == 200
         assert response.data[0]["secure_url"] == "https://example.com/existing.jpg"
+        assert response.data[0]["display_url"] == "https://example.com/existing.jpg"
+        assert response.data[0]["local_preview_url"] is None
         assert response.data[0]["upload_status"] == "uploaded"
+
+    def test_list_does_not_expose_existing_broken_local_preview_url(self):
+        PortfolioImage.objects.create(
+            vendor=self.profile,
+            public_id="",
+            secure_url="",
+            local_preview_url="/media/vendor_portfolio_uploads/test/broken.jpg",
+            caption="Processing",
+            upload_status=PortfolioImage.UploadStatus.QUEUED,
+            visibility_status=PortfolioImage.VisibilityStatus.PRIVATE,
+        )
+
+        response = self.client.get(reverse("portfolio-list"))
+
+        assert response.status_code == 200
+        assert response.data[0]["secure_url"] is None
+        assert response.data[0]["display_url"] is None
+        assert response.data[0]["local_preview_url"] is None
+
+    def test_cleanup_migration_clears_broken_local_preview_urls(self):
+        broken = PortfolioImage.objects.create(
+            vendor=self.profile,
+            local_preview_url="/media/vendor_portfolio_uploads/test/broken.jpg",
+            upload_status=PortfolioImage.UploadStatus.QUEUED,
+        )
+        cloudinary = PortfolioImage.objects.create(
+            vendor=self.profile,
+            cloudinary_secure_url="https://res.cloudinary.com/demo/portfolio.jpg",
+            local_preview_url="/media/vendor_portfolio_uploads/test/old.jpg",
+            upload_status=PortfolioImage.UploadStatus.UPLOADED,
+        )
+
+        clear_private_portfolio_preview_urls(apps, None)
+
+        broken.refresh_from_db()
+        cloudinary.refresh_from_db()
+        assert broken.local_preview_url is None
+        assert cloudinary.cloudinary_secure_url == "https://res.cloudinary.com/demo/portfolio.jpg"
+        assert cloudinary.local_preview_url is None
 
     def test_celery_task_marks_image_completed_on_cloudinary_success(self, monkeypatch):
         temp_path = default_storage.save("vendor_portfolio_uploads/test/portfolio.jpg", ContentFile(valid_image_bytes()))
@@ -562,6 +611,7 @@ class TestPortfolioImageViews:
             visibility_status=PortfolioImage.VisibilityStatus.PRIVATE,
             original_filename="portfolio.jpg",
             media_type=PortfolioImage.MediaType.IMAGE,
+            local_preview_url="/media/vendor_portfolio_uploads/test/portfolio.jpg",
             temp_upload_path=temp_path,
         )
 
@@ -583,6 +633,7 @@ class TestPortfolioImageViews:
         assert image.secure_url == "https://res.cloudinary.com/demo/portfolio.jpg"
         assert image.public_id == "vendor_portfolio/portfolio"
         assert image.cloudinary_secure_url == "https://res.cloudinary.com/demo/portfolio.jpg"
+        assert image.local_preview_url is None
         assert image.temp_upload_path is None
         assert not default_storage.exists(temp_path)
 
@@ -594,6 +645,7 @@ class TestPortfolioImageViews:
             upload_status=PortfolioImage.UploadStatus.QUEUED,
             original_filename="failure.jpg",
             media_type=PortfolioImage.MediaType.IMAGE,
+            local_preview_url="/media/vendor_portfolio_uploads/test/failure.jpg",
             temp_upload_path=temp_path,
         )
 
@@ -609,6 +661,7 @@ class TestPortfolioImageViews:
         assert result["status"] == "failed"
         assert image.upload_status == PortfolioImage.UploadStatus.FAILED
         assert image.upload_error == "Portfolio media upload failed. Please try again."
+        assert image.local_preview_url is None
 
     def test_delete_image_soft_deletes_and_hides_from_default_list(self):
         image = PortfolioImage.objects.create(

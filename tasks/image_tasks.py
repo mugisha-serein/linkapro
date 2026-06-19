@@ -82,6 +82,7 @@ def process_vendor_portfolio_media_task(self, image_id: str):
     )
     image.upload_error = None
     image.failure_reason = None
+    image.local_preview_url = None
     image.temp_upload_path = None
     image.save(
         update_fields=[
@@ -94,6 +95,7 @@ def process_vendor_portfolio_media_task(self, image_id: str):
             "visibility_status",
             "upload_error",
             "failure_reason",
+            "local_preview_url",
             "temp_upload_path",
             "width",
             "height",
@@ -127,8 +129,9 @@ def _mark_failed(image: PortfolioImage, message: str) -> None:
     image.upload_status = PortfolioImage.UploadStatus.FAILED
     image.upload_error = message
     image.failure_reason = message
+    image.local_preview_url = None
     image.visibility_status = PortfolioImage.VisibilityStatus.PRIVATE
-    image.save(update_fields=["upload_status", "upload_error", "failure_reason", "visibility_status", "updated_at"])
+    image.save(update_fields=["upload_status", "upload_error", "failure_reason", "local_preview_url", "visibility_status", "updated_at"])
 
 
 def _quality_status_for_result(status: str) -> str:

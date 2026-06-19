@@ -1,222 +1,170 @@
-Fix LinkaPro vendor portfolio image/video upload 400 errors by aligning frontend and backend upload contracts, validation, status rules, and error display.
+Fix LinkaPro vendor portfolio staged media 404 by preventing backend from exposing local /media upload paths as public preview URLs.
 
-Current production error:
-POST https://linkapro-django.onrender.com/api/django/vendors/portfolio/ returns 400 Bad Request from vendor dashboard portfolio upload.
+Current error:
+GET https://www.linkapro.rw/media/vendor_portfolio_uploads/.../domain.PNG 404 Not Found
+
+Root cause:
+Backend stores/returns local_preview_url using default_storage.url(temp_path), which becomes a relative /media/... URL. Frontend renders that URL on the frontend domain [www.linkapro.rw](http://www.linkapro.rw), but the frontend does not serve Django media files. Also staged upload files are private/temporary and should not be exposed as public URLs.
 
 Goal:
-Understand and fix the current portfolio upload failure permanently. Backend remains source of truth for media rules. Frontend must only mirror backend validation and show backend human-readable errors. Valid image/video uploads should return 202 Accepted and appear immediately in the vendor portfolio without page reload.
+Fix portfolio preview and staged media handling permanently at backend level. Backend must not return unsafe or broken local /media URLs for staged portfolio media. Frontend must show immediate local object preview before upload completes, but after reload it should show a processing placeholder until Cloudinary URL exists.
 
 Repositories:
 
 * Backend: linkapro
 * Frontend: linkapro-frontend
 
-Observed current implementation:
-
-* Backend route exists at /api/django/vendors/portfolio/.
-* Frontend sends multipart FormData field "media".
-* Backend accepts "media" or legacy "image".
-* Backend validates MIME/type/size/header/image dimensions.
-* Backend creates PortfolioImage row and queues Celery.
-* Frontend currently shows generic upload failure instead of backend validation errors.
-
 Backend tasks:
 
-1. Inspect current backend upload flow:
+1. Inspect current portfolio upload flow:
 
    * django_app/vendors/views.py
-   * django_app/vendors/serializers.py
    * django_app/vendors/models.py
-   * application/vendors/handlers.py
-   * infrastructure repos for portfolio images
+   * django_app/vendors/serializers.py
    * tasks/image_tasks.py
-   * settings for upload size limits
+   * settings/media/static storage configuration
+   * production settings
+   * frontend portfolio rendering
 
-2. Log and reproduce the 400 cause.
+2. Remove unsafe local_preview_url exposure.
+   Current code likely does:
+   local_preview_url = default_storage.url(temp_path)
+   and saves that into PortfolioImage.local_preview_url.
 
-   * Add temporary/debug-safe logging around PortfolioImageView.post validation failures.
-   * Log:
-     user_id
-     vendor_id if available
-     filename
-     content_type
-     file_size
-     extension
-     validation error code/message
-   * Do not log file contents.
-   * Remove noisy logs or keep as structured warning if useful.
+   Change behavior:
 
-3. Standardize backend 400 response shape.
-   All validation failures from portfolio upload should return:
-   {
-   "code": "portfolio_media_invalid",
-   "message": "Upload a valid portfolio image or highlight video.",
-   "field_errors": {
-   "media": ["Human-readable reason here."]
-   }
-   }
+   * Do not return relative /media/... URLs for staged/private files.
+   * Do not expose temp_upload_path publicly.
+   * For staged/queued/processing media, API should return:
+     local_preview_url: null
+     unless there is a secure, backend-owned, authenticated preview endpoint.
+   * Keep temp_upload_path/staged_storage_key internal only.
 
-   Examples:
+3. Backend response contract.
+   Portfolio item response should expose:
 
-   * "Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."
-   * "Videos must be 10MB or smaller."
-   * "Image file is too large. Maximum size is 4MB."
-   * "This image is too small. Upload a clearer, higher-resolution photo."
-   * "This video could not be read. Upload a valid MP4, WEBM, or MOV highlight video."
-   * "Complete your vendor profile before uploading portfolio media."
+   * cloudinary_secure_url only when upload_status == uploaded and URL exists
+   * secure_url only for legacy already-uploaded records
+   * local_preview_url null for private staged files
+   * upload_status
+   * quality_status
+   * visibility_status
+   * failure_reason/rejection_reason if any
 
-4. Fix allowed MIME/type mismatch.
-   Backend allowed types must remain strict:
+   Never return:
 
-   * image/jpeg
-   * image/png
-   * image/webp
-   * video/mp4
-   * video/webm
-   * video/quicktime
+   * /media/vendor_portfolio_uploads/...
+   * relative staged file URLs
+   * temp_upload_path
+   * internal storage keys
 
-   Frontend must mirror exactly these types.
-   Backend must reject unsupported types with clear 400.
-   If browser sends empty content_type for some valid files, backend may safely infer from extension + magic header, but must not accept unsafe files blindly.
+4. Add a safe computed display_url rule if useful.
+   Backend may return:
+   display_url = cloudinary_secure_url or secure_url or null
 
-5. Fix image validation.
+   Do not use staged local file paths as display_url.
 
-   * Keep backend dimension enforcement.
-   * Minimum image resolution should be centralized in settings:
-     VENDOR_PORTFOLIO_MIN_IMAGE_WIDTH=800
-     VENDOR_PORTFOLIO_MIN_IMAGE_HEIGHT=600
-   * Use PIL safely:
-     Image.open
-     verify
-     reopen if needed to read dimensions correctly
-   * Ensure WEBP validation checks:
-     header starts with RIFF and contains WEBP in the correct header bytes
-   * Reject corrupt images with clear field error.
-   * Reset file pointer after validation.
+5. Optional secure preview endpoint.
+   Only implement if really needed:
+   GET /api/django/vendors/portfolio/{id}/preview/
 
-6. Fix video validation false negatives.
+   * authenticated vendor only
+   * checks ownership
+   * streams staged file from storage
+   * never public/marketplace
+   * uses Django backend domain, not frontend domain
 
-   * Keep video max size 10MB.
-   * Allowed extensions:
-     .mp4
-     .webm
-     .mov
-   * Allowed MIME:
-     video/mp4
-     video/webm
-     video/quicktime
-   * Improve basic header validation:
-     MP4/MOV should detect ftyp in first 64 or 128 bytes, not only 32 if needed.
-     WEBM should detect EBML header.
-   * If no video metadata parser exists, do not overdo complex validation in request.
-   * Corrupt/unsupported video should return clear 400.
-   * Valid browser-recorded MP4/WEBM/MOV under 10MB should not be falsely rejected.
+   If not implemented, frontend should simply show processing placeholder.
 
-7. Check vendor status rule.
-   Current upload uses require_workspace=True, which may block draft/incomplete/rejected vendors.
-   Decide and implement one backend rule:
-   Option A:
-   Portfolio upload is allowed only after vendor status is pending_review or approved.
-   Then frontend must hide/disable portfolio upload during setup/draft and show backend message.
-   Option B:
-   Portfolio upload is allowed during setup/draft as private staged media.
-   It remains invisible from marketplace until vendor approved and media approved.
-   Choose the intended product rule and enforce it consistently.
-   Recommended:
-   Allow upload for vendors with a saved profile, including draft/pending_review/approved, but keep media private until approval.
-   Block only missing profile, rejected/suspended if current business rules require blocking.
-   Do not let frontend decide this rule alone.
+6. Make staged storage production-safe.
+   If files are staged before Cloudinary upload:
 
-8. Keep async/background behavior safe.
+   * Do not rely on Render ephemeral disk unless a persistent disk or durable object storage exists.
+   * Prefer durable private storage for staging, such as S3/R2/private storage.
+   * If using Render disk, document requirement and ensure Celery worker can access same storage.
+   * If Celery worker cannot access the staged file, mark upload failed with human-readable reason and do not expose broken URL.
 
-   * Valid upload should stage file, create PortfolioImage, try to enqueue Celery.
-   * If Celery/Redis unavailable, return 202 with processing_deferred=true, not 500.
-   * Do not wait for Cloudinary.
-   * Do not store raw media bytes in DB.
-   * Do not expose Celery/Cloudinary/analyzer technical errors to user.
+7. Celery task behavior.
 
-9. Ensure successful response contract.
-   Valid upload returns 202:
-   {
-   "status": "queued",
-   "job_id": "...",
-   "processing_deferred": false,
-   "message": "Portfolio item received. Review will continue automatically.",
-   "item": { ...PortfolioImageDTO... }
-   }
+   * Celery should read temp_upload_path/staged_storage_key internally.
+   * Upload to Cloudinary.
+   * On success:
+     set cloudinary_public_id
+     set cloudinary_secure_url
+     set upload_status=uploaded
+     clear local_preview_url if it exists
+     cleanup staged file
+   * On failure:
+     set upload_status=failed
+     set safe failure_reason
+     do not return staged local file URL
 
-10. Frontend tasks:
-    Inspect:
+8. Data cleanup migration/command.
+   Add a migration or management command to clean existing broken preview URLs:
 
-* src/services/vendorService.ts
-* src/hooks/useVendor.ts
-* src/app/(vendor)/vendor/portfolio/page.tsx
-* src/types/api.ts
+   * For PortfolioImage rows where local_preview_url starts with "/media/vendor_portfolio_uploads/" or contains "vendor_portfolio_uploads":
+     set local_preview_url = null
+   * Do not delete rows.
+   * Do not delete Cloudinary URLs.
+   * Do not touch uploaded media with cloudinary_secure_url.
 
-Fix frontend validation:
+9. Frontend tasks:
+   Inspect:
 
-* Only allow:
-  image/jpeg
-  image/png
-  image/webp
-  video/mp4
-  video/webm
-  video/quicktime
-* Check image max size to match backend setting, default 4MB.
-* Check video max size 10MB.
-* Add client-side image dimension check before upload:
-  minimum 800x600 or values matching backend.
-* Allow videos in filter logic. Currently filtering only handles Images and All Media; add Videos filter support if UI has/needs it.
+   * src/app/(vendor)/vendor/portfolio/page.tsx
+   * src/hooks/useVendor.ts
+   * src/services/vendorService.ts
+   * src/types/api.ts
 
-11. Frontend error handling:
+   Fix frontend rendering:
 
-* Extract backend field_errors.media[0] or message from failed upload.
-* Show that exact message in the upload panel and toast.
-* Do not show generic "Save failed" when backend gives a useful media error.
-* Example:
-  backend says "This image is too small..."
-  frontend displays "This image is too small. Upload a clearer, higher-resolution photo."
+   * Use cloudinary_secure_url or secure_url for uploaded media.
+   * Do not use backend local_preview_url unless it is a valid absolute authenticated preview endpoint.
+   * If no URL and upload_status is staged/queued/processing/processing_deferred:
+     show a processing placeholder card, not broken img/video.
+   * During the same upload session, use URL.createObjectURL(file) as temporary client-only preview before upload response.
+   * Do not persist frontend object URL in backend.
+   * After response.item is inserted into React Query cache, if possible attach temporary clientPreviewUrl only in frontend cache for that session.
+   * On page reload, if Cloudinary URL is not ready, show processing placeholder.
 
-12. Frontend immediate UI update:
+10. Frontend broken image safety.
 
-* Current hook already inserts response.item into React Query cache.
-* Keep that behavior.
-* Ensure item shows using:
-  local_preview_url first
-  then cloudinary_secure_url
-  then secure_url
-* Keep polling while upload_status is staged/queued/processing/processing_deferred.
-* Do not require page reload.
+* Add onError fallback for img/video preview.
+* If media fails to load, hide broken media element and show status placeholder:
+  "Processing media"
+  "Waiting for review"
+  or failure reason from backend.
+* Do not repeatedly request /media/vendor_portfolio_uploads/... from frontend domain.
 
-13. Tests:
+11. Public/marketplace rule.
+
+* Public marketplace/vendor pages must never render staged/private local preview URLs.
+* They should only show approved uploaded Cloudinary URLs returned by backend.
+* If vendor or media is not approved/public-eligible, backend should not return it publicly.
+
+12. Tests.
+    Backend tests:
+
+* portfolio upload response for staged/queued item does not include /media/ local_preview_url
+* response does not expose temp_upload_path
+* uploaded item returns cloudinary_secure_url
+* existing broken /media local_preview_url rows are cleaned
+* public endpoint excludes staged/private media
+* Celery success sets Cloudinary URL and clears local preview
+* Celery failure does not expose staged URL
+
+Frontend/manual tests:
+
+* upload shows immediate local preview before submit
+* after upload response, item appears without page refresh
+* staged item with no Cloudinary URL shows processing placeholder, not broken image
+* no browser request goes to https://www.linkapro.rw/media/vendor_portfolio_uploads/...
+* uploaded item displays Cloudinary URL
+* marketplace only displays approved Cloudinary media
+
+13. Validation commands.
     Backend:
-
-* valid JPEG >= minimum returns 202
-* valid PNG >= minimum returns 202
-* valid WEBP >= minimum returns 202
-* low-resolution image returns 400 with field_errors.media
-* image > max size returns 400 with field_errors.media
-* unsupported image/heic returns 400 with field_errors.media
-* valid MP4 <=10MB returns 202
-* valid WEBM <=10MB returns 202
-* video >10MB returns 400 with field_errors.media
-* corrupt video returns 400 with field_errors.media
-* Celery enqueue failure returns 202 processing_deferred=true
-* allowed vendor status can upload according to chosen rule
-* blocked vendor status returns structured 403/400 with redirect/status contract
-
-Frontend/manual:
-
-* unsupported type blocked before request
-* low-resolution image blocked before request
-* video >10MB blocked before request
-* backend field_errors.media appears in UI
-* valid upload appears immediately without page refresh
-* processing item polls until final status
-* video filter works if present
-
-14. Validation commands:
-    Backend:
+    python manage.py makemigrations
     python manage.py check
     pytest tests/django_app/vendors -q
 
@@ -227,24 +175,22 @@ npm run build
 Rules:
 
 * Backend is source of truth.
-* Frontend mirrors backend but cannot bypass it.
-* No raw media bytes in DB.
-* No Cloudinary wait inside request.
-* No 500 for Celery/Redis/Cloudinary unavailability.
-* Valid media should return 202.
-* Invalid media should return structured 400 with human-readable field_errors.media.
-* Vendor dashboard should show valid staged media immediately.
-* Marketplace remains approved-only.
+* Never expose staged private local paths as public URLs.
+* Do not store raw media bytes in DB.
+* Do not wait for Cloudinary before returning successful staged upload.
+* Do not show broken /media URLs.
+* Marketplace/public only shows approved uploaded Cloudinary media.
+* Vendor dashboard may show processing placeholder for staged media.
 * No mocked media URLs.
 * Keep light UI only.
 
 Return:
 
-* Exact root cause of current 400
+* Exact root cause of /media 404
 * Files changed
-* API response examples
-* Backend media rules
-* Frontend validation changes
+* Migration/cleanup command name
+* New API response examples
+* Frontend rendering fallback behavior
 * Validation results
 * Suggested backend branch/commit
 * Suggested frontend branch/commit
