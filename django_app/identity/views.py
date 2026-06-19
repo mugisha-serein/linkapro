@@ -1,4 +1,5 @@
 import json
+import logging
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -41,6 +42,33 @@ from .cookies import clear_auth_cookies, set_refresh_cookie
 from .password_reset_email import GENERIC_FORGOT_PASSWORD_DETAIL, request_password_reset_email
 from django_app.identity.models import User
 from infrastructure.adapters.jwt_token_service import JWTTokenService
+
+logger = logging.getLogger(__name__)
+
+
+def _password_reset_invalid_response(field_errors):
+    return Response(
+        {
+            "code": "password_reset_invalid",
+            "message": "Please fix the highlighted fields.",
+            "field_errors": field_errors,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _password_reset_token_invalid_response():
+    return Response(
+        {
+            "code": "password_reset_token_invalid",
+            "message": "This reset link has expired or is invalid.",
+            "field_errors": {
+                "token": ["Invalid or expired reset token."],
+            },
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
 
 def _frontend_url() -> str:
     if not settings.FRONTEND_URL:
@@ -371,18 +399,29 @@ class ResetPasswordView(APIView):
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            logger.info(
+                "reset_password_validation_failed",
+                extra={"field_error_keys": list(serializer.errors.keys())},
+            )
+            return _password_reset_invalid_response(serializer.errors)
+
         user_id = JWTTokenService().verify_password_reset_token(serializer.validated_data["token"])
         if not user_id:
-            return Response({"error": "Invalid or expired reset token"}, status=status.HTTP_400_BAD_REQUEST)
+            logger.info("reset_password_invalid_token")
+            return _password_reset_token_invalid_response()
 
         user = User.objects.filter(id=user_id, is_active=True).first()
         if not user:
-            return Response({"error": "Invalid or expired reset token"}, status=status.HTTP_400_BAD_REQUEST)
+            logger.info("reset_password_user_missing_or_inactive", extra={"user_id": str(user_id)})
+            return _password_reset_token_invalid_response()
 
         user.set_password(serializer.validated_data["new_password"])
         user.save(update_fields=["password", "updated_at"])
-        return Response({"status": "password_reset"}, status=status.HTTP_200_OK)
+        return Response(
+            {"status": "password_reset", "message": "Password updated successfully."},
+            status=status.HTTP_200_OK,
+        )
 
 
 class GoogleLoginView(View):

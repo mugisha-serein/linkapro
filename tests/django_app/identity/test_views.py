@@ -10,6 +10,7 @@ from domain.identity.entities import User, UserRole
 from domain.identity.value_objects import Email, PasswordHash, PlainPassword
 from infrastructure.repos.django_user_repository import DjangoUserRepository
 from infrastructure.adapters.password_hasher import DjangoPasswordHasher
+from infrastructure.adapters.jwt_token_service import JWTTokenService
 from django_app.identity.models import User as DjangoUser
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -359,3 +360,134 @@ class TestIdentityViews:
         assert mail.outbox == []
         assert "forgot_password_email_failed" in caplog.text
         assert "/auth/reset-password?token=" not in caplog.text
+
+    def test_reset_password_missing_token_returns_controlled_field_error(self):
+        response = self.client.post(
+            reverse("reset-password"),
+            {"new_password": "ValidPass1!"},
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert response.data["code"] == "password_reset_invalid"
+        assert response.data["message"] == "Please fix the highlighted fields."
+        assert "token" in response.data["field_errors"]
+
+    def test_reset_password_weak_password_returns_new_password_field_error(self):
+        token = JWTTokenService().create_password_reset_token(str(uuid.uuid4()))
+
+        response = self.client.post(
+            reverse("reset-password"),
+            {"token": token, "new_password": "weak"},
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert response.data["code"] == "password_reset_invalid"
+        assert response.data["message"] == "Please fix the highlighted fields."
+        assert "new_password" in response.data["field_errors"]
+
+    def test_reset_password_invalid_token_returns_token_invalid_response(self):
+        response = self.client.post(
+            reverse("reset-password"),
+            {"token": "not-a-valid-token", "new_password": "ValidPass1!"},
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert response.data == {
+            "code": "password_reset_token_invalid",
+            "message": "This reset link has expired or is invalid.",
+            "field_errors": {"token": ["Invalid or expired reset token."]},
+        }
+
+    def test_reset_password_missing_user_returns_same_token_invalid_response(self):
+        token = JWTTokenService().create_password_reset_token(str(uuid.uuid4()))
+
+        response = self.client.post(
+            reverse("reset-password"),
+            {"token": token, "new_password": "ValidPass1!"},
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert response.data == {
+            "code": "password_reset_token_invalid",
+            "message": "This reset link has expired or is invalid.",
+            "field_errors": {"token": ["Invalid or expired reset token."]},
+        }
+
+    def test_reset_password_inactive_user_returns_same_token_invalid_response(self):
+        user = DjangoUser.objects.create_user(
+            email="inactive-reset@example.com",
+            password="StrongPass1!",
+            first_name="Inactive",
+            last_name="Reset",
+            role="planner",
+            is_active=False,
+        )
+        token = JWTTokenService().create_password_reset_token(str(user.id))
+
+        response = self.client.post(
+            reverse("reset-password"),
+            {"token": token, "new_password": "ValidPass1!"},
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert response.data == {
+            "code": "password_reset_token_invalid",
+            "message": "This reset link has expired or is invalid.",
+            "field_errors": {"token": ["Invalid or expired reset token."]},
+        }
+
+    def test_reset_password_valid_token_resets_password_successfully(self):
+        user = DjangoUser.objects.create_user(
+            email="valid-reset@example.com",
+            password="OldPass1!",
+            first_name="Valid",
+            last_name="Reset",
+            role="planner",
+        )
+        token = JWTTokenService().create_password_reset_token(str(user.id))
+
+        response = self.client.post(
+            reverse("reset-password"),
+            {"token": token, "new_password": "NewValidPass1!"},
+            format="json",
+        )
+
+        user.refresh_from_db()
+        assert response.status_code == 200
+        assert response.data == {
+            "status": "password_reset",
+            "message": "Password updated successfully.",
+        }
+        assert user.check_password("NewValidPass1!") is True
+
+    def test_reset_password_token_errors_do_not_expose_account_existence(self):
+        inactive_user = DjangoUser.objects.create_user(
+            email="hidden-reset@example.com",
+            password="StrongPass1!",
+            first_name="Hidden",
+            last_name="Reset",
+            role="planner",
+            is_active=False,
+        )
+        missing_user_token = JWTTokenService().create_password_reset_token(str(uuid.uuid4()))
+        inactive_user_token = JWTTokenService().create_password_reset_token(str(inactive_user.id))
+
+        missing_response = self.client.post(
+            reverse("reset-password"),
+            {"token": missing_user_token, "new_password": "ValidPass1!"},
+            format="json",
+        )
+        inactive_response = self.client.post(
+            reverse("reset-password"),
+            {"token": inactive_user_token, "new_password": "ValidPass1!"},
+            format="json",
+        )
+
+        assert missing_response.status_code == 400
+        assert inactive_response.status_code == 400
+        assert missing_response.data == inactive_response.data
