@@ -52,7 +52,6 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         obj.rejected_at = domain.rejected_at
         obj.rejection_reason = domain.rejection_reason
         obj.save()
-        sync_or_delete_vendor_projection(obj)
         return self._to_domain(obj)
 
     def delete(self, vendor_id: uuid.UUID) -> None:

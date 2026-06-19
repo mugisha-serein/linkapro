@@ -17,7 +17,7 @@ class VendorProfileSerializer(serializers.Serializer):
         category = attrs.get("category")
         custom_category = (attrs.get("custom_category") or "").strip()
         if category == "other" and not custom_category:
-            raise serializers.ValidationError({"custom_category": ["Describe what you do when category is Other."]})
+            raise serializers.ValidationError({"custom_category": ["Tell us what service you provide when choosing Other."]})
         if category and category != "other":
             attrs["custom_category"] = None
         elif custom_category:

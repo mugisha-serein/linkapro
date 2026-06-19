@@ -1,400 +1,302 @@
-Fix LinkaPro vendor portfolio media lifecycle with soft delete, async Cloudinary sync, local preview, image/video support, professional quality analysis, and marketplace visibility rules.
+Permanently fix LinkaPro vendor profile setup submission with backend-enforced onboarding, document, portfolio, package, and marketplace visibility rules.
 
 Problem:
-Vendor portfolio currently needs production-grade behavior. Vendors should be able to add/edit/delete portfolio items, but delete must be soft delete only. Portfolio records must not be physically removed from the database by vendor actions. Deleted/inactive portfolio items should not show on vendor dashboard default views or marketplace/public views.
+When a vendor fills and submits /vendor/profile/setup, the flow is still fragile. Profile save, document upload, portfolio upload, package creation, Celery/Cloudinary processing, marketplace sync, and frontend redirects can interfere with each other. This causes 400/500 errors, redirect loops, stale dashboard state, or vendors being allowed into marketplace before admin approval.
 
-Portfolio upload should appear immediately in the vendor dashboard after the user adds it, without requiring page refresh/reload and without waiting for Cloudinary upload. The system should show a local/staged preview immediately, then sync to Cloudinary later through Celery/background jobs when available.
+Goal:
+Backend must become the single source of truth for vendor onboarding and marketplace readiness. Frontend must only call backend APIs, display backend statuses/errors, and follow backend redirect/access instructions.
 
-Portfolio must support:
+Permanent rules:
 
-* high-quality photos
-* highlight videos
-* video max size 10MB
-* reject files beyond size limits
-* reject low-quality images/videos
-* professional image/media analyzer must verify media quality before public visibility
-
-Everything important must be enforced by backend. Frontend only calls backend and displays states. Marketplace/public visibility must only happen when the vendor is approved. If vendor is not approved, portfolio/packages/profile remain invisible from marketplace.
+1. Vendor profile save must always be independent from documents, portfolio, packages, Cloudinary, Celery, Redis, or analyzer services.
+2. Vendor profile setup must stay required until backend status allows dashboard access.
+3. A vendor may enter dashboard when profile status is pending_review or approved.
+4. A vendor may appear in marketplace only after admin approval.
+5. Vendor packages and portfolio must remain invisible from marketplace until vendor is approved and each item is approved/public-eligible.
+6. Celery/Cloudinary/analyzer outages must not cause expected user actions to return 500.
+7. Frontend must not invent state; it must follow backend status and human-readable errors.
 
 Repositories:
 
 * Backend: linkapro
 * Frontend: linkapro-frontend
 
-Backend architecture requirement:
-Implement portfolio soft-delete and media state rules cleanly according to the existing architecture. Reuse shared/common soft-delete support if already created for packages. If no shared soft-delete exists yet, create it in the proper shared/common backend layer and apply it to portfolio media.
-
 Backend tasks:
 
-1. Inspect current vendor portfolio flow.
+1. Create a backend vendor onboarding/access contract.
+   Add or centralize a service/helper, for example:
 
-   * django_app/vendors/models.py
-   * django_app/vendors/views.py
-   * django_app/vendors/serializers.py
-   * django_app/vendors/urls.py
-   * application/vendors/commands.py
-   * application/vendors/handlers.py
-   * domain/vendors/entities.py
-   * infrastructure/repos vendor portfolio repository
-   * tasks/image_tasks.py
-   * Cloudinary integration
-   * marketplace projection/sync code
-   * frontend vendor portfolio service/hooks/pages
+   * application/vendors/onboarding_policy.py
+   * domain/vendors/policies.py
+   * django_app/vendors/policies.py
 
-2. Add or reuse shared soft-delete support.
+   It must return one clear contract for the current vendor:
+   {
+   "profile_status": "missing|draft|incomplete|rejected|pending_review|approved|suspended",
+   "can_access_dashboard": true/false,
+   "must_complete_profile": true/false,
+   "can_submit_for_review": true/false,
+   "marketplace_visible": true/false,
+   "redirect_to": "/vendor/profile/setup" or "/vendor/dashboard" or null,
+   "message": "human readable explanation"
+   }
 
-   * Portfolio delete by vendor must not physically delete the row.
-   * Use shared fields:
-     is_deleted
-     deleted_at
-     deleted_by if available
-     is_active
-   * Add methods:
-     soft_delete(user=None)
-     restore(user=None) if needed
-   * Only admin/internal code may hard delete.
-   * Add migrations.
-   * Existing portfolio media should migrate as not deleted and active.
+   Required behavior:
 
-3. Portfolio media model requirements.
-   Update portfolio media model to support images and videos:
+   * no profile -> must_complete_profile=true, can_access_dashboard=false, redirect_to=/vendor/profile/setup
+   * draft/incomplete -> must_complete_profile=true, can_access_dashboard=false, redirect_to=/vendor/profile/setup
+   * rejected -> must_complete_profile=true, can_access_dashboard=false, redirect_to=/vendor/profile/setup or /vendor/profile
+   * pending_review -> can_access_dashboard=true, marketplace_visible=false, redirect_to=/vendor/dashboard
+   * approved -> can_access_dashboard=true, marketplace_visible=true, redirect_to=/vendor/dashboard
+   * suspended -> can_access_dashboard=false or limited, marketplace_visible=false, clear suspended message
 
-   * id
-   * vendor/profile FK
-   * media_type: image | video
-   * caption
-   * order
-   * is_active
-   * is_deleted
-   * deleted_at
-   * upload_status:
-     staged
-     queued
-     processing
-     uploaded
-     processing_deferred
-     failed
-   * quality_status:
-     pending_analysis
-     passed
-     failed
-     needs_manual_review
-   * visibility_status:
-     private
-     waiting_approval
-     approved
-     rejected
-   * local_preview_url or staged_storage_key/path
-   * cloudinary_public_id nullable
-   * cloudinary_secure_url nullable
-   * original_filename
-   * mime_type
-   * file_size
-   * width nullable
-   * height nullable
-   * duration_seconds nullable for video
-   * analyzer_score nullable
-   * analyzer_summary nullable
-   * failure_reason nullable
-   * rejection_reason nullable
-   * created_at/updated_at
+2. Expose this contract to frontend.
+   Add or update endpoint:
+   GET /api/django/vendors/profile/status/
+   or include the contract in GET /api/django/vendors/profile/.
 
-   Do not store raw media bytes in database.
+   Frontend must be able to decide redirect/UI from backend contract, not duplicated hardcoded assumptions.
 
-4. Upload endpoint behavior.
+3. Fix POST /api/django/vendors/profile/.
+   Profile save must only validate/save profile fields:
+
+   * business_name
+   * category
+   * custom_category/other_category_label when category == other
+   * description
+   * service_area
+   * contact_email
+   * contact_phone if required
+   * website if optional
+   * any existing required profile fields
+
+   It must not:
+
+   * upload documents
+   * upload portfolio
+   * create packages
+   * call Cloudinary
+   * require Celery/Redis
+   * sync marketplace
+   * submit vendor for review automatically
+
+   Valid profile save returns 200/201 with:
+
+   * saved profile
+   * onboarding/access contract
+   * human-readable message
+
+   Invalid profile save returns 400 with field-level errors only.
+
+4. Enforce category "other" at backend.
+
+   * If category == "other", custom_category/other_category_label is required.
+   * If category != "other", custom category may be blank/null.
+   * Return error:
+     "Tell us what service you provide when choosing Other."
+   * Add migration if missing.
+   * Marketplace display can use custom category label, but canonical category may remain "other".
+
+5. Fix verification document upload as background-safe.
    Endpoint:
-   POST /api/django/vendors/portfolio/
+   POST /api/django/vendors/profile/verification-documents/
 
-   It must:
+   Backend must:
 
-   * validate authenticated vendor and ownership
-   * validate vendor workspace access according to current rules
-   * accept image/video file
-   * enforce allowed image types:
-     image/jpeg
-     image/png
-     image/webp
-   * enforce allowed video types:
-     video/mp4
-     video/webm
-     video/quicktime only if supported
-   * enforce size limits:
-     images <= configured image limit, default 4MB unless current project standard exists
-     videos <= 10MB
-   * run basic immediate preflight:
-     file extension/type
-     magic header where possible
-     file size
-     image dimensions readable
-     video metadata readable if possible
-   * save file to safe temporary/local storage
-   * create portfolio record with:
-     upload_status=queued or processing_deferred
-     quality_status=pending_analysis
-     visibility_status=private or waiting_approval
-     is_active=true
-     is_deleted=false
-   * enqueue Celery task for Cloudinary sync and media quality analysis
-   * return HTTP 202 Accepted or 201 Created with the new portfolio item immediately
-   * response must include local preview/staged URL if safe to serve
-   * never block request waiting for Cloudinary
-   * if Celery/Redis unavailable, return success with processing_deferred=true, not 500
+   * accept PDF only
+   * validate extension, MIME type, %PDF magic header, file size, parseable PDF, at least 1 page, not encrypted
+   * stage file safely outside DB
+   * create document metadata record
+   * enqueue background processing if available
+   * if Celery/Redis unavailable, mark processing_deferred and return 202, not 500
+   * return human-readable 400 only for actual file/user errors
+   * never expose Celery/Redis/Cloudinary/analyzer details to user
 
-5. Immediate dashboard visibility.
+   Response example:
+   {
+   "status": "queued",
+   "processing_deferred": false,
+   "document_id": "...",
+   "message": "Document received. Verification will continue automatically.",
+   "onboarding": { ...contract... }
+   }
 
-   * Newly added portfolio item must appear immediately in vendor’s own dashboard/portfolio list.
-   * It may show staged/local preview first.
-   * If Cloudinary URL is not ready yet, frontend should use backend-provided safe preview URL or local object preview.
-   * Backend list endpoint should include staged/queued items for the owning vendor.
-   * Public/marketplace endpoints must not expose staged/private/waiting items.
+6. Background document processing.
+   Celery task must:
 
-6. Cloudinary sync task.
-   Add/update Celery task:
-   process_vendor_portfolio_media_task(media_id)
-
-   Task must:
-
-   * re-fetch media record from DB
+   * upload staged PDF to Cloudinary as document/raw resource
+   * store only Cloudinary public_id, secure_url, metadata
+   * run ODCR/OCR/document analyzer if configured
+   * mark document pending_review, needs_manual_review, rejected, or failed
+   * retry transient failures
    * be idempotent
-   * if already uploaded and quality passed, exit safely
-   * mark upload_status=processing
-   * upload image/video to Cloudinary using correct resource_type:
-     image for images
-     video for videos
-   * store:
-     cloudinary_public_id
-     cloudinary_secure_url
-     width/height
-     duration for video
-     file metadata
-   * clean up local staged file after successful Cloudinary upload
-   * retry transient Cloudinary/network failures with exponential backoff
-   * on final failure, mark upload_status=failed and store safe failure_reason
-   * do not delete DB row on failure
+   * never auto-approve vendor
+   * keep admin review as final authority
 
-7. Professional media analyzer.
-   Add media quality analyzer adapter:
-   infrastructure/adapters/media_quality_analyzer.py
-   or equivalent clean architecture location.
-
-   It should support:
-
-   * image quality checks
-   * video quality checks
-   * optional external professional analyzer provider if configured
-
-   Add env vars if external analyzer exists:
-   MEDIA_ANALYZER_ENABLED=true/false
-   MEDIA_ANALYZER_API_URL
-   MEDIA_ANALYZER_API_KEY
-   MEDIA_ANALYZER_TIMEOUT_SECONDS
-
-   If external analyzer is unavailable:
+   If analyzer unavailable:
 
    * do not crash
-   * set quality_status=needs_manual_review
-   * keep item private/not public
-   * admin can review manually later
+   * mark needs_manual_review
+   * continue onboarding according to submitted document rules
 
-   Local fallback checks must include:
-   Images:
+7. Submit-for-review endpoint.
+   Endpoint:
+   POST /api/django/vendors/profile/submit/
 
-   * minimum dimensions, for example 800x600 or current project standard
-   * reject extremely low resolution
-   * reject unreadable/corrupt images
-   * reject empty/tiny files
-   * optional blur/quality heuristic if dependencies already exist
+   Backend must:
 
-   Videos:
+   * validate profile completeness
+   * require a verification document record if business rules require it
+   * accept queued/processing_deferred/pending_review document as submitted, not completed
+   * move vendor status to pending_review when complete
+   * return updated profile and onboarding/access contract
+   * never require Cloudinary upload/analyzer completion before pending_review
+   * never create marketplace listing at pending_review
 
-   * max size 10MB
-   * metadata readable
-   * minimum resolution if possible
-   * duration reasonable for highlight video if business rule exists
-   * reject corrupt/unreadable videos
+8. Marketplace visibility enforcement.
+   Backend must enforce:
 
-   Do not claim perfect fraud/fake detection. Treat analyzer as quality/preflight + review support.
+   * pending_review vendors are not visible in FastAPI marketplace
+   * approved vendors are visible only after admin approval
+   * rejected/suspended/draft vendors are removed/hidden from marketplace
+   * packages/portfolio remain hidden publicly unless vendor is approved and item is approved/public-eligible
 
-8. Visibility and approval rules.
-   Portfolio marketplace/public visibility requires:
+   Do not allow frontend to control marketplace visibility.
 
-   * vendor.status == approved
-   * media.is_active == true
-   * media.is_deleted == false
-   * media.upload_status == uploaded
-   * media.quality_status == passed or approved by admin/manual review
-   * media.visibility_status == approved
+9. Portfolio backend enforcement.
+   Apply or reuse the edited portfolio media lifecycle rules:
 
-   If vendor is not approved:
+   * vendor dashboard may show staged/private media immediately
+   * marketplace/public may show only approved vendor + approved/high-quality/uploaded media
+   * images and videos supported
+   * videos max 10MB
+   * low-quality media not public
+   * vendor delete is soft delete only
+   * admin delete is hard delete only
+   * analyzer failure/unavailability must not return 500
+   * backend returns human-readable status/errors
+   * frontend only displays backend statuses
 
-   * portfolio must remain invisible from marketplace/public views
-   * packages must remain invisible
-   * public marketplace listing must not show vendor media
+10. Package backend enforcement.
+    Apply or reuse vendor package rules:
 
-   If vendor becomes approved:
+* vendor create/edit/delete packages
+* vendor delete is soft delete only
+* admin hard delete only
+* package status supports waiting_approval and approved, plus rejected if needed
+* public/marketplace visibility requires approved vendor + approved package + active + not deleted
+* package tiers Standard, Premier, Gold enforced by backend
+* backend returns human-readable validation errors
+* frontend only displays backend statuses/errors
 
-   * approved portfolio media can appear publicly
-   * waiting/private/failed/deleted media remains hidden
+11. Backend status and error response standard.
+    All vendor setup related endpoints should return predictable responses:
 
-9. Admin review for portfolio media.
-   Add admin/governance endpoints if missing:
+* profile endpoint
+* profile status endpoint
+* submit endpoint
+* document endpoint
+* portfolio endpoint
+* packages endpoint
 
-   * GET /api/django/governance/vendors/portfolio/pending/
-   * POST /api/django/governance/vendors/portfolio/{media_id}/approve/
-   * POST /api/django/governance/vendors/portfolio/{media_id}/reject/
-   * DELETE /api/django/governance/vendors/portfolio/{media_id}/hard-delete/
+Standard error style:
+{
+"code": "vendor_profile_incomplete",
+"message": "Complete your vendor profile before continuing.",
+"field_errors": {
+"business_name": ["Business name is required."]
+},
+"redirect_to": "/vendor/profile/setup",
+"onboarding": { ...contract... }
+}
 
-   Admin approval should set visibility_status=approved if upload_status and quality_status allow it.
-   Rejection stores rejection_reason.
-   Hard delete physically removes only for admin.
-   Add audit log if governance audit already exists.
+Avoid:
 
-10. Vendor edit behavior.
-    Vendors can edit:
+* generic "Bad request"
+* unhandled 500 for expected service outages
+* technical error messages shown to user
 
-* caption
-* order
-* maybe active/inactive
-* replace media only 
+12. Frontend must follow backend contract.
+    Frontend tasks:
 
-If media file is replaced:
+* inspect VendorLayout, vendor profile setup page, vendor profile page, vendor dashboard, vendor packages, vendor portfolio, vendor service/hooks/types
+* remove duplicated frontend-only onboarding assumptions where backend contract exists
+* VendorLayout should use backend onboarding/access contract
+* /vendor/profile/setup and /vendor/profile remain accessible while must_complete_profile=true
+* /vendor/dashboard allowed only when backend can_access_dashboard=true
+* setup page redirects to dashboard only when backend redirect_to=/vendor/dashboard or can_access_dashboard=true after submit
+* no redirect because profile object merely exists
+* no dashboard/setup ping-pong
 
-* create a new staged upload or reset upload_status/quality_status
-* visibility_status returns to waiting_approval/private
-* public old media must not remain visible unless explicitly designed
+13. Frontend profile setup behavior.
+    Required behavior:
 
-If only caption/order changes:
+* Save profile -> call backend profile endpoint, display backend errors/message, stay on setup if backend says must_complete_profile
+* Upload document -> call backend document endpoint, display backend message, do not block profile save
+* Submit for review -> call backend submit endpoint, follow backend redirect_to
+* If backend returns pending_review/can_access_dashboard, redirect once to /vendor/dashboard
+* If backend returns errors, show them and stay on setup
+* Do not expose Celery, Redis, Cloudinary, ODCR, analyzer names to user
 
-* backend decides whether approval resets; prefer no reset for order, optional reset for caption if public-facing fraud risk exists.
+14. Frontend package and portfolio behavior.
 
-11. Vendor soft delete behavior.
-    Endpoint:
-    DELETE /api/django/vendors/portfolio/{media_id}/
-
-Vendor delete must:
-
-* set is_deleted=true
-* set is_active=false
-* set deleted_at
-* remove from vendor default visible list immediately
-* remove from marketplace/public immediately
-* not physically delete DB row
-* return success response:
-  "Portfolio item removed from active listings."
-
-Only admin hard delete can physically remove the row.
-
-12. API list behavior.
-    Vendor private list:
-
-* shows active non-deleted portfolio items, including staged/queued/processing/uploaded/failed
-* returns status fields so UI can show processing/failed/private/approved
-
-Vendor dashboard:
-
-* shows newly added item immediately
-* hides soft-deleted items
-
-Public/marketplace list:
-
-* only shows public-eligible media according to visibility rules
-
-13. Marketplace projection.
-    If FastAPI marketplace projection includes portfolio media:
-
-* sync only public-eligible portfolio media
-* do not sync staged/queued/failed/deleted/private media
-* invalidate marketplace cache after portfolio approval/delete if needed
-
-If FastAPI currently only stores vendor listing:
-
-* do not invent a large new projection unless existing public profile needs media.
-* At minimum, Django public vendor profile endpoints must enforce approved-only portfolio visibility.
-
-14. Frontend vendor portfolio UX.
-    Inspect:
-
-* src/services/vendorService.ts
-* src/hooks/useVendor.ts
-* vendor portfolio page/components
-* vendor dashboard portfolio widgets
-* marketplace/public vendor profile if it displays portfolio
-
-Requirements:
-
-* Allow image upload and video upload.
-* File input accept:
-  image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime
-* Client-side enforce:
-  video <= 10MB
-  image <= configured frontend max matching backend
-* Backend remains source of truth.
-* On upload response:
-  immediately insert item into React Query cache or invalidate/refetch
-  show item without page refresh
-  if local preview is available, show it
-  show status badge:
-  Processing
+* After package/portfolio create/edit/delete, update React Query cache or invalidate immediately
+* Display backend statuses:
   Waiting approval
   Approved
+  Rejected
+  Processing
   Failed
   Private
-* Do not pretend marketplace/public visibility before approval.
-* On soft delete:
-  remove item from visible list immediately
-  show toast:
-  "Portfolio item removed from active listings."
-* On failed quality analysis:
-  show human-readable reason from backend if available.
-* Do not show technical words like Celery, Redis, Cloudinary, or analyzer provider names to vendor.
+* Do not show staged/private media publicly
+* Do not show waiting approval packages publicly
+* Backend is source of truth for visibility
 
-15. Frontend marketplace/public visibility.
+15. Add logout button.
 
-* Marketplace/public vendor pages should display portfolio only if backend returns it.
-* Do not display local staged/private media publicly.
-* If vendor is not approved, do not show vendor portfolio/packages in marketplace.
+* Add visible top-right logout button on /vendor/profile/setup.
+* Use existing logout flow.
+* Redirect to /auth/login.
+* Keep UI light and consistent.
 
-16. Human-readable errors.
-    Backend must return clear errors:
-
-* "Videos must be 10MB or smaller."
-* "Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."
-* "This image is too small. Upload a clearer, higher-resolution photo."
-* "This video could not be read. Upload a valid highlight video."
-* "This portfolio item is waiting for review before it appears publicly."
-
-17. Tests.
+16. Tests.
     Backend tests:
 
-* image upload returns success/202 and creates staged item
-* video upload <=10MB accepted
-* video >10MB rejected with clear 400
-* invalid media type rejected
-* low-resolution image rejected or marked failed/needs_manual_review according to design
-* Celery unavailable returns success with processing_deferred=true, not 500
-* Cloudinary task uploads and stores metadata
-* analyzer unavailable marks needs_manual_review, not 500
-* vendor soft delete keeps DB row and hides from default list
-* admin hard delete physically removes row
-* public portfolio excludes non-approved vendor media
-* public portfolio includes approved vendor + approved media only
-* vendor cannot edit/delete another vendor’s media
+* no profile returns onboarding contract redirecting to setup
+* valid profile save returns onboarding contract
+* invalid profile save returns field_errors
+* other category requires custom category
+* PDF document returns 202
+* Celery unavailable returns 202 processing_deferred, not 500
+* submit complete profile moves to pending_review
+* pending_review can_access_dashboard=true but marketplace_visible=false
+* approved marketplace_visible=true after admin approval
+* rejected/suspended marketplace_visible=false
+* pending_review vendor not synced to FastAPI marketplace
+* approved vendor synced only after admin approval
+* package/portfolio visibility respects vendor approval and item approval
+* vendor soft delete keeps rows
+* admin hard delete removes rows
 
 Frontend/manual tests:
 
-* upload image appears immediately without refresh
-* upload video <=10MB appears immediately
-* upload video >10MB blocked before request and also rejected by backend if sent
-* soft delete removes item immediately
-* status badges display correctly
-* marketplace does not show unapproved vendor portfolio
-* approved vendor public page shows approved portfolio only
+* new vendor login -> setup
+* direct dashboard with missing profile -> setup
+* partial profile save stays on setup
+* leaving setup and logging in again returns to setup
+* document deferred response does not block submit
+* submit complete profile -> pending_review -> dashboard once
+* pending_review login -> dashboard, not setup
+* approved login -> dashboard
+* no infinite redirect
+* logout button works
+* package/portfolio updates appear immediately from backend/cache
 
-18. Validation commands.
+17. Validation commands.
     Backend:
     python manage.py makemigrations
     python manage.py check
-    pytest tests/django_app/vendors tests/django_app/governance -q
+    pytest tests/django_app/vendors tests/django_app/governance tests/fastapi_app -q
 
 Frontend:
 npm run lint for touched files
@@ -402,30 +304,27 @@ npm run build
 
 Rules:
 
-* Vendor delete = soft delete only.
-* Admin delete = hard delete only.
-* Do not store raw media bytes in database.
-* Do not wait for Cloudinary upload before showing item in vendor dashboard.
-* Do not expose staged/private media in marketplace.
-* Backend enforces media type, size, quality, and visibility rules.
-* Frontend is only a caller/display layer.
-* Videos max size is 10MB.
-* Low-quality media must not become public.
-* Do not claim fake/fraud detection is perfect; analyzer is quality/review support.
-* Approved marketplace visibility requires approved vendor and approved media.
-* No mocked media URLs.
-* Keep light UI only.
+* Backend is source of truth.
+* Frontend only calls and follows backend instructions.
+* Profile save is independent from documents/packages/portfolio/background services.
+* Expected background service outages return controlled 202 or safe statuses, not 500.
+* Only backend controls marketplace visibility.
+* Pending_review is dashboard-accessible but marketplace-hidden.
+* Approved is dashboard-accessible and marketplace-visible only after admin approval.
+* Vendor deletes are soft deletes.
+* Admin hard deletes only.
+* No raw files in DB.
+* No mocked URLs or data.
+* No dark UI.
+* Do not weaken backend permissions.
 
 Return:
 
-* Root cause of current portfolio behavior
+* Root cause of current profile setup instability
+* Backend onboarding contract implemented
 * Files changed
 * Migration names
-* New API response examples
-* Soft-delete design location
-* Media quality/analyzer rules implemented
-* Cloudinary deferred-sync behavior
-* Marketplace visibility rules
+* API response examples
+* Final redirect/access rules
+* Package/portfolio visibility rules
 * Validation results
-* Suggested backend branch/commit
-* Suggested frontend branch/commit

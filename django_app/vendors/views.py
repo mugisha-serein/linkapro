@@ -45,12 +45,17 @@ from application.vendors.dtos import (
     ServicePackageDTO,
     InquiryDTO,
 )
+from application.vendors.onboarding_policy import (
+    SETUP_ROUTE,
+    build_vendor_onboarding_contract,
+    vendor_field_errors,
+)
 from domain.vendors.package_rules import PackageValidationError
 
 
 VENDOR_PROFILE_INCOMPLETE_CODE = "vendor_profile_incomplete"
 VENDOR_PROFILE_INCOMPLETE_DETAIL = "Vendor profile setup is required before accessing this resource."
-VENDOR_PROFILE_SETUP_REDIRECT = "/vendor/profile"
+VENDOR_PROFILE_SETUP_REDIRECT = SETUP_ROUTE
 VENDOR_SUSPENDED_CODE = "vendor_suspended"
 VENDOR_SUSPENDED_DETAIL = "Your vendor account is suspended. Please contact support."
 ALLOWED_PORTFOLIO_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -63,38 +68,36 @@ logger = logging.getLogger(__name__)
 
 
 def _profile_completion_errors(profile: VendorProfileDTO) -> dict[str, list[str]]:
-    errors: dict[str, list[str]] = {}
-    for field_name in VendorProfileModel.required_profile_fields():
-        value = getattr(profile, field_name, None)
-        if value is None or not str(value).strip():
-            errors[field_name] = ["This field is required."]
-    if profile.description and len(profile.description.strip()) < 20:
-        errors["description"] = ["Use at least 20 characters for your description."]
-    if profile.category == VendorProfileModel.Category.OTHER and not (profile.custom_category or "").strip():
-        errors["custom_category"] = ["Describe what you do when category is Other."]
-    return errors
+    return vendor_field_errors(profile)
 
 
 def _vendor_profile_incomplete_response(
+    profile: VendorProfileDTO | None = None,
     field_errors: dict[str, list[str]] | None = None,
 ) -> Response:
+    onboarding = build_vendor_onboarding_contract(profile)
     return Response(
         {
-            "detail": VENDOR_PROFILE_INCOMPLETE_DETAIL,
             "code": VENDOR_PROFILE_INCOMPLETE_CODE,
-            "redirect_to": VENDOR_PROFILE_SETUP_REDIRECT,
+            "message": onboarding["message"],
+            "detail": onboarding["message"] or VENDOR_PROFILE_INCOMPLETE_DETAIL,
+            "redirect_to": onboarding["redirect_to"],
             "field_errors": field_errors or {},
+            "onboarding": onboarding,
         },
         status=status.HTTP_403_FORBIDDEN,
     )
 
 
 def _vendor_suspended_response() -> Response:
+    onboarding = build_vendor_onboarding_contract(type("SuspendedProfile", (), {"status": VendorProfileModel.Status.SUSPENDED})())
     return Response(
         {
-            "detail": VENDOR_SUSPENDED_DETAIL,
             "code": VENDOR_SUSPENDED_CODE,
-            "redirect_to": VENDOR_PROFILE_SETUP_REDIRECT,
+            "message": VENDOR_SUSPENDED_DETAIL,
+            "detail": VENDOR_SUSPENDED_DETAIL,
+            "redirect_to": onboarding["redirect_to"],
+            "onboarding": onboarding,
         },
         status=status.HTTP_403_FORBIDDEN,
     )
@@ -105,7 +108,14 @@ def _get_current_vendor_profile(request, *, require_workspace: bool = False):
     profile = query_handlers.get_vendor_by_user(request.user.id)
     if not profile:
         return None, Response(
-            {"detail": "No vendor profile found."},
+            {
+                "code": VENDOR_PROFILE_INCOMPLETE_CODE,
+                "message": "Complete your vendor profile before continuing.",
+                "detail": "No vendor profile found.",
+                "redirect_to": VENDOR_PROFILE_SETUP_REDIRECT,
+                "field_errors": {},
+                "onboarding": build_vendor_onboarding_contract(None),
+            },
             status=status.HTTP_404_NOT_FOUND,
         )
     completion_errors = _profile_completion_errors(profile)
@@ -113,12 +123,13 @@ def _get_current_vendor_profile(request, *, require_workspace: bool = False):
         if profile.status == VendorProfileModel.Status.SUSPENDED:
             return None, _vendor_suspended_response()
         if profile.status in {VendorProfileModel.Status.DRAFT, VendorProfileModel.Status.REJECTED} or completion_errors:
-            return None, _vendor_profile_incomplete_response(completion_errors)
+            return None, _vendor_profile_incomplete_response(profile, completion_errors)
     return profile, None
 
 
-def _serialize_profile(dto: VendorProfileDTO) -> dict:
-    return {
+def _serialize_profile(dto: VendorProfileDTO, *, message: str | None = None) -> dict:
+    onboarding = build_vendor_onboarding_contract(dto)
+    payload = {
         "id": str(dto.id),
         "user_id": str(dto.user_id),
         "business_name": dto.business_name,
@@ -134,7 +145,39 @@ def _serialize_profile(dto: VendorProfileDTO) -> dict:
         "approved_at": dto.approved_at.isoformat() if dto.approved_at else None,
         "rejected_at": dto.rejected_at.isoformat() if dto.rejected_at else None,
         "rejection_reason": dto.rejection_reason,
+        "onboarding": onboarding,
+        "message": message or onboarding["message"],
     }
+    return payload
+
+
+def _validation_error_response(errors, *, profile: VendorProfileDTO | None = None) -> Response:
+    field_errors = {
+        key: [str(message) for message in value]
+        for key, value in dict(errors).items()
+    }
+    onboarding = build_vendor_onboarding_contract(profile)
+    return Response(
+        {
+            "code": VENDOR_PROFILE_INCOMPLETE_CODE,
+            "message": "Please fix the highlighted profile fields.",
+            "field_errors": field_errors,
+            "redirect_to": onboarding["redirect_to"],
+            "onboarding": onboarding,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _has_submitted_verification_document(vendor_id) -> bool:
+    return VerificationDocument.objects.filter(vendor_id=vendor_id).exclude(
+        upload_status=VerificationDocument.UploadStatus.FAILED,
+    ).exclude(
+        verification_status__in=[
+            VerificationDocument.VerificationStatus.FAILED,
+            VerificationDocument.VerificationStatus.REJECTED,
+        ],
+    ).exists()
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -151,7 +194,8 @@ class VendorProfileView(APIView):
     def post(self, request):
         """Create a new vendor profile for the current user."""
         serializer = VendorProfileSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return _validation_error_response(serializer.errors)
         data = serializer.validated_data
 
         cmd = CreateVendorProfileCommand(
@@ -169,9 +213,22 @@ class VendorProfileView(APIView):
         try:
             command_handlers = get_command_handlers()
             profile = command_handlers.create_profile(cmd)
-            return Response(_serialize_profile(profile), status=status.HTTP_201_CREATED)
+            return Response(
+                _serialize_profile(profile, message="Vendor profile saved."),
+                status=status.HTTP_201_CREATED,
+            )
         except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "code": "vendor_profile_save_failed",
+                    "message": str(e),
+                    "detail": str(e),
+                    "field_errors": {},
+                    "redirect_to": VENDOR_PROFILE_SETUP_REDIRECT,
+                    "onboarding": build_vendor_onboarding_contract(None),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     def patch(self, request):
         """Update the current user's vendor profile."""
@@ -180,7 +237,8 @@ class VendorProfileView(APIView):
             return error_response
 
         serializer = VendorProfileSerializer(data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return _validation_error_response(serializer.errors, profile=profile)
         data = serializer.validated_data
 
         cmd = UpdateVendorProfileCommand(
@@ -198,9 +256,39 @@ class VendorProfileView(APIView):
         try:
             command_handlers = get_command_handlers()
             updated_profile = command_handlers.update_profile(cmd)
-            return Response(_serialize_profile(updated_profile))
+            return Response(_serialize_profile(updated_profile, message="Vendor profile saved."))
         except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "code": "vendor_profile_save_failed",
+                    "message": str(e),
+                    "detail": str(e),
+                    "field_errors": {},
+                    "redirect_to": build_vendor_onboarding_contract(profile)["redirect_to"],
+                    "onboarding": build_vendor_onboarding_contract(profile),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class VendorProfileStatusView(APIView):
+    permission_classes = [IsAuthenticated, IsVendor]
+
+    def get(self, request):
+        profile, error_response = _get_current_vendor_profile(request)
+        if error_response and profile is None:
+            return Response(
+                {
+                    "profile": None,
+                    "onboarding": build_vendor_onboarding_contract(None),
+                }
+            )
+        return Response(
+            {
+                "profile": _serialize_profile(profile) if profile else None,
+                "onboarding": build_vendor_onboarding_contract(profile),
+            }
+        )
 
 
 class VendorSubmitForReviewView(APIView):
@@ -214,15 +302,38 @@ class VendorSubmitForReviewView(APIView):
 
         completion_errors = _profile_completion_errors(profile)
         if completion_errors:
-            return _vendor_profile_incomplete_response(completion_errors)
+            return _vendor_profile_incomplete_response(profile, completion_errors)
+
+        if not _has_submitted_verification_document(profile.id):
+            onboarding = build_vendor_onboarding_contract(profile)
+            return Response(
+                {
+                    "code": "vendor_verification_document_required",
+                    "message": "Upload a verification PDF before submitting your profile for review.",
+                    "field_errors": {"document": ["Upload a verification PDF before submitting your profile for review."]},
+                    "redirect_to": onboarding["redirect_to"],
+                    "onboarding": onboarding,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         cmd = SubmitVendorForReviewCommand(vendor_id=profile.id)
         try:
             command_handlers = get_command_handlers()
             updated_profile = command_handlers.submit_for_review(cmd)
-            return Response(_serialize_profile(updated_profile))
+            return Response(_serialize_profile(updated_profile, message="Profile submitted for review."))
         except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            onboarding = build_vendor_onboarding_contract(profile)
+            return Response(
+                {
+                    "code": "vendor_submit_failed",
+                    "message": str(e),
+                    "field_errors": {},
+                    "redirect_to": onboarding["redirect_to"],
+                    "onboarding": onboarding,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 class PortfolioImageView(APIView):
@@ -648,7 +759,14 @@ class VendorVerificationDocumentView(APIView):
         profile = query_handlers.get_vendor_by_user(request.user.id)
         if not profile:
             return Response(
-                {"detail": "No vendor profile found."},
+                {
+                    "code": VENDOR_PROFILE_INCOMPLETE_CODE,
+                    "message": "Save your vendor profile before uploading verification documents.",
+                    "detail": "No vendor profile found.",
+                    "redirect_to": VENDOR_PROFILE_SETUP_REDIRECT,
+                    "field_errors": {},
+                    "onboarding": build_vendor_onboarding_contract(None),
+                },
                 status=status.HTTP_404_NOT_FOUND
             )
 
@@ -716,6 +834,7 @@ class VendorVerificationDocumentView(APIView):
                 "document_id": str(document.id),
                 "processing_deferred": processing_deferred,
                 "message": DOCUMENT_RECEIVED_MESSAGE,
+                "onboarding": build_vendor_onboarding_contract(profile),
             },
             status=status.HTTP_202_ACCEPTED,
         )

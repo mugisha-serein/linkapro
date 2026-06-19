@@ -35,13 +35,23 @@ class TestVendorProfileViews:
         url = reverse("vendor-profile")
         response = self.client.get(url)
         assert response.status_code == 404
+        assert response.data["onboarding"]["profile_status"] == "missing"
+        assert response.data["redirect_to"] == "/vendor/profile/setup"
+
+    def test_get_profile_status_returns_missing_contract_when_none(self):
+        response = self.client.get(reverse("vendor-profile-status"))
+
+        assert response.status_code == 200
+        assert response.data["profile"] is None
+        assert response.data["onboarding"]["profile_status"] == "missing"
+        assert response.data["onboarding"]["redirect_to"] == "/vendor/profile/setup"
 
     def test_create_profile_success(self):
         url = reverse("vendor-profile")
         data = {
             "business_name": "My Photo Studio",
             "category": "photography",
-            "description": "Best photos in town",
+            "description": "Best photography services in town",
             "service_area": "Kigali, Rwanda",
             "contact_email": "studio@example.com",
             "contact_phone": "+250788123456",
@@ -50,13 +60,15 @@ class TestVendorProfileViews:
         response = self.client.post(url, data, format="json")
         assert response.status_code == 201
         assert response.data["business_name"] == "My Photo Studio"
+        assert response.data["onboarding"]["profile_status"] == "draft"
+        assert response.data["onboarding"]["can_access_dashboard"] is False
         assert DjangoProfile.objects.count() == 1
 
     def test_create_profile_missing_required_field_returns_400(self):
         data = {
             "business_name": "",
             "category": "photography",
-            "description": "Best photos in town",
+            "description": "Best photography services in town",
             "service_area": "Kigali, Rwanda",
             "contact_email": "studio@example.com",
             "contact_phone": "+250788123456",
@@ -65,7 +77,7 @@ class TestVendorProfileViews:
         response = self.client.post(reverse("vendor-profile"), data, format="json")
 
         assert response.status_code == 400
-        assert "business_name" in response.data
+        assert "business_name" in response.data["field_errors"]
 
     def test_create_profile_other_category_requires_custom_category(self):
         data = {
@@ -81,7 +93,9 @@ class TestVendorProfileViews:
         response = self.client.post(reverse("vendor-profile"), data, format="json")
 
         assert response.status_code == 400
-        assert "custom_category" in response.data
+        assert response.data["field_errors"]["custom_category"] == [
+            "Tell us what service you provide when choosing Other."
+        ]
 
     def test_create_profile_other_category_with_custom_category_succeeds(self):
         data = {
@@ -136,6 +150,15 @@ class TestVendorProfileViews:
             contact_phone="123",
             status="draft",
         )
+        VerificationDocument.objects.create(
+            vendor=profile,
+            document_type=VerificationDocument.DocumentType.TRADE_LICENSE,
+            original_filename="license.pdf",
+            mime_type="application/pdf",
+            file_size=100,
+            upload_status=VerificationDocument.UploadStatus.QUEUED,
+            verification_status=VerificationDocument.VerificationStatus.PENDING_REVIEW,
+        )
         url = reverse("vendor-submit")
         response = self.client.post(url)
         assert response.status_code == 200
@@ -144,6 +167,26 @@ class TestVendorProfileViews:
         assert profile.submitted_at is not None
         assert response.data["status"] == "pending_review"
         assert response.data["business_name"] == "Test"
+        assert response.data["onboarding"]["can_access_dashboard"] is True
+        assert response.data["onboarding"]["marketplace_visible"] is False
+
+    def test_submit_requires_verification_document(self):
+        DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="draft",
+        )
+
+        response = self.client.post(reverse("vendor-submit"))
+
+        assert response.status_code == 400
+        assert response.data["code"] == "vendor_verification_document_required"
+        assert response.data["onboarding"]["can_submit_for_review"] is True
 
     def test_incomplete_submit_remains_draft(self):
         profile = DjangoProfile.objects.create(
@@ -204,7 +247,7 @@ class TestVendorProfileViews:
 
         assert response.status_code == 403
         assert response.data["code"] == "vendor_profile_incomplete"
-        assert response.data["redirect_to"] == "/vendor/profile"
+        assert response.data["redirect_to"] == "/vendor/profile/setup"
 
     def test_pending_vendor_can_access_dashboard_summary(self):
         DjangoProfile.objects.create(
@@ -251,6 +294,15 @@ class TestVendorProfileViews:
             contact_phone="123",
             status="rejected",
             rejection_reason="Needs details",
+        )
+        VerificationDocument.objects.create(
+            vendor=profile,
+            document_type=VerificationDocument.DocumentType.TRADE_LICENSE,
+            original_filename="license.pdf",
+            mime_type="application/pdf",
+            file_size=100,
+            upload_status=VerificationDocument.UploadStatus.PROCESSING_DEFERRED,
+            verification_status=VerificationDocument.VerificationStatus.PENDING_REVIEW,
         )
 
         response = self.client.post(reverse("vendor-submit"))
@@ -564,6 +616,7 @@ class TestVerificationDocumentViews:
         assert response.data["document_id"]
         assert response.data["processing_deferred"] is False
         assert response.data["message"] == "Document received. Verification will continue automatically."
+        assert response.data["onboarding"]["profile_status"] == "draft"
         stored = VerificationDocument.objects.get()
         assert stored.upload_status == VerificationDocument.UploadStatus.QUEUED
         assert stored.verification_status == VerificationDocument.VerificationStatus.PENDING_REVIEW
@@ -592,6 +645,7 @@ class TestVerificationDocumentViews:
         assert response.data["status"] == "queued"
         assert response.data["processing_deferred"] is True
         assert response.data["message"] == "Document received. Verification will continue automatically."
+        assert response.data["onboarding"]["can_access_dashboard"] is False
         stored = VerificationDocument.objects.get()
         assert stored.upload_status == VerificationDocument.UploadStatus.PROCESSING_DEFERRED
         assert stored.temp_upload_path
