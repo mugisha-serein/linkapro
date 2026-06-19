@@ -25,6 +25,26 @@ if not CORS_ALLOWED_ORIGINS:
 
 CSRF_TRUSTED_ORIGINS = _csv_env("CSRF_TRUSTED_ORIGINS") or CORS_ALLOWED_ORIGINS
 
+SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "").strip()
+if not SENDGRID_API_KEY:
+    raise ImproperlyConfigured("SENDGRID_API_KEY must be set for production password reset emails.")
+
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "").strip()
+if not DEFAULT_FROM_EMAIL:
+    raise ImproperlyConfigured("DEFAULT_FROM_EMAIL must be set for production emails.")
+
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "").strip()
+if not FRONTEND_URL:
+    raise ImproperlyConfigured("FRONTEND_URL must be set for password reset links.")
+
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.sendgrid.net")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() == "true"
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "apikey")
+EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
+SERVER_EMAIL = os.environ.get("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+
 # Celery settings
 CELERY_BROKER_URL = os.environ.get('REDIS_URL')
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL

@@ -465,6 +465,35 @@ celery -A tasks.celery beat --loglevel=info
 ```
 
 ---
+### Production Email / Password Reset
+
+Password reset emails use Django's SMTP email backend with SendGrid SMTP in production. Production settings fail fast when password reset email requirements are missing, while the forgot-password API still returns a generic `202 Accepted` response to avoid account enumeration.
+
+Required Render environment variables for Django web, Celery Worker, and Celery Beat:
+
+```env
+SENDGRID_API_KEY=<sendgrid-api-key>
+DEFAULT_FROM_EMAIL=no-reply@linkapro.rw
+FRONTEND_URL=https://www.linkapro.rw
+```
+
+Production settings provide these SendGrid SMTP defaults:
+
+```env
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.sendgrid.net
+EMAIL_PORT=587
+EMAIL_USE_TLS=true
+EMAIL_HOST_USER=apikey
+```
+
+To verify email configuration from a Render shell or one-off job:
+
+```bash
+python manage.py send_test_email --to ops@example.com
+```
+
+---
 ### 🌐 Service Access Points
 
 

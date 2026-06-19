@@ -1,5 +1,8 @@
 import uuid
+import logging
 import pytest
+from django.core import mail
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -10,6 +13,8 @@ from infrastructure.adapters.password_hasher import DjangoPasswordHasher
 from django_app.identity.models import User as DjangoUser
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+GENERIC_FORGOT_PASSWORD_DETAIL = "If an account exists for that email, password reset instructions have been sent."
 
 
 class TestIdentityViews:
@@ -236,3 +241,121 @@ class TestIdentityViews:
         assert "refresh_token" in response.cookies
         assert response.cookies["refresh_token"].value == ""
         assert response.cookies["refresh_token"]["max-age"] == 0
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_forgot_password_existing_active_user_sends_email(self):
+        mail.outbox = []
+        DjangoUser.objects.create_user(
+            email="reset@example.com",
+            password="StrongPass1",
+            first_name="Reset",
+            last_name="User",
+            role="planner",
+        )
+
+        response = self.client.post(reverse("forgot-password"), {"email": "reset@example.com"}, format="json")
+
+        assert response.status_code == 202
+        assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
+        assert len(mail.outbox) == 1
+        message = mail.outbox[0]
+        assert message.subject == "Reset your LinkaPro password"
+        assert message.from_email == "no-reply@example.test"
+        assert message.to == ["reset@example.com"]
+        assert "LinkaPro password reset request" in message.body
+        assert "https://app.example.test/auth/reset-password?token=" in message.body
+        assert "This link expires in 1 hour." in message.body
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_forgot_password_nonexistent_email_returns_generic_without_email(self):
+        mail.outbox = []
+
+        response = self.client.post(reverse("forgot-password"), {"email": "missing@example.com"}, format="json")
+
+        assert response.status_code == 202
+        assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
+        assert mail.outbox == []
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_forgot_password_inactive_user_returns_generic_without_email(self):
+        mail.outbox = []
+        DjangoUser.objects.create_user(
+            email="inactive@example.com",
+            password="StrongPass1",
+            first_name="Inactive",
+            last_name="User",
+            role="planner",
+            is_active=False,
+        )
+
+        response = self.client.post(reverse("forgot-password"), {"email": "inactive@example.com"}, format="json")
+
+        assert response.status_code == 202
+        assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
+        assert mail.outbox == []
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_forgot_password_does_not_log_reset_token(self, caplog):
+        mail.outbox = []
+        DjangoUser.objects.create_user(
+            email="nolog@example.com",
+            password="StrongPass1",
+            first_name="No",
+            last_name="Log",
+            role="planner",
+        )
+        caplog.set_level(logging.INFO, logger="django_app.identity.password_reset_email")
+
+        response = self.client.post(reverse("forgot-password"), {"email": "nolog@example.com"}, format="json")
+
+        assert response.status_code == 202
+        reset_token = mail.outbox[0].body.split("token=", 1)[1].splitlines()[0]
+        assert reset_token
+        assert reset_token not in caplog.text
+        assert "/auth/reset-password?token=" not in caplog.text
+        assert "nolog@example.com" not in caplog.text
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_forgot_password_provider_failure_still_returns_generic(self, caplog, monkeypatch):
+        mail.outbox = []
+        DjangoUser.objects.create_user(
+            email="fail@example.com",
+            password="StrongPass1",
+            first_name="Fail",
+            last_name="User",
+            role="planner",
+        )
+
+        def fail_send_mail(*args, **kwargs):
+            raise RuntimeError("provider unavailable")
+
+        monkeypatch.setattr("django_app.identity.password_reset_email.send_mail", fail_send_mail)
+        caplog.set_level(logging.ERROR, logger="django_app.identity.password_reset_email")
+
+        response = self.client.post(reverse("forgot-password"), {"email": "fail@example.com"}, format="json")
+
+        assert response.status_code == 202
+        assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
+        assert mail.outbox == []
+        assert "forgot_password_email_failed" in caplog.text
+        assert "/auth/reset-password?token=" not in caplog.text

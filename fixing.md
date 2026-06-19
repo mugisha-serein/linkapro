@@ -1,196 +1,198 @@
-Fix LinkaPro vendor portfolio staged media 404 by preventing backend from exposing local /media upload paths as public preview URLs.
+Fix LinkaPro production email sending configuration for forgot password and reset-password emails.
 
-Current error:
-GET https://www.linkapro.rw/media/vendor_portfolio_uploads/.../domain.PNG 404 Not Found
+Problem:
+`django_app/settings/base.py` defines `SENDGRID_API_KEY`, but there is no confirmed `EMAIL_BACKEND`, `DEFAULT_FROM_EMAIL`, SendGrid backend wiring, SMTP host config, or production email validation. `ForgotPasswordView` uses Django `send_mail()`, so in production password reset emails may silently fail or use Django’s default local SMTP backend.
 
-Root cause:
-Backend stores/returns local_preview_url using default_storage.url(temp_path), which becomes a relative /media/... URL. Frontend renders that URL on the frontend domain [www.linkapro.rw](http://www.linkapro.rw), but the frontend does not serve Django media files. Also staged upload files are private/temporary and should not be exposed as public URLs.
+Current evidence:
 
-Goal:
-Fix portfolio preview and staged media handling permanently at backend level. Backend must not return unsafe or broken local /media URLs for staged portfolio media. Frontend must show immediate local object preview before upload completes, but after reload it should show a processing placeholder until Cloudinary URL exists.
+* `ForgotPasswordView` calls `send_mail()` directly.
+* `base.py` has `SENDGRID_API_KEY`, but no complete Django email backend config was found.
+* In production, `send_mail()` catches exceptions, logs failure, and still returns 202 for security.
+* User-facing response should stay generic, but the backend must actually send email and fail loudly in deployment/config checks when email is not configured.
 
-Repositories:
+Repository:
 
 * Backend: linkapro
-* Frontend: linkapro-frontend
+
+Goal:
+Configure production email sending properly and make forgot-password email delivery production-safe, testable, and observable.
 
 Backend tasks:
 
-1. Inspect current portfolio upload flow:
+1. Inspect current email-related code/settings.
+   Check:
 
-   * django_app/vendors/views.py
-   * django_app/vendors/models.py
-   * django_app/vendors/serializers.py
-   * tasks/image_tasks.py
-   * settings/media/static storage configuration
-   * production settings
-   * frontend portfolio rendering
+   * django_app/settings/base.py
+   * django_app/settings/production.py
+   * django_app/identity/views.py
+   * requirements files
+   * existing SendGrid package usage
+   * Render env documentation
+   * tests for forgot password/reset password
 
-2. Remove unsafe local_preview_url exposure.
-   Current code likely does:
-   local_preview_url = default_storage.url(temp_path)
-   and saves that into PortfolioImage.local_preview_url.
+2. Add production email backend configuration.
+   Choose one stable implementation.
 
-   Change behavior:
+   Preferred simple option:
+   Use Django SMTP backend with SendGrid SMTP:
 
-   * Do not return relative /media/... URLs for staged/private files.
-   * Do not expose temp_upload_path publicly.
-   * For staged/queued/processing media, API should return:
-     local_preview_url: null
-     unless there is a secure, backend-owned, authenticated preview endpoint.
-   * Keep temp_upload_path/staged_storage_key internal only.
+   * EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+   * EMAIL_HOST = "smtp.sendgrid.net"
+   * EMAIL_PORT = 587
+   * EMAIL_USE_TLS = True
+   * EMAIL_HOST_USER = "apikey"
+   * EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
+   * DEFAULT_FROM_EMAIL from env
+   * SERVER_EMAIL from env or DEFAULT_FROM_EMAIL
 
-3. Backend response contract.
-   Portfolio item response should expose:
+   Required env vars:
 
-   * cloudinary_secure_url only when upload_status == uploaded and URL exists
-   * secure_url only for legacy already-uploaded records
-   * local_preview_url null for private staged files
-   * upload_status
-   * quality_status
-   * visibility_status
-   * failure_reason/rejection_reason if any
+   * SENDGRID_API_KEY
+   * DEFAULT_FROM_EMAIL
+   * FRONTEND_URL
 
-   Never return:
+3. Add production config validation.
+   In production settings, fail fast if required email env vars are missing:
 
-   * /media/vendor_portfolio_uploads/...
-   * relative staged file URLs
-   * temp_upload_path
-   * internal storage keys
+   * SENDGRID_API_KEY
+   * DEFAULT_FROM_EMAIL
+   * FRONTEND_URL
 
-4. Add a safe computed display_url rule if useful.
-   Backend may return:
-   display_url = cloudinary_secure_url or secure_url or null
+   Use `ImproperlyConfigured` with clear messages:
 
-   Do not use staged local file paths as display_url.
+   * "SENDGRID_API_KEY must be set for production password reset emails."
+   * "DEFAULT_FROM_EMAIL must be set for production emails."
+   * "FRONTEND_URL must be set for password reset links."
 
-5. Optional secure preview endpoint.
-   Only implement if really needed:
-   GET /api/django/vendors/portfolio/{id}/preview/
+   Do not require SendGrid in local development/test.
 
-   * authenticated vendor only
-   * checks ownership
-   * streams staged file from storage
-   * never public/marketplace
-   * uses Django backend domain, not frontend domain
+4. Keep development/test safe.
+   In development:
 
-   If not implemented, frontend should simply show processing placeholder.
+   * allow console email backend or locmem backend
+   * do not require SendGrid API key
+   * print reset email/link in console if appropriate
 
-6. Make staged storage production-safe.
-   If files are staged before Cloudinary upload:
+   In tests:
 
-   * Do not rely on Render ephemeral disk unless a persistent disk or durable object storage exists.
-   * Prefer durable private storage for staging, such as S3/R2/private storage.
-   * If using Render disk, document requirement and ensure Celery worker can access same storage.
-   * If Celery worker cannot access the staged file, mark upload failed with human-readable reason and do not expose broken URL.
+   * use locmem email backend
+   * assert email sent without hitting external network
 
-7. Celery task behavior.
+5. Refactor forgot-password email sending out of the view if appropriate.
+   Create a small service, for example:
 
-   * Celery should read temp_upload_path/staged_storage_key internally.
-   * Upload to Cloudinary.
-   * On success:
-     set cloudinary_public_id
-     set cloudinary_secure_url
-     set upload_status=uploaded
-     clear local_preview_url if it exists
-     cleanup staged file
-   * On failure:
-     set upload_status=failed
-     set safe failure_reason
-     do not return staged local file URL
+   * application/identity/password_reset_service.py
+   * infrastructure/adapters/email_service.py
+   * django_app/identity/email.py
 
-8. Data cleanup migration/command.
-   Add a migration or management command to clean existing broken preview URLs:
+   The service should:
 
-   * For PortfolioImage rows where local_preview_url starts with "/media/vendor_portfolio_uploads/" or contains "vendor_portfolio_uploads":
-     set local_preview_url = null
-   * Do not delete rows.
-   * Do not delete Cloudinary URLs.
-   * Do not touch uploaded media with cloudinary_secure_url.
+   * generate reset token
+   * build reset URL using FRONTEND_URL
+   * send email with subject/body
+   * log structured result
+   * keep user-facing response generic
 
-9. Frontend tasks:
-   Inspect:
+   Do not expose whether email exists to the user.
 
-   * src/app/(vendor)/vendor/portfolio/page.tsx
-   * src/hooks/useVendor.ts
-   * src/services/vendorService.ts
-   * src/types/api.ts
+6. Improve email content.
+   Send both plain text and optional HTML if project supports it.
 
-   Fix frontend rendering:
+   Plain text should include:
 
-   * Use cloudinary_secure_url or secure_url for uploaded media.
-   * Do not use backend local_preview_url unless it is a valid absolute authenticated preview endpoint.
-   * If no URL and upload_status is staged/queued/processing/processing_deferred:
-     show a processing placeholder card, not broken img/video.
-   * During the same upload session, use URL.createObjectURL(file) as temporary client-only preview before upload response.
-   * Do not persist frontend object URL in backend.
-   * After response.item is inserted into React Query cache, if possible attach temporary clientPreviewUrl only in frontend cache for that session.
-   * On page reload, if Cloudinary URL is not ready, show processing placeholder.
+   * LinkaPro password reset request
+   * reset link
+   * expiration time, currently 1 hour
+   * ignore message if user did not request it
 
-10. Frontend broken image safety.
+   Example subject:
+   "Reset your LinkaPro password"
 
-* Add onError fallback for img/video preview.
-* If media fails to load, hide broken media element and show status placeholder:
-  "Processing media"
-  "Waiting for review"
-  or failure reason from backend.
-* Do not repeatedly request /media/vendor_portfolio_uploads/... from frontend domain.
+7. Preserve security behavior.
+   Forgot-password endpoint must always return 202 with generic message:
+   {
+   "detail": "If an account exists for that email, password reset instructions have been sent."
+   }
 
-11. Public/marketplace rule.
+   Do not reveal whether the email exists.
+   Do not return 500 to the user just because email provider fails.
+   But production logs must clearly show provider/config failure.
 
-* Public marketplace/vendor pages must never render staged/private local preview URLs.
-* They should only show approved uploaded Cloudinary URLs returned by backend.
-* If vendor or media is not approved/public-eligible, backend should not return it publicly.
+8. Add observability.
+   Log structured information:
 
-12. Tests.
-    Backend tests:
+   * forgot_password_email_queued/sent/failed
+   * target user id if found
+   * email domain only or safely masked email
+   * provider error safely
+   * do not log full reset token
+   * do not log full reset URL
 
-* portfolio upload response for staged/queued item does not include /media/ local_preview_url
-* response does not expose temp_upload_path
-* uploaded item returns cloudinary_secure_url
-* existing broken /media local_preview_url rows are cleaned
-* public endpoint excludes staged/private media
-* Celery success sets Cloudinary URL and clears local preview
-* Celery failure does not expose staged URL
+9. Add management command for email smoke test.
+   Add:
+   python manage.py send_test_email --to [someone@example.com](mailto:someone@example.com)
 
-Frontend/manual tests:
+   It should:
 
-* upload shows immediate local preview before submit
-* after upload response, item appears without page refresh
-* staged item with no Cloudinary URL shows processing placeholder, not broken image
-* no browser request goes to https://www.linkapro.rw/media/vendor_portfolio_uploads/...
-* uploaded item displays Cloudinary URL
-* marketplace only displays approved Cloudinary media
+   * send a simple test email using configured backend
+   * print success/failure clearly
+   * never expose API key
+   * useful for Render shell/job verification
 
-13. Validation commands.
-    Backend:
-    python manage.py makemigrations
+10. Tests.
+    Add/update tests:
+
+* forgot-password existing active user sends one email
+* forgot-password nonexistent email returns same 202 and sends no email
+* forgot-password inactive user returns same 202 and sends no email
+* email contains /auth/reset-password?token=
+* email uses FRONTEND_URL
+* reset token is not logged
+* production settings raise ImproperlyConfigured if SENDGRID_API_KEY missing
+* production settings raise ImproperlyConfigured if DEFAULT_FROM_EMAIL missing
+* local/test settings do not require SendGrid
+
+11. Documentation / Render env.
+    Update README or deployment docs with required production env:
+    SENDGRID_API_KEY=<sendgrid-api-key>
+    DEFAULT_FROM_EMAIL=[no-reply@linkapro.rw](mailto:no-reply@linkapro.rw)
+    FRONTEND_URL=https://www.linkapro.rw
+
+Also include:
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.sendgrid.net
+EMAIL_PORT=587
+EMAIL_USE_TLS=true
+EMAIL_HOST_USER=apikey
+
+If these are hardcoded from settings, document only the envs that must be set.
+
+12. Validation commands.
+    Run:
     python manage.py check
-    pytest tests/django_app/vendors -q
+    python manage.py test django_app.identity
+    or:
+    pytest tests/django_app/identity -q
 
-Frontend:
-npm run lint for touched files
-npm run build
+Also run the smoke command locally with console/locmem backend if possible.
 
 Rules:
 
-* Backend is source of truth.
-* Never expose staged private local paths as public URLs.
-* Do not store raw media bytes in DB.
-* Do not wait for Cloudinary before returning successful staged upload.
-* Do not show broken /media URLs.
-* Marketplace/public only shows approved uploaded Cloudinary media.
-* Vendor dashboard may show processing placeholder for staged media.
-* No mocked media URLs.
-* Keep light UI only.
+* Do not reveal account existence.
+* Do not expose reset token in logs.
+* Do not fail user-facing forgot-password request with 500 for email provider outage.
+* Do fail production startup/config check if required email env vars are missing.
+* Keep reset URL using FRONTEND_URL.
+* Keep reset endpoint contract unchanged unless tests require standardization.
+* No frontend changes yet unless route contract is broken.
 
 Return:
 
-* Exact root cause of /media 404
+* Root cause of current email weakness
 * Files changed
-* Migration/cleanup command name
-* New API response examples
-* Frontend rendering fallback behavior
-* Validation results
-* Suggested backend branch/commit
-* Suggested frontend branch/commit
+* New env vars required
+* Email backend selected
+* Forgot-password response examples
+* Test results
+* Render setup instructions
+* Suggested branch and commit message
