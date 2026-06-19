@@ -1,9 +1,14 @@
+from datetime import timedelta
+import logging
+
+from django.conf import settings
+from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django_app.common.permissions import IsAdmin
-from django_app.identity.models import User
+from django_app.identity.models import PasswordResetEmailDelivery, User
 from django_app.events.models import Event
 from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile
 from infrastructure.adapters.marketplace_projection import (
@@ -16,6 +21,7 @@ from .services import get_command_handlers, get_query_handlers
 from application.governance.commands import FlagContentCommand
 
 VENDOR_ADMIN_STATUSES = {choice[0] for choice in VendorProfile.Status.choices}
+logger = logging.getLogger(__name__)
 
 
 class FlagContentCreateView(APIView):
@@ -77,6 +83,68 @@ class AdminMetricsView(APIView):
                 "pending_vendor_approvals": VendorProfile.objects.filter(
                     status=VendorProfile.Status.PENDING_REVIEW
                 ).count(),
+            }
+        )
+
+
+class AdminEmailHealthView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        recent_since = timezone.now() - timedelta(hours=24)
+        failures = PasswordResetEmailDelivery.objects.filter(
+            status=PasswordResetEmailDelivery.Status.FAILED,
+            updated_at__gte=recent_since,
+        ).count()
+        deferred = PasswordResetEmailDelivery.objects.filter(
+            status=PasswordResetEmailDelivery.Status.DEFERRED,
+            updated_at__gte=recent_since,
+        ).count()
+        last_success = (
+            PasswordResetEmailDelivery.objects.filter(status=PasswordResetEmailDelivery.Status.SENT)
+            .order_by("-sent_at")
+            .first()
+        )
+        last_failure = (
+            PasswordResetEmailDelivery.objects.filter(
+                status__in=[
+                    PasswordResetEmailDelivery.Status.FAILED,
+                    PasswordResetEmailDelivery.Status.DEFERRED,
+                ]
+            )
+            .order_by("-failed_at")
+            .first()
+        )
+        email_backend_configured = bool((getattr(settings, "EMAIL_BACKEND", "") or "").strip())
+        default_from_email_configured = bool((getattr(settings, "DEFAULT_FROM_EMAIL", "") or "").strip())
+        frontend_url_configured = bool((getattr(settings, "FRONTEND_URL", "") or "").strip())
+
+        status_value = "healthy"
+        if not all([email_backend_configured, default_from_email_configured, frontend_url_configured]):
+            status_value = "unhealthy"
+        elif failures or deferred:
+            status_value = "degraded"
+
+        if status_value == "unhealthy":
+            logger.error(
+                "email_health_unhealthy",
+                extra={
+                    "email_backend_configured": email_backend_configured,
+                    "default_from_email_configured": default_from_email_configured,
+                    "frontend_url_configured": frontend_url_configured,
+                },
+            )
+
+        return Response(
+            {
+                "status": status_value,
+                "email_backend_configured": email_backend_configured,
+                "default_from_email_configured": default_from_email_configured,
+                "frontend_url_configured": frontend_url_configured,
+                "recent_password_reset_email_failures": failures,
+                "recent_password_reset_email_deferred": deferred,
+                "last_success_at": last_success.sent_at.isoformat() if last_success and last_success.sent_at else None,
+                "last_failure_at": last_failure.failed_at.isoformat() if last_failure and last_failure.failed_at else None,
             }
         )
 

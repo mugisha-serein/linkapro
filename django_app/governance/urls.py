@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     FlagContentCreateView,
+    AdminEmailHealthView,
     AdminMetricsView,
     AdminUserListView,
     AdminUserBanView,
@@ -26,6 +27,7 @@ from .views import (
 urlpatterns = [
     path("flags/", FlagContentCreateView.as_view(), name="flag-content"),
     path("metrics/", AdminMetricsView.as_view(), name="admin-metrics"),
+    path("admin/health/email/", AdminEmailHealthView.as_view(), name="admin-email-health"),
     path("admin/users/", AdminUserListView.as_view(), name="admin-users"),
     path("admin/users/<uuid:user_id>/ban/", AdminUserBanView.as_view(), name="admin-user-ban"),
     path("admin/users/<uuid:user_id>/reinstate/", AdminUserReinstateView.as_view(), name="admin-user-reinstate"),

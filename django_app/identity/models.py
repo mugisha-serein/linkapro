@@ -96,3 +96,40 @@ class OAuthToken(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.provider}"
+
+
+class PasswordResetEmailDelivery(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+        DEFERRED = "deferred", "Deferred"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="password_reset_email_deliveries",
+    )
+    email_hash = models.CharField(max_length=64, db_index=True)
+    email_domain = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    failure_reason = models.CharField(max_length=255, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    provider = models.CharField(max_length=100, default="django_email_backend")
+    queued_at = models.DateTimeField(default=timezone.now, db_index=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["user", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.email_domain} password reset email {self.status}"

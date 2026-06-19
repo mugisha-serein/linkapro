@@ -1,15 +1,81 @@
+import logging
 import uuid
 import pytest
+from django.test import override_settings
+from django.utils import timezone
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from django_app.identity.models import User
+from django_app.identity.models import PasswordResetEmailDelivery, User
 from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile
 
 pytestmark = pytest.mark.django_db
 
 
 class TestVendorApprovalAdmin:
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_admin_email_health_reports_reset_delivery_status(self):
+        admin_user = User.objects.create_superuser("email-health-admin@t.com", "pass")
+        user = User.objects.create_user(email="reset-health@t.com", password="p", role="planner")
+        PasswordResetEmailDelivery.objects.create(
+            user=user,
+            email_hash="a" * 64,
+            email_domain="t.com",
+            status=PasswordResetEmailDelivery.Status.SENT,
+            sent_at=timezone.now(),
+        )
+        PasswordResetEmailDelivery.objects.create(
+            user=user,
+            email_hash="b" * 64,
+            email_domain="t.com",
+            status=PasswordResetEmailDelivery.Status.FAILED,
+            failure_reason="RuntimeError",
+            failed_at=timezone.now(),
+        )
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+
+        response = api_client.get(reverse("admin-email-health"))
+
+        assert response.status_code == 200
+        assert response.data["status"] == "degraded"
+        assert response.data["email_backend_configured"] is True
+        assert response.data["default_from_email_configured"] is True
+        assert response.data["frontend_url_configured"] is True
+        assert response.data["recent_password_reset_email_failures"] == 1
+        assert response.data["recent_password_reset_email_deferred"] == 0
+        assert response.data["last_success_at"]
+        assert response.data["last_failure_at"]
+
+    def test_admin_email_health_requires_admin_role(self):
+        vendor_user = User.objects.create_user("email-health-vendor@t.com", "pass", role="vendor")
+        api_client = APIClient()
+        api_client.force_authenticate(user=vendor_user)
+
+        response = api_client.get(reverse("admin-email-health"))
+
+        assert response.status_code == 403
+
+    @override_settings(EMAIL_BACKEND="", DEFAULT_FROM_EMAIL="", FRONTEND_URL="")
+    def test_admin_email_health_reports_unhealthy_config(self, caplog):
+        admin_user = User.objects.create_superuser("email-health-unhealthy@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        caplog.set_level(logging.ERROR, logger="django_app.governance.views")
+
+        response = api_client.get(reverse("admin-email-health"))
+
+        assert response.status_code == 200
+        assert response.data["status"] == "unhealthy"
+        assert response.data["email_backend_configured"] is False
+        assert response.data["default_from_email_configured"] is False
+        assert response.data["frontend_url_configured"] is False
+        assert "email_health_unhealthy" in caplog.text
+
     def test_approve_vendor_action(self, admin_client, monkeypatch):
         monkeypatch.setattr(
             "infrastructure.repos.django_vendor_profile_repository.sync_or_delete_vendor_projection",
