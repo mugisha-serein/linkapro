@@ -42,6 +42,17 @@ def _import_settings(settings_module: str, env: dict[str, str]):
     )
 
 
+def _run_settings_snippet(snippet: str, env: dict[str, str]):
+    return subprocess.run(
+        [sys.executable, "-c", snippet],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def test_production_settings_raise_if_sendgrid_api_key_missing():
     result = _import_settings(
         "django_app.settings.production",
@@ -74,6 +85,45 @@ def test_production_settings_raise_if_frontend_url_missing():
 
 def test_production_settings_pass_with_required_email_env():
     result = _import_settings("django_app.settings.production", _production_env())
+
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
+def test_rediss_redis_url_sets_celery_ssl_options_to_cert_required():
+    result = _run_settings_snippet(
+        "\n".join(
+            [
+                "import ssl",
+                "from django_app.settings import production as settings",
+                "assert settings.CELERY_BROKER_URL.startswith('rediss://')",
+                "assert settings.CELERY_BROKER_USE_SSL['ssl_cert_reqs'] is ssl.CERT_REQUIRED",
+                "assert settings.CELERY_REDIS_BACKEND_USE_SSL['ssl_cert_reqs'] is ssl.CERT_REQUIRED",
+                "assert settings.CACHES['default']['OPTIONS']['ssl_cert_reqs'] is ssl.CERT_REQUIRED",
+                "print('ok')",
+            ]
+        ),
+        _production_env(REDIS_URL="rediss://default:secret@example.redis:6379/0"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
+def test_redis_url_does_not_set_celery_ssl_options():
+    result = _run_settings_snippet(
+        "\n".join(
+            [
+                "from django_app.settings import production as settings",
+                "assert settings.CELERY_BROKER_URL.startswith('redis://')",
+                "assert not hasattr(settings, 'CELERY_BROKER_USE_SSL')",
+                "assert not hasattr(settings, 'CELERY_REDIS_BACKEND_USE_SSL')",
+                "assert 'OPTIONS' not in settings.CACHES['default']",
+                "print('ok')",
+            ]
+        ),
+        _production_env(REDIS_URL="redis://localhost:6379/0"),
+    )
 
     assert result.returncode == 0, result.stderr
     assert "ok" in result.stdout
