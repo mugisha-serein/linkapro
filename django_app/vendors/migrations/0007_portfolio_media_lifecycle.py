@@ -3,20 +3,6 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
-def backfill_portfolio_media(apps, schema_editor):
-    PortfolioImage = apps.get_model("vendors", "PortfolioImage")
-    PortfolioImage.objects.update(
-        media_type="image",
-        is_active=True,
-        quality_status="passed",
-        visibility_status="approved",
-        cloudinary_public_id=models.F("public_id"),
-        cloudinary_secure_url=models.F("secure_url"),
-    )
-    PortfolioImage.objects.filter(upload_status="completed").update(upload_status="uploaded")
-    PortfolioImage.objects.filter(upload_status="pending").update(upload_status="queued")
-
-
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -165,11 +151,5 @@ class Migration(migrations.Migration):
                 default="uploaded",
                 max_length=30,
             ),
-        ),
-        migrations.RunPython(backfill_portfolio_media, migrations.RunPython.noop),
-        migrations.AlterField(
-            model_name="portfolioimage",
-            name="updated_at",
-            field=models.DateTimeField(auto_now=True),
         ),
     ]
