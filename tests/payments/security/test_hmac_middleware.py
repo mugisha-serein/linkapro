@@ -38,7 +38,7 @@ class TestHmacMiddlewareUnit:
     @pytest.fixture
     def middleware(self, mock_redis_client, mock_repo):
         # Create instance, but we will patch the dependencies used in __call__
-        with patch("payments.infrastructure.middleware.Redis.from_url", return_value=mock_redis_client):
+        with patch("payments.infrastructure.middleware.get_redis_client", return_value=mock_redis_client):
             with patch("payments.infrastructure.middleware.DjangoApiKeyRepository") as RepoClass:
                 RepoClass.return_value = mock_repo
                 validator = HmacRequestValidator(lambda r: None)
@@ -135,3 +135,49 @@ class TestHmacMiddlewareUnit:
         assert result.status_code == 401
         data = json.loads(result.content)
         assert "missing" in data["error"].lower()
+
+    def test_init_does_not_create_redis_client(self, mock_repo):
+        with patch("payments.infrastructure.middleware.get_redis_client") as get_client:
+            with patch("payments.infrastructure.middleware.DjangoApiKeyRepository") as RepoClass:
+                RepoClass.return_value = mock_repo
+                HmacRequestValidator(lambda r: None)
+
+        get_client.assert_not_called()
+
+    def test_init_does_not_call_redis_from_url(self, mock_repo):
+        with patch("django_app.common.redis_config.Redis.from_url") as from_url:
+            with patch("payments.infrastructure.middleware.DjangoApiKeyRepository") as RepoClass:
+                RepoClass.return_value = mock_repo
+                HmacRequestValidator(lambda r: None)
+
+        from_url.assert_not_called()
+
+    def test_non_payment_route_passes_without_redis(self, factory, mock_repo):
+        response = object()
+        request = factory.get("/api/django/identity/profile/")
+
+        with patch("payments.infrastructure.middleware.get_redis_client") as get_client:
+            with patch("payments.infrastructure.middleware.DjangoApiKeyRepository") as RepoClass:
+                RepoClass.return_value = mock_repo
+                validator = HmacRequestValidator(lambda r: response)
+                result = validator(request)
+
+        assert result is response
+        get_client.assert_not_called()
+
+    def test_hmac_route_fails_closed_when_redis_misconfigured(self, factory, mock_repo):
+        url = "/api/django/payments/initiate/"
+        secret = "super_secret_key"
+        key_id = "pk_test123"
+        headers, body_bytes = self._sign_request("POST", url, b"{}", secret, key_id)
+        request = factory.post(url, data=body_bytes, content_type="application/json", **headers)
+
+        with patch("payments.infrastructure.middleware.get_redis_client", side_effect=ValueError("bad redis")):
+            with patch("payments.infrastructure.middleware.DjangoApiKeyRepository") as RepoClass:
+                RepoClass.return_value = mock_repo
+                validator = HmacRequestValidator(lambda r: None)
+                result = validator(request)
+
+        assert result.status_code == 503
+        data = json.loads(result.content)
+        assert data == {"error": "Payment request verification is temporarily unavailable"}

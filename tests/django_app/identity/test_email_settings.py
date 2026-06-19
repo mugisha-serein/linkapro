@@ -83,6 +83,26 @@ def test_production_settings_raise_if_frontend_url_missing():
     assert "FRONTEND_URL must be set for password reset links." in result.stderr
 
 
+def test_production_settings_raise_if_redis_url_missing():
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(REDIS_URL=None),
+    )
+
+    assert result.returncode != 0
+    assert "REDIS_URL must start with redis:// or rediss://" in result.stderr
+
+
+def test_production_settings_raise_if_redis_url_malformed():
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(REDIS_URL='"rediss://default:secret@example.redis:6379/0"'),
+    )
+
+    assert result.returncode != 0
+    assert "REDIS_URL must start with redis:// or rediss://" in result.stderr
+
+
 def test_production_settings_pass_with_required_email_env():
     result = _import_settings("django_app.settings.production", _production_env())
 
@@ -100,6 +120,28 @@ def test_rediss_redis_url_sets_celery_ssl_options_to_cert_required():
                 "assert settings.CELERY_BROKER_USE_SSL['ssl_cert_reqs'] is ssl.CERT_REQUIRED",
                 "assert settings.CELERY_REDIS_BACKEND_USE_SSL['ssl_cert_reqs'] is ssl.CERT_REQUIRED",
                 "assert settings.CACHES['default']['OPTIONS']['ssl_cert_reqs'] is ssl.CERT_REQUIRED",
+                "print('ok')",
+            ]
+        ),
+        _production_env(REDIS_URL="rediss://default:secret@example.redis:6379/0"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
+def test_rediss_redis_url_builds_redis_client_with_cert_required():
+    result = _run_settings_snippet(
+        "\n".join(
+            [
+                "import ssl",
+                "from unittest.mock import patch",
+                "from django_app.common.redis_config import get_redis_client",
+                "with patch('django_app.common.redis_config.Redis.from_url') as from_url:",
+                "    get_redis_client()",
+                "from_url.assert_called_once()",
+                "assert from_url.call_args.args[0].startswith('rediss://')",
+                "assert from_url.call_args.kwargs['ssl_cert_reqs'] is ssl.CERT_REQUIRED",
                 "print('ok')",
             ]
         ),

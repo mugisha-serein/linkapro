@@ -21,6 +21,7 @@ from django_app.payments.models import ApiKey
 from payments.domain.velocity import VelocityContext
 from payments.helpers.encryption import encrypted_field_from_json, encrypted_field_to_json
 from payments.infrastructure.crypto import decrypt_field, encrypt_field
+from django_app.common.redis_config import get_redis_client
 
 
 class DjangoPaymentRepository(IPaymentRepository):
@@ -43,7 +44,7 @@ class DjangoPaymentRepository(IPaymentRepository):
     @property
     def redis_client(self):
         if self._redis_client is None:
-            self._redis_client = redis.Redis.from_url(settings.REDIS_URL)
+            self._redis_client = get_redis_client()
         return self._redis_client
 
     def acquire_lock(self, provider_reference: str, ttl_seconds: int = 30) -> bool:

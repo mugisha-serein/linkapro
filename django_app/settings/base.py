@@ -1,12 +1,12 @@
 import os
-import ssl
 from pathlib import Path
 from datetime import timedelta
-from urllib.parse import urlparse
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 import structlog
 import dj_database_url
+
+from django_app.common.redis_config import get_redis_url, redis_ssl_options, redis_uses_tls
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -15,15 +15,6 @@ def _csv_env(name: str, default: str = "") -> list[str]:
     raw_value = os.environ.get(name, default)
     return [item.strip() for item in raw_value.split(",") if item.strip()]
 
-
-def _redis_uses_tls(url: str | None) -> bool:
-    return urlparse(url or "").scheme == "rediss"
-
-
-def _redis_ssl_options(url: str | None) -> dict[str, ssl.VerifyMode]:
-    if not _redis_uses_tls(url):
-        return {}
-    return {"ssl_cert_reqs": ssl.CERT_REQUIRED}
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "False").lower() == "true"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
@@ -178,12 +169,12 @@ PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
 EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
 
 # Celery
-REDIS_URL = os.environ.get("REDIS_URL")
+REDIS_URL = get_redis_url()
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
-if _redis_uses_tls(REDIS_URL):
-    CELERY_BROKER_USE_SSL = _redis_ssl_options(REDIS_URL)
-    CELERY_REDIS_BACKEND_USE_SSL = _redis_ssl_options(REDIS_URL)
+if redis_uses_tls(REDIS_URL):
+    CELERY_BROKER_USE_SSL = redis_ssl_options(REDIS_URL)
+    CELERY_REDIS_BACKEND_USE_SSL = redis_ssl_options(REDIS_URL)
 
 CELERY_BEAT_SCHEDULE = {
     "expire-stale-payments": {

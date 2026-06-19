@@ -1,11 +1,10 @@
-import redis
-from django.conf import settings
+from django_app.common.redis_config import get_redis_client
 from payments.application.ports import ITokenBlacklist
 
 
 class RedisTokenBlacklist(ITokenBlacklist):
     def __init__(self):
-        self.client = redis.Redis.from_url(settings.REDIS_URL)
+        self.client = get_redis_client()
 
     def is_blacklisted(self, jti: str) -> bool:
         return bool(self.client.exists(f"bl:{jti}"))

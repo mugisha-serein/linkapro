@@ -458,9 +458,19 @@ For Render/Upstash TLS Redis, `REDIS_URL` can use `rediss://`. The Django settin
 REDIS_URL=rediss://default:PASSWORD@HOST:PORT?ssl_cert_reqs=CERT_REQUIRED
 ```
 
+Example Upstash value:
+
+```env
+REDIS_URL=rediss://default:<PASSWORD>@relevant-eft-112987.upstash.io:6379?ssl_cert_reqs=CERT_REQUIRED
+```
+
+Set this exact format on the Django web service, Celery Worker, and Celery Beat. Do not wrap the value in quotes, add spaces, or split it across lines. Rotate the Redis credential if it has been exposed in logs or chat.
+
 Verify Celery Redis TLS settings from a Render shell:
 
 ```bash
+python manage.py check_redis
+python manage.py check_redis --ping
 python manage.py shell -c "from django.conf import settings; print(settings.CELERY_BROKER_URL); print(getattr(settings, 'CELERY_BROKER_USE_SSL', None)); print(getattr(settings, 'CELERY_REDIS_BACKEND_USE_SSL', None))"
 python -c "from tasks.celery import app; print(app.conf.broker_url); print(app.conf.broker_use_ssl); print(app.conf.redis_backend_use_ssl)"
 ```
