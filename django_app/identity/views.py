@@ -1,9 +1,7 @@
 import json
-import logging
 from urllib.parse import urlencode
 
 from django.conf import settings
-from django.core.mail import send_mail
 from django.shortcuts import redirect
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -40,11 +38,9 @@ from .services import (
 )
 from application.identity.oauth_state import build_oauth_state, parse_oauth_state, ALLOWED_OAUTH_SIGNUP_ROLES
 from .cookies import clear_auth_cookies, set_refresh_cookie
+from .password_reset_email import GENERIC_FORGOT_PASSWORD_DETAIL, request_password_reset_email
 from django_app.identity.models import User
 from infrastructure.adapters.jwt_token_service import JWTTokenService
-
-logger = logging.getLogger(__name__)
-
 
 def _frontend_url() -> str:
     if not settings.FRONTEND_URL:
@@ -361,26 +357,10 @@ class ForgotPasswordView(APIView):
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
-        user = User.objects.filter(email=email, is_active=True).first()
-
-        if user:
-            token = JWTTokenService().create_password_reset_token(str(user.id))
-            reset_url = f"{_frontend_url()}/auth/reset-password?token={token}"
-            try:
-                send_mail(
-                    subject="Reset your LinkaPro password",
-                    message=f"Use this link to reset your password: {reset_url}",
-                    from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
-                    recipient_list=[user.email],
-                    fail_silently=False,
-                )
-            except Exception:
-                if settings.DEBUG:
-                    raise
-                logger.exception("Password reset email failed to send.")
+        request_password_reset_email(email)
 
         return Response(
-            {"detail": "If an account exists for that email, password reset instructions have been sent."},
+            {"detail": GENERIC_FORGOT_PASSWORD_DETAIL},
             status=status.HTTP_202_ACCEPTED,
         )
 

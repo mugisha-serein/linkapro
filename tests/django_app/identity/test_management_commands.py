@@ -1,7 +1,9 @@
 from io import StringIO
 
 import pytest
+from django.core import mail
 from django.core.management import call_command
+from django.test import override_settings
 
 from django_app.identity.models import User
 
@@ -60,3 +62,21 @@ class TestRepairDoubleHashedPasswordsCommand:
 
         temporary_password = output.strip().split("temporary_password=")[1]
         assert user.check_password(temporary_password) is True
+
+
+class TestSendTestEmailCommand:
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+    )
+    def test_send_test_email_uses_configured_backend(self):
+        mail.outbox = []
+        stdout = StringIO()
+
+        call_command("send_test_email", "--to", "ops@example.com", stdout=stdout)
+
+        assert len(mail.outbox) == 1
+        assert mail.outbox[0].subject == "LinkaPro email configuration test"
+        assert mail.outbox[0].from_email == "no-reply@example.test"
+        assert mail.outbox[0].to == ["ops@example.com"]
+        assert "Test email sent to ops@example.com" in stdout.getvalue()
