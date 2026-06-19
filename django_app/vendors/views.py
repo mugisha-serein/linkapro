@@ -210,6 +210,20 @@ def _log_portfolio_validation_failure(request, profile, uploaded_media, message:
     )
 
 
+def _safe_portfolio_display_url(*urls: str | None) -> str | None:
+    for url in urls:
+        if not url:
+            continue
+        if _is_private_portfolio_upload_url(url):
+            continue
+        return url
+    return None
+
+
+def _is_private_portfolio_upload_url(url: str) -> bool:
+    return "vendor_portfolio_uploads" in url or url.startswith("/media/")
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class VendorProfileView(APIView):
     permission_classes = [IsAuthenticated, IsVendor]
@@ -422,7 +436,6 @@ class PortfolioImageView(APIView):
             uploaded_media,
         )
         max_order = PortfolioImageModel.objects.filter(vendor_id=profile.id).aggregate(Max("order"))["order__max"]
-        local_preview_url = default_storage.url(temp_path)
         image = PortfolioImageModel.objects.create(
             vendor_id=profile.id,
             caption=serializer.validated_data.get("caption") or None,
@@ -437,7 +450,7 @@ class PortfolioImageView(APIView):
             file_size=uploaded_media.size,
             width=dimensions.get("width"),
             height=dimensions.get("height"),
-            local_preview_url=local_preview_url,
+            local_preview_url=None,
             temp_upload_path=temp_path,
         )
 
@@ -492,8 +505,9 @@ class PortfolioImageView(APIView):
     def _serialize_image(self, dto: PortfolioImageDTO) -> dict:
         return {
             "id": str(dto.id),
-            "secure_url": dto.secure_url,
-            "local_preview_url": dto.local_preview_url,
+            "secure_url": _safe_portfolio_display_url(dto.cloudinary_secure_url, dto.secure_url),
+            "local_preview_url": None,
+            "display_url": _safe_portfolio_display_url(dto.cloudinary_secure_url, dto.secure_url),
             "media_type": dto.media_type,
             "caption": dto.caption,
             "order": dto.order,
@@ -506,7 +520,7 @@ class PortfolioImageView(APIView):
             "original_filename": dto.original_filename,
             "mime_type": dto.mime_type,
             "file_size": dto.file_size,
-            "cloudinary_secure_url": dto.cloudinary_secure_url or dto.secure_url,
+            "cloudinary_secure_url": _safe_portfolio_display_url(dto.cloudinary_secure_url),
             "width": dto.width,
             "height": dto.height,
             "duration_seconds": dto.duration_seconds,
@@ -519,8 +533,9 @@ class PortfolioImageView(APIView):
     def _serialize_model_image(self, image: PortfolioImageModel) -> dict:
         return {
             "id": str(image.id),
-            "secure_url": image.cloudinary_secure_url or image.secure_url,
-            "local_preview_url": image.local_preview_url,
+            "secure_url": _safe_portfolio_display_url(image.cloudinary_secure_url, image.secure_url),
+            "local_preview_url": None,
+            "display_url": _safe_portfolio_display_url(image.cloudinary_secure_url, image.secure_url),
             "media_type": image.media_type,
             "caption": image.caption,
             "order": image.order,
@@ -533,7 +548,7 @@ class PortfolioImageView(APIView):
             "original_filename": image.original_filename,
             "mime_type": image.mime_type,
             "file_size": image.file_size,
-            "cloudinary_secure_url": image.cloudinary_secure_url or image.secure_url,
+            "cloudinary_secure_url": _safe_portfolio_display_url(image.cloudinary_secure_url),
             "width": image.width,
             "height": image.height,
             "duration_seconds": image.duration_seconds,
