@@ -1,150 +1,221 @@
-Fix LinkaPro reset-password returning “An unexpected error occurred” by standardizing backend reset-password errors and hardening frontend error extraction.
+Fix LinkaPro forgot-password timeout by moving password reset email sending out of the request path and returning 202 immediately.
 
 Problem:
-When a user tries to reset password, the form shows “An unexpected error occurred.” This text comes from frontend `apiClient.normalizeAppError`, not from the backend directly. It appears when backend errors do not include `detail`, `error`, or `message`, or when the response is non-JSON/empty/wrong URL.
+Forgot password request is failing with frontend message:
+"An unexpected error occurred"
+
+Browser/DevTools shows:
+POST https://linkapro-django.onrender.com/api/django/identity/forgot-password/
+net::ERR_ABORTED after exactly 10 seconds.
+
+Root cause:
+Frontend Axios client has `timeout: 10000`, so it aborts the request after 10 seconds. Backend forgot-password endpoint currently calls Django `send_mail()` synchronously inside the request. If SMTP/SendGrid/Render is slow, the backend does not respond before the frontend timeout. Then frontend shows the generic normalized error.
 
 Repositories:
 
 * Backend: linkapro
 * Frontend: linkapro-frontend
 
-Current flow:
+Current backend:
 
-* Frontend page: src/app/auth/reset-password/page.tsx
-* Frontend service: src/services/authService.ts
-* Frontend client/error normalizer: src/services/apiClient.ts and src/lib/apiErrors.ts
-* Backend endpoint: POST /api/django/identity/reset-password/
-* Backend view: django_app/identity/views.py ResetPasswordView
-* Backend serializer: django_app/identity/serializers.py ResetPasswordSerializer
+* django_app/identity/views.py
+* ForgotPasswordView generates reset token and calls `send_mail()` directly.
+* It returns 202 only after email sending finishes or fails.
 
 Goal:
-Make reset-password errors clear and backend-driven. The frontend should never show “An unexpected error occurred” when backend provides useful password/token validation errors.
+Forgot-password endpoint must always respond quickly with generic 202, while email delivery happens asynchronously or deferred. User must not wait for SendGrid/SMTP. Frontend should show correct messages and not generic “unexpected” for timeout/network cases.
 
 Backend tasks:
 
-1. Inspect ResetPasswordView and ResetPasswordSerializer.
+1. Inspect current forgot-password implementation.
+   Files:
 
-2. Stop relying on DRF default serializer error shape for reset-password.
-   In ResetPasswordView:
+   * django_app/identity/views.py
+   * django_app/identity/serializers.py
+   * infrastructure/adapters/jwt_token_service.py
+   * tasks/celery.py
+   * any existing email/task modules
+   * django_app/settings/base.py
+   * django_app/settings/production.py
 
-   * instantiate serializer
-   * if not valid, return controlled 400:
-     {
-     "code": "password_reset_invalid",
-     "message": "Please fix the highlighted fields.",
-     "field_errors": serializer.errors
-     }
+2. Move email sending out of ForgotPasswordView.
+   ForgotPasswordView should:
 
-3. Invalid/expired token should return controlled 400:
+   * validate email
+   * normalize email
+   * find active user if exists
+   * if user exists, create password reset token
+   * enqueue background task to send reset email
+   * if enqueue fails, save a deferred email job or log structured failure
+   * return 202 immediately either way
+
+   The user-facing response must remain enumeration-safe:
    {
-   "code": "password_reset_token_invalid",
-   "message": "This reset link has expired or is invalid.",
-   "field_errors": {
-   "token": ["Invalid or expired reset token."]
-   }
+   "detail": "If an account exists for that email, password reset instructions have been sent."
    }
 
-4. Inactive/missing user should return the same token-invalid response.
-   Do not reveal whether user exists.
+3. Add Celery task.
+   Create task, for example:
 
-5. Successful reset remains:
-   {
-   "status": "password_reset",
-   "message": "Password updated successfully."
-   }
+   * tasks/email_tasks.py
+     or appropriate existing tasks module.
 
-6. Add structured logging for reset failures:
+   Task:
+   send_password_reset_email_task(user_id, token)
 
-   * invalid token
-   * serializer validation failed
-   * user not found/inactive
-     Do not log token value or full reset URL.
+   It must:
 
-7. Add backend tests:
+   * fetch active user by id
+   * build reset URL from FRONTEND_URL:
+     {FRONTEND_URL}/auth/reset-password?token={token}
+   * send email using configured Django email backend
+   * retry transient SMTP/SendGrid failures with backoff
+   * log success/failure safely
+   * never log full token or full reset URL
+   * be idempotent enough for retries
 
-   * missing token returns code password_reset_invalid with field_errors.token
-   * weak password returns field_errors.new_password
-   * invalid token returns password_reset_token_invalid
-   * inactive/missing user returns same token invalid response
-   * valid token resets password successfully
-   * reset response never exposes account existence
+4. Register Celery task.
+   Ensure task is imported/discovered by Celery worker.
+   Inspect:
 
-Frontend tasks:
+   * tasks/celery.py
+   * tasks/**init**.py
+   * app.autodiscover_tasks or explicit imports
 
-8. Inspect current:
+5. Deferred fallback if Celery/Redis is down.
+   If calling `.delay()` fails:
 
-   * src/app/auth/reset-password/page.tsx
-   * src/lib/apiErrors.ts
+   * Do not block request.
+   * Do not call send_mail synchronously.
+   * Return 202 anyway.
+   * Log structured error:
+     forgot_password_email_dispatch_deferred
+   * Optionally create a durable `PendingEmail`/`PasswordResetEmailJob` model or management command if the project already has a deferred job pattern.
+   * If no deferred model is added in this phase, at minimum ensure no request timeout and clear logs show dispatch failure.
+
+6. Optional durable deferred email job.
+   Recommended for production:
+   Add model:
+   PasswordResetEmailJob
+
+   * id
+   * user FK
+   * token_hash or encrypted token if storing token is unavoidable
+   * email
+   * status: pending, sent, failed
+   * attempts
+   * last_error
+   * created_at
+   * updated_at
+   * next_attempt_at
+
+   But avoid storing raw token if possible. Prefer enqueue-only if Celery is reliable.
+
+7. Email backend config must exist.
+   Ensure production settings configure email:
+
+   * EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+   * EMAIL_HOST = "smtp.sendgrid.net"
+   * EMAIL_PORT = 587
+   * EMAIL_USE_TLS = True
+   * EMAIL_HOST_USER = "apikey"
+   * EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
+   * DEFAULT_FROM_EMAIL from env
+   * SERVER_EMAIL from env or DEFAULT_FROM_EMAIL
+
+   Production must fail fast if missing:
+
+   * SENDGRID_API_KEY
+   * DEFAULT_FROM_EMAIL
+   * FRONTEND_URL
+
+8. Keep security behavior.
+
+   * Do not reveal whether email exists.
+   * Do not return 500 to user if email provider is slow/down.
+   * Do not log reset token.
+   * Do not log full reset URL.
+   * Do not include user email in unsafe logs; mask it or log domain/user id.
+
+9. Frontend tasks.
+   Inspect:
+
    * src/services/apiClient.ts
-   * src/services/errors.ts
+   * src/services/authService.ts
+   * src/app/auth/forgot-password/page.tsx
+   * src/lib/apiErrors.ts
 
-9. Harden `getApiMessage`.
-   Do not let generic AppError message “An unexpected error occurred” override useful field errors.
-   Add helper:
+   Fix user-facing timeout/network message:
 
-   * getFirstApiFieldError(error)
-   * getApiCode(error)
+   * If request times out or is aborted, show:
+     "We couldn’t send reset instructions right now. Please try again."
+   * Do not show "An unexpected error occurred."
+   * Keep success state on 202.
+   * Do not reveal whether account exists.
+   * Keep frontend timeout if desired, but backend should respond fast.
+   * Optionally allow a slightly longer timeout for auth email endpoints, but do not rely on this as the main fix.
 
-10. In reset-password page catch block, handle in this order:
+10. Add response timing test.
+    Backend test should prove ForgotPasswordView does not call SMTP synchronously:
 
-* token/reset_token field errors OR code password_reset_token_invalid -> show expired/invalid link state
-* new_password/password field errors -> set password field error
-* non_field_errors -> show form error
-* backend message/detail/error -> show form error
-* fallback -> “We couldn’t update your password right now. Please try again.”
+* mock Celery task delay
+* call forgot-password
+* assert 202 returned
+* assert task enqueued for existing user
+* assert nonexistent email returns same 202 and does not enqueue
+* assert `.delay()` failure still returns 202 quickly
 
-11. Ensure missing token is handled before submit.
-    It is already present, but verify it works.
+11. Add task tests.
 
-12. Ensure `useWatch` is used, not `watch`.
-    It is already present, but verify no React Hook Form compiler warning remains.
+* task sends email for active user
+* task skips inactive/missing user safely
+* email contains /auth/reset-password?token=
+* token not logged
 
-13. Add temporary safe console diagnostics only in development:
+12. Add frontend/manual tests.
 
-* status code
-* backend code
-* field error keys
-  Do not log reset token.
+* forgot password success 202 shows check email screen
+* backend timeout/network error shows retry message, not unexpected
+* nonexistent email still shows same success state if backend returns 202
+* no account existence leak
 
-14. Verify production API URL.
-    Confirm Vercel env:
-    NEXT_PUBLIC_API_URL=https://linkapro-django.onrender.com/api/django
+13. Validation commands.
+    Backend:
+    python manage.py check
+    pytest tests/django_app/identity -q
 
-If missing, frontend may call /api/django on the frontend domain and receive non-JSON/HTML, causing generic errors.
-
-15. Manual tests:
-
-* /auth/reset-password without token -> invalid link screen
-* invalid token -> invalid/expired link screen
-* weak backend-rejected password -> password field error
-* valid token + valid password -> success screen
-* backend 500/network error -> retry message, not “unexpected”
-* no token printed in logs
-
-Validation:
-Backend:
-python manage.py check
-pytest tests/django_app/identity -q
+Celery import check:
+python -c "from tasks.celery import app; print(app.tasks.keys())"
 
 Frontend:
 npm run lint
 npm run build
 
+Render production env:
+SENDGRID_API_KEY=<sendgrid-api-key>
+DEFAULT_FROM_EMAIL=[no-reply@linkapro.rw](mailto:no-reply@linkapro.rw)
+FRONTEND_URL=https://www.linkapro.rw
+REDIS_URL=<upstash-redis-url>
+
 Rules:
 
-* Frontend only calls backend.
-* Backend is source of truth.
+* Do not send password reset email synchronously inside request.
+* Forgot-password must return 202 fast.
+* User-facing response must remain generic.
+* Do not expose account existence.
 * Do not log reset token.
-* Do not reveal account existence.
-* Do not show generic “An unexpected error occurred” when backend gives useful errors.
-* Keep light UI only.
+* Do not show "An unexpected error occurred" for timeout/network failures.
+* Backend is source of truth.
+* Frontend only calls backend and displays correct state.
 
 Return:
 
-* Exact root cause found
+* Root cause confirmed
 * Files changed
-* Backend response examples
-* Frontend error mapping
-* Env var/API URL verification
+* New Celery task name
+* Email backend config added
+* Response examples
+* Timeout behavior before/after
 * Validation results
-* Suggested branch/commit for backend and frontend
+* Suggested backend branch/commit
+* Suggested frontend branch/commit

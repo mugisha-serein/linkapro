@@ -12,6 +12,7 @@ from infrastructure.repos.django_user_repository import DjangoUserRepository
 from infrastructure.adapters.password_hasher import DjangoPasswordHasher
 from infrastructure.adapters.jwt_token_service import JWTTokenService
 from django_app.identity.models import User as DjangoUser
+from tasks.email_tasks import send_password_reset_email_task
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -248,8 +249,9 @@ class TestIdentityViews:
         DEFAULT_FROM_EMAIL="no-reply@example.test",
         FRONTEND_URL="https://app.example.test",
     )
-    def test_forgot_password_existing_active_user_sends_email(self):
+    def test_forgot_password_existing_active_user_enqueues_email(self, monkeypatch):
         mail.outbox = []
+        enqueued = {}
         DjangoUser.objects.create_user(
             email="reset@example.com",
             password="StrongPass1",
@@ -258,31 +260,18 @@ class TestIdentityViews:
             role="planner",
         )
 
+        def capture_delay(user_id, token):
+            enqueued["user_id"] = user_id
+            enqueued["token"] = token
+
+        monkeypatch.setattr("tasks.email_tasks.send_password_reset_email_task.delay", capture_delay)
+
         response = self.client.post(reverse("forgot-password"), {"email": "reset@example.com"}, format="json")
 
         assert response.status_code == 202
         assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
-        assert len(mail.outbox) == 1
-        message = mail.outbox[0]
-        assert message.subject == "Reset your LinkaPro password"
-        assert message.from_email == "no-reply@example.test"
-        assert message.to == ["reset@example.com"]
-        assert "LinkaPro password reset request" in message.body
-        assert "https://app.example.test/auth/reset-password?token=" in message.body
-        assert "This link expires in 1 hour." in message.body
-
-    @override_settings(
-        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
-        DEFAULT_FROM_EMAIL="no-reply@example.test",
-        FRONTEND_URL="https://app.example.test",
-    )
-    def test_forgot_password_nonexistent_email_returns_generic_without_email(self):
-        mail.outbox = []
-
-        response = self.client.post(reverse("forgot-password"), {"email": "missing@example.com"}, format="json")
-
-        assert response.status_code == 202
-        assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
+        assert enqueued["user_id"]
+        assert enqueued["token"]
         assert mail.outbox == []
 
     @override_settings(
@@ -290,8 +279,27 @@ class TestIdentityViews:
         DEFAULT_FROM_EMAIL="no-reply@example.test",
         FRONTEND_URL="https://app.example.test",
     )
-    def test_forgot_password_inactive_user_returns_generic_without_email(self):
+    def test_forgot_password_nonexistent_email_returns_generic_without_enqueue(self, monkeypatch):
         mail.outbox = []
+        enqueued = []
+        monkeypatch.setattr("tasks.email_tasks.send_password_reset_email_task.delay", lambda *args: enqueued.append(args))
+
+        response = self.client.post(reverse("forgot-password"), {"email": "missing@example.com"}, format="json")
+
+        assert response.status_code == 202
+        assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
+        assert mail.outbox == []
+        assert enqueued == []
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_forgot_password_inactive_user_returns_generic_without_enqueue(self, monkeypatch):
+        mail.outbox = []
+        enqueued = []
+        monkeypatch.setattr("tasks.email_tasks.send_password_reset_email_task.delay", lambda *args: enqueued.append(args))
         DjangoUser.objects.create_user(
             email="inactive@example.com",
             password="StrongPass1",
@@ -306,14 +314,16 @@ class TestIdentityViews:
         assert response.status_code == 202
         assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
         assert mail.outbox == []
+        assert enqueued == []
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
         DEFAULT_FROM_EMAIL="no-reply@example.test",
         FRONTEND_URL="https://app.example.test",
     )
-    def test_forgot_password_does_not_log_reset_token(self, caplog):
+    def test_forgot_password_does_not_log_reset_token(self, caplog, monkeypatch):
         mail.outbox = []
+        enqueued = {}
         DjangoUser.objects.create_user(
             email="nolog@example.com",
             password="StrongPass1",
@@ -321,12 +331,18 @@ class TestIdentityViews:
             last_name="Log",
             role="planner",
         )
+
+        def capture_delay(user_id, token):
+            enqueued["user_id"] = user_id
+            enqueued["token"] = token
+
+        monkeypatch.setattr("tasks.email_tasks.send_password_reset_email_task.delay", capture_delay)
         caplog.set_level(logging.INFO, logger="django_app.identity.password_reset_email")
 
         response = self.client.post(reverse("forgot-password"), {"email": "nolog@example.com"}, format="json")
 
         assert response.status_code == 202
-        reset_token = mail.outbox[0].body.split("token=", 1)[1].splitlines()[0]
+        reset_token = enqueued["token"]
         assert reset_token
         assert reset_token not in caplog.text
         assert "/auth/reset-password?token=" not in caplog.text
@@ -337,7 +353,7 @@ class TestIdentityViews:
         DEFAULT_FROM_EMAIL="no-reply@example.test",
         FRONTEND_URL="https://app.example.test",
     )
-    def test_forgot_password_provider_failure_still_returns_generic(self, caplog, monkeypatch):
+    def test_forgot_password_dispatch_failure_still_returns_generic(self, caplog, monkeypatch):
         mail.outbox = []
         DjangoUser.objects.create_user(
             email="fail@example.com",
@@ -347,10 +363,10 @@ class TestIdentityViews:
             role="planner",
         )
 
-        def fail_send_mail(*args, **kwargs):
-            raise RuntimeError("provider unavailable")
+        def fail_delay(*args, **kwargs):
+            raise RuntimeError("redis unavailable")
 
-        monkeypatch.setattr("django_app.identity.password_reset_email.send_mail", fail_send_mail)
+        monkeypatch.setattr("tasks.email_tasks.send_password_reset_email_task.delay", fail_delay)
         caplog.set_level(logging.ERROR, logger="django_app.identity.password_reset_email")
 
         response = self.client.post(reverse("forgot-password"), {"email": "fail@example.com"}, format="json")
@@ -358,7 +374,81 @@ class TestIdentityViews:
         assert response.status_code == 202
         assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
         assert mail.outbox == []
-        assert "forgot_password_email_failed" in caplog.text
+        assert "forgot_password_email_dispatch_deferred" in caplog.text
+        assert "/auth/reset-password?token=" not in caplog.text
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_password_reset_email_task_sends_email_for_active_user(self):
+        mail.outbox = []
+        user = DjangoUser.objects.create_user(
+            email="task-reset@example.com",
+            password="StrongPass1",
+            first_name="Task",
+            last_name="Reset",
+            role="planner",
+        )
+        token = JWTTokenService().create_password_reset_token(str(user.id))
+
+        result = send_password_reset_email_task.apply(args=[str(user.id), token]).get()
+
+        assert result is True
+        assert len(mail.outbox) == 1
+        message = mail.outbox[0]
+        assert message.subject == "Reset your LinkaPro password"
+        assert message.from_email == "no-reply@example.test"
+        assert message.to == ["task-reset@example.com"]
+        assert "LinkaPro password reset request" in message.body
+        assert f"https://app.example.test/auth/reset-password?token={token}" in message.body
+        assert "This link expires in 1 hour." in message.body
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_password_reset_email_task_skips_missing_or_inactive_user(self):
+        mail.outbox = []
+        inactive_user = DjangoUser.objects.create_user(
+            email="inactive-task-reset@example.com",
+            password="StrongPass1",
+            first_name="Inactive",
+            last_name="Task",
+            role="planner",
+            is_active=False,
+        )
+
+        missing_result = send_password_reset_email_task.apply(args=[str(uuid.uuid4()), "token"]).get()
+        inactive_result = send_password_reset_email_task.apply(args=[str(inactive_user.id), "token"]).get()
+
+        assert missing_result is False
+        assert inactive_result is False
+        assert mail.outbox == []
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="no-reply@example.test",
+        FRONTEND_URL="https://app.example.test",
+    )
+    def test_password_reset_email_task_does_not_log_token(self, caplog):
+        mail.outbox = []
+        user = DjangoUser.objects.create_user(
+            email="task-nolog@example.com",
+            password="StrongPass1",
+            first_name="Task",
+            last_name="NoLog",
+            role="planner",
+        )
+        token = JWTTokenService().create_password_reset_token(str(user.id))
+        caplog.set_level(logging.INFO, logger="django_app.identity.password_reset_email")
+
+        result = send_password_reset_email_task.apply(args=[str(user.id), token]).get()
+
+        assert result is True
+        assert token not in caplog.text
         assert "/auth/reset-password?token=" not in caplog.text
 
     def test_reset_password_missing_token_returns_controlled_field_error(self):

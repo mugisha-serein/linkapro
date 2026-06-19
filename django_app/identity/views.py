@@ -385,7 +385,14 @@ class ForgotPasswordView(APIView):
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
-        request_password_reset_email(email)
+        try:
+            request_password_reset_email(email)
+        except Exception as exc:
+            logger.error(
+                "forgot_password_email_dispatch_deferred",
+                extra={"email_domain": email.rsplit("@", 1)[-1], "error_type": exc.__class__.__name__},
+                exc_info=True,
+            )
 
         return Response(
             {"detail": GENERIC_FORGOT_PASSWORD_DETAIL},
