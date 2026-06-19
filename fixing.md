@@ -1,302 +1,224 @@
-Permanently fix LinkaPro vendor profile setup submission with backend-enforced onboarding, document, portfolio, package, and marketplace visibility rules.
+Fix LinkaPro vendor portfolio image/video upload 400 errors by aligning frontend and backend upload contracts, validation, status rules, and error display.
 
-Problem:
-When a vendor fills and submits /vendor/profile/setup, the flow is still fragile. Profile save, document upload, portfolio upload, package creation, Celery/Cloudinary processing, marketplace sync, and frontend redirects can interfere with each other. This causes 400/500 errors, redirect loops, stale dashboard state, or vendors being allowed into marketplace before admin approval.
+Current production error:
+POST https://linkapro-django.onrender.com/api/django/vendors/portfolio/ returns 400 Bad Request from vendor dashboard portfolio upload.
 
 Goal:
-Backend must become the single source of truth for vendor onboarding and marketplace readiness. Frontend must only call backend APIs, display backend statuses/errors, and follow backend redirect/access instructions.
-
-Permanent rules:
-
-1. Vendor profile save must always be independent from documents, portfolio, packages, Cloudinary, Celery, Redis, or analyzer services.
-2. Vendor profile setup must stay required until backend status allows dashboard access.
-3. A vendor may enter dashboard when profile status is pending_review or approved.
-4. A vendor may appear in marketplace only after admin approval.
-5. Vendor packages and portfolio must remain invisible from marketplace until vendor is approved and each item is approved/public-eligible.
-6. Celery/Cloudinary/analyzer outages must not cause expected user actions to return 500.
-7. Frontend must not invent state; it must follow backend status and human-readable errors.
+Understand and fix the current portfolio upload failure permanently. Backend remains source of truth for media rules. Frontend must only mirror backend validation and show backend human-readable errors. Valid image/video uploads should return 202 Accepted and appear immediately in the vendor portfolio without page reload.
 
 Repositories:
 
 * Backend: linkapro
 * Frontend: linkapro-frontend
 
+Observed current implementation:
+
+* Backend route exists at /api/django/vendors/portfolio/.
+* Frontend sends multipart FormData field "media".
+* Backend accepts "media" or legacy "image".
+* Backend validates MIME/type/size/header/image dimensions.
+* Backend creates PortfolioImage row and queues Celery.
+* Frontend currently shows generic upload failure instead of backend validation errors.
+
 Backend tasks:
 
-1. Create a backend vendor onboarding/access contract.
-   Add or centralize a service/helper, for example:
+1. Inspect current backend upload flow:
 
-   * application/vendors/onboarding_policy.py
-   * domain/vendors/policies.py
-   * django_app/vendors/policies.py
+   * django_app/vendors/views.py
+   * django_app/vendors/serializers.py
+   * django_app/vendors/models.py
+   * application/vendors/handlers.py
+   * infrastructure repos for portfolio images
+   * tasks/image_tasks.py
+   * settings for upload size limits
 
-   It must return one clear contract for the current vendor:
+2. Log and reproduce the 400 cause.
+
+   * Add temporary/debug-safe logging around PortfolioImageView.post validation failures.
+   * Log:
+     user_id
+     vendor_id if available
+     filename
+     content_type
+     file_size
+     extension
+     validation error code/message
+   * Do not log file contents.
+   * Remove noisy logs or keep as structured warning if useful.
+
+3. Standardize backend 400 response shape.
+   All validation failures from portfolio upload should return:
    {
-   "profile_status": "missing|draft|incomplete|rejected|pending_review|approved|suspended",
-   "can_access_dashboard": true/false,
-   "must_complete_profile": true/false,
-   "can_submit_for_review": true/false,
-   "marketplace_visible": true/false,
-   "redirect_to": "/vendor/profile/setup" or "/vendor/dashboard" or null,
-   "message": "human readable explanation"
+   "code": "portfolio_media_invalid",
+   "message": "Upload a valid portfolio image or highlight video.",
+   "field_errors": {
+   "media": ["Human-readable reason here."]
+   }
    }
 
-   Required behavior:
+   Examples:
 
-   * no profile -> must_complete_profile=true, can_access_dashboard=false, redirect_to=/vendor/profile/setup
-   * draft/incomplete -> must_complete_profile=true, can_access_dashboard=false, redirect_to=/vendor/profile/setup
-   * rejected -> must_complete_profile=true, can_access_dashboard=false, redirect_to=/vendor/profile/setup or /vendor/profile
-   * pending_review -> can_access_dashboard=true, marketplace_visible=false, redirect_to=/vendor/dashboard
-   * approved -> can_access_dashboard=true, marketplace_visible=true, redirect_to=/vendor/dashboard
-   * suspended -> can_access_dashboard=false or limited, marketplace_visible=false, clear suspended message
+   * "Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."
+   * "Videos must be 10MB or smaller."
+   * "Image file is too large. Maximum size is 4MB."
+   * "This image is too small. Upload a clearer, higher-resolution photo."
+   * "This video could not be read. Upload a valid MP4, WEBM, or MOV highlight video."
+   * "Complete your vendor profile before uploading portfolio media."
 
-2. Expose this contract to frontend.
-   Add or update endpoint:
-   GET /api/django/vendors/profile/status/
-   or include the contract in GET /api/django/vendors/profile/.
+4. Fix allowed MIME/type mismatch.
+   Backend allowed types must remain strict:
 
-   Frontend must be able to decide redirect/UI from backend contract, not duplicated hardcoded assumptions.
+   * image/jpeg
+   * image/png
+   * image/webp
+   * video/mp4
+   * video/webm
+   * video/quicktime
 
-3. Fix POST /api/django/vendors/profile/.
-   Profile save must only validate/save profile fields:
+   Frontend must mirror exactly these types.
+   Backend must reject unsupported types with clear 400.
+   If browser sends empty content_type for some valid files, backend may safely infer from extension + magic header, but must not accept unsafe files blindly.
 
-   * business_name
-   * category
-   * custom_category/other_category_label when category == other
-   * description
-   * service_area
-   * contact_email
-   * contact_phone if required
-   * website if optional
-   * any existing required profile fields
+5. Fix image validation.
 
-   It must not:
+   * Keep backend dimension enforcement.
+   * Minimum image resolution should be centralized in settings:
+     VENDOR_PORTFOLIO_MIN_IMAGE_WIDTH=800
+     VENDOR_PORTFOLIO_MIN_IMAGE_HEIGHT=600
+   * Use PIL safely:
+     Image.open
+     verify
+     reopen if needed to read dimensions correctly
+   * Ensure WEBP validation checks:
+     header starts with RIFF and contains WEBP in the correct header bytes
+   * Reject corrupt images with clear field error.
+   * Reset file pointer after validation.
 
-   * upload documents
-   * upload portfolio
-   * create packages
-   * call Cloudinary
-   * require Celery/Redis
-   * sync marketplace
-   * submit vendor for review automatically
+6. Fix video validation false negatives.
 
-   Valid profile save returns 200/201 with:
+   * Keep video max size 10MB.
+   * Allowed extensions:
+     .mp4
+     .webm
+     .mov
+   * Allowed MIME:
+     video/mp4
+     video/webm
+     video/quicktime
+   * Improve basic header validation:
+     MP4/MOV should detect ftyp in first 64 or 128 bytes, not only 32 if needed.
+     WEBM should detect EBML header.
+   * If no video metadata parser exists, do not overdo complex validation in request.
+   * Corrupt/unsupported video should return clear 400.
+   * Valid browser-recorded MP4/WEBM/MOV under 10MB should not be falsely rejected.
 
-   * saved profile
-   * onboarding/access contract
-   * human-readable message
+7. Check vendor status rule.
+   Current upload uses require_workspace=True, which may block draft/incomplete/rejected vendors.
+   Decide and implement one backend rule:
+   Option A:
+   Portfolio upload is allowed only after vendor status is pending_review or approved.
+   Then frontend must hide/disable portfolio upload during setup/draft and show backend message.
+   Option B:
+   Portfolio upload is allowed during setup/draft as private staged media.
+   It remains invisible from marketplace until vendor approved and media approved.
+   Choose the intended product rule and enforce it consistently.
+   Recommended:
+   Allow upload for vendors with a saved profile, including draft/pending_review/approved, but keep media private until approval.
+   Block only missing profile, rejected/suspended if current business rules require blocking.
+   Do not let frontend decide this rule alone.
 
-   Invalid profile save returns 400 with field-level errors only.
+8. Keep async/background behavior safe.
 
-4. Enforce category "other" at backend.
+   * Valid upload should stage file, create PortfolioImage, try to enqueue Celery.
+   * If Celery/Redis unavailable, return 202 with processing_deferred=true, not 500.
+   * Do not wait for Cloudinary.
+   * Do not store raw media bytes in DB.
+   * Do not expose Celery/Cloudinary/analyzer technical errors to user.
 
-   * If category == "other", custom_category/other_category_label is required.
-   * If category != "other", custom category may be blank/null.
-   * Return error:
-     "Tell us what service you provide when choosing Other."
-   * Add migration if missing.
-   * Marketplace display can use custom category label, but canonical category may remain "other".
-
-5. Fix verification document upload as background-safe.
-   Endpoint:
-   POST /api/django/vendors/profile/verification-documents/
-
-   Backend must:
-
-   * accept PDF only
-   * validate extension, MIME type, %PDF magic header, file size, parseable PDF, at least 1 page, not encrypted
-   * stage file safely outside DB
-   * create document metadata record
-   * enqueue background processing if available
-   * if Celery/Redis unavailable, mark processing_deferred and return 202, not 500
-   * return human-readable 400 only for actual file/user errors
-   * never expose Celery/Redis/Cloudinary/analyzer details to user
-
-   Response example:
+9. Ensure successful response contract.
+   Valid upload returns 202:
    {
    "status": "queued",
+   "job_id": "...",
    "processing_deferred": false,
-   "document_id": "...",
-   "message": "Document received. Verification will continue automatically.",
-   "onboarding": { ...contract... }
+   "message": "Portfolio item received. Review will continue automatically.",
+   "item": { ...PortfolioImageDTO... }
    }
 
-6. Background document processing.
-   Celery task must:
+10. Frontend tasks:
+    Inspect:
 
-   * upload staged PDF to Cloudinary as document/raw resource
-   * store only Cloudinary public_id, secure_url, metadata
-   * run ODCR/OCR/document analyzer if configured
-   * mark document pending_review, needs_manual_review, rejected, or failed
-   * retry transient failures
-   * be idempotent
-   * never auto-approve vendor
-   * keep admin review as final authority
+* src/services/vendorService.ts
+* src/hooks/useVendor.ts
+* src/app/(vendor)/vendor/portfolio/page.tsx
+* src/types/api.ts
 
-   If analyzer unavailable:
+Fix frontend validation:
 
-   * do not crash
-   * mark needs_manual_review
-   * continue onboarding according to submitted document rules
+* Only allow:
+  image/jpeg
+  image/png
+  image/webp
+  video/mp4
+  video/webm
+  video/quicktime
+* Check image max size to match backend setting, default 4MB.
+* Check video max size 10MB.
+* Add client-side image dimension check before upload:
+  minimum 800x600 or values matching backend.
+* Allow videos in filter logic. Currently filtering only handles Images and All Media; add Videos filter support if UI has/needs it.
 
-7. Submit-for-review endpoint.
-   Endpoint:
-   POST /api/django/vendors/profile/submit/
+11. Frontend error handling:
 
-   Backend must:
+* Extract backend field_errors.media[0] or message from failed upload.
+* Show that exact message in the upload panel and toast.
+* Do not show generic "Save failed" when backend gives a useful media error.
+* Example:
+  backend says "This image is too small..."
+  frontend displays "This image is too small. Upload a clearer, higher-resolution photo."
 
-   * validate profile completeness
-   * require a verification document record if business rules require it
-   * accept queued/processing_deferred/pending_review document as submitted, not completed
-   * move vendor status to pending_review when complete
-   * return updated profile and onboarding/access contract
-   * never require Cloudinary upload/analyzer completion before pending_review
-   * never create marketplace listing at pending_review
+12. Frontend immediate UI update:
 
-8. Marketplace visibility enforcement.
-   Backend must enforce:
+* Current hook already inserts response.item into React Query cache.
+* Keep that behavior.
+* Ensure item shows using:
+  local_preview_url first
+  then cloudinary_secure_url
+  then secure_url
+* Keep polling while upload_status is staged/queued/processing/processing_deferred.
+* Do not require page reload.
 
-   * pending_review vendors are not visible in FastAPI marketplace
-   * approved vendors are visible only after admin approval
-   * rejected/suspended/draft vendors are removed/hidden from marketplace
-   * packages/portfolio remain hidden publicly unless vendor is approved and item is approved/public-eligible
-
-   Do not allow frontend to control marketplace visibility.
-
-9. Portfolio backend enforcement.
-   Apply or reuse the edited portfolio media lifecycle rules:
-
-   * vendor dashboard may show staged/private media immediately
-   * marketplace/public may show only approved vendor + approved/high-quality/uploaded media
-   * images and videos supported
-   * videos max 10MB
-   * low-quality media not public
-   * vendor delete is soft delete only
-   * admin delete is hard delete only
-   * analyzer failure/unavailability must not return 500
-   * backend returns human-readable status/errors
-   * frontend only displays backend statuses
-
-10. Package backend enforcement.
-    Apply or reuse vendor package rules:
-
-* vendor create/edit/delete packages
-* vendor delete is soft delete only
-* admin hard delete only
-* package status supports waiting_approval and approved, plus rejected if needed
-* public/marketplace visibility requires approved vendor + approved package + active + not deleted
-* package tiers Standard, Premier, Gold enforced by backend
-* backend returns human-readable validation errors
-* frontend only displays backend statuses/errors
-
-11. Backend status and error response standard.
-    All vendor setup related endpoints should return predictable responses:
-
-* profile endpoint
-* profile status endpoint
-* submit endpoint
-* document endpoint
-* portfolio endpoint
-* packages endpoint
-
-Standard error style:
-{
-"code": "vendor_profile_incomplete",
-"message": "Complete your vendor profile before continuing.",
-"field_errors": {
-"business_name": ["Business name is required."]
-},
-"redirect_to": "/vendor/profile/setup",
-"onboarding": { ...contract... }
-}
-
-Avoid:
-
-* generic "Bad request"
-* unhandled 500 for expected service outages
-* technical error messages shown to user
-
-12. Frontend must follow backend contract.
-    Frontend tasks:
-
-* inspect VendorLayout, vendor profile setup page, vendor profile page, vendor dashboard, vendor packages, vendor portfolio, vendor service/hooks/types
-* remove duplicated frontend-only onboarding assumptions where backend contract exists
-* VendorLayout should use backend onboarding/access contract
-* /vendor/profile/setup and /vendor/profile remain accessible while must_complete_profile=true
-* /vendor/dashboard allowed only when backend can_access_dashboard=true
-* setup page redirects to dashboard only when backend redirect_to=/vendor/dashboard or can_access_dashboard=true after submit
-* no redirect because profile object merely exists
-* no dashboard/setup ping-pong
-
-13. Frontend profile setup behavior.
-    Required behavior:
-
-* Save profile -> call backend profile endpoint, display backend errors/message, stay on setup if backend says must_complete_profile
-* Upload document -> call backend document endpoint, display backend message, do not block profile save
-* Submit for review -> call backend submit endpoint, follow backend redirect_to
-* If backend returns pending_review/can_access_dashboard, redirect once to /vendor/dashboard
-* If backend returns errors, show them and stay on setup
-* Do not expose Celery, Redis, Cloudinary, ODCR, analyzer names to user
-
-14. Frontend package and portfolio behavior.
-
-* After package/portfolio create/edit/delete, update React Query cache or invalidate immediately
-* Display backend statuses:
-  Waiting approval
-  Approved
-  Rejected
-  Processing
-  Failed
-  Private
-* Do not show staged/private media publicly
-* Do not show waiting approval packages publicly
-* Backend is source of truth for visibility
-
-15. Add logout button.
-
-* Add visible top-right logout button on /vendor/profile/setup.
-* Use existing logout flow.
-* Redirect to /auth/login.
-* Keep UI light and consistent.
-
-16. Tests.
-    Backend tests:
-
-* no profile returns onboarding contract redirecting to setup
-* valid profile save returns onboarding contract
-* invalid profile save returns field_errors
-* other category requires custom category
-* PDF document returns 202
-* Celery unavailable returns 202 processing_deferred, not 500
-* submit complete profile moves to pending_review
-* pending_review can_access_dashboard=true but marketplace_visible=false
-* approved marketplace_visible=true after admin approval
-* rejected/suspended marketplace_visible=false
-* pending_review vendor not synced to FastAPI marketplace
-* approved vendor synced only after admin approval
-* package/portfolio visibility respects vendor approval and item approval
-* vendor soft delete keeps rows
-* admin hard delete removes rows
-
-Frontend/manual tests:
-
-* new vendor login -> setup
-* direct dashboard with missing profile -> setup
-* partial profile save stays on setup
-* leaving setup and logging in again returns to setup
-* document deferred response does not block submit
-* submit complete profile -> pending_review -> dashboard once
-* pending_review login -> dashboard, not setup
-* approved login -> dashboard
-* no infinite redirect
-* logout button works
-* package/portfolio updates appear immediately from backend/cache
-
-17. Validation commands.
+13. Tests:
     Backend:
-    python manage.py makemigrations
+
+* valid JPEG >= minimum returns 202
+* valid PNG >= minimum returns 202
+* valid WEBP >= minimum returns 202
+* low-resolution image returns 400 with field_errors.media
+* image > max size returns 400 with field_errors.media
+* unsupported image/heic returns 400 with field_errors.media
+* valid MP4 <=10MB returns 202
+* valid WEBM <=10MB returns 202
+* video >10MB returns 400 with field_errors.media
+* corrupt video returns 400 with field_errors.media
+* Celery enqueue failure returns 202 processing_deferred=true
+* allowed vendor status can upload according to chosen rule
+* blocked vendor status returns structured 403/400 with redirect/status contract
+
+Frontend/manual:
+
+* unsupported type blocked before request
+* low-resolution image blocked before request
+* video >10MB blocked before request
+* backend field_errors.media appears in UI
+* valid upload appears immediately without page refresh
+* processing item polls until final status
+* video filter works if present
+
+14. Validation commands:
+    Backend:
     python manage.py check
-    pytest tests/django_app/vendors tests/django_app/governance tests/fastapi_app -q
+    pytest tests/django_app/vendors -q
 
 Frontend:
 npm run lint for touched files
@@ -305,26 +227,24 @@ npm run build
 Rules:
 
 * Backend is source of truth.
-* Frontend only calls and follows backend instructions.
-* Profile save is independent from documents/packages/portfolio/background services.
-* Expected background service outages return controlled 202 or safe statuses, not 500.
-* Only backend controls marketplace visibility.
-* Pending_review is dashboard-accessible but marketplace-hidden.
-* Approved is dashboard-accessible and marketplace-visible only after admin approval.
-* Vendor deletes are soft deletes.
-* Admin hard deletes only.
-* No raw files in DB.
-* No mocked URLs or data.
-* No dark UI.
-* Do not weaken backend permissions.
+* Frontend mirrors backend but cannot bypass it.
+* No raw media bytes in DB.
+* No Cloudinary wait inside request.
+* No 500 for Celery/Redis/Cloudinary unavailability.
+* Valid media should return 202.
+* Invalid media should return structured 400 with human-readable field_errors.media.
+* Vendor dashboard should show valid staged media immediately.
+* Marketplace remains approved-only.
+* No mocked media URLs.
+* Keep light UI only.
 
 Return:
 
-* Root cause of current profile setup instability
-* Backend onboarding contract implemented
+* Exact root cause of current 400
 * Files changed
-* Migration names
 * API response examples
-* Final redirect/access rules
-* Package/portfolio visibility rules
+* Backend media rules
+* Frontend validation changes
 * Validation results
+* Suggested backend branch/commit
+* Suggested frontend branch/commit

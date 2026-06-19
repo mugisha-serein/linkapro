@@ -403,6 +403,32 @@ class TestPortfolioImageViews:
         assert stored.temp_upload_path
         assert queued == [str(stored.id)]
 
+    @pytest.mark.parametrize(
+        ("filename", "content_type", "image_format"),
+        [
+            ("portfolio.png", "image/png", "PNG"),
+            ("portfolio.webp", "image/webp", "WEBP"),
+        ],
+    )
+    def test_upload_valid_png_and_webp_return_202(self, filename, content_type, image_format, monkeypatch):
+        monkeypatch.setattr(
+            "tasks.image_tasks.process_vendor_portfolio_media_task.delay",
+            lambda image_id: None,
+        )
+        image = SimpleUploadedFile(
+            filename,
+            valid_image_bytes(image_format=image_format),
+            content_type=content_type,
+        )
+
+        response = self.client.post(reverse("portfolio-list"), {"media": image}, format="multipart")
+
+        assert response.status_code == 202
+        stored = PortfolioImage.objects.get()
+        assert stored.media_type == PortfolioImage.MediaType.IMAGE
+        assert stored.width == 800
+        assert stored.height == 600
+
     def test_upload_video_returns_202_when_under_10mb(self, monkeypatch):
         queued = []
         monkeypatch.setattr(
@@ -419,13 +445,26 @@ class TestPortfolioImageViews:
         assert stored.upload_status == PortfolioImage.UploadStatus.QUEUED
         assert queued == [str(stored.id)]
 
+    def test_upload_webm_video_returns_202_when_under_10mb(self, monkeypatch):
+        monkeypatch.setattr(
+            "tasks.image_tasks.process_vendor_portfolio_media_task.delay",
+            lambda image_id: None,
+        )
+        video = SimpleUploadedFile("highlight.webm", b"\x1aE\xdf\xa3" + b"0" * 128, content_type="video/webm")
+
+        response = self.client.post(reverse("portfolio-list"), {"media": video}, format="multipart")
+
+        assert response.status_code == 202
+        assert PortfolioImage.objects.get().media_type == PortfolioImage.MediaType.VIDEO
+
     def test_upload_video_over_10mb_returns_400(self):
         video = SimpleUploadedFile("large.mp4", b"\x00\x00\x00\x18ftypmp42" + (b"0" * (10 * 1024 * 1024 + 1)), content_type="video/mp4")
 
         response = self.client.post(reverse("portfolio-list"), {"media": video}, format="multipart")
 
         assert response.status_code == 400
-        assert response.data["media"][0] == "Videos must be 10MB or smaller."
+        assert response.data["code"] == "portfolio_media_invalid"
+        assert response.data["field_errors"]["media"][0] == "Videos must be 10MB or smaller."
 
     def test_upload_invalid_file_type_returns_400(self):
         image = SimpleUploadedFile("portfolio.txt", b"not-image", content_type="text/plain")
@@ -433,8 +472,17 @@ class TestPortfolioImageViews:
         response = self.client.post(reverse("portfolio-list"), {"image": image}, format="multipart")
 
         assert response.status_code == 400
-        assert "Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed." in response.data["media"][0]
+        assert response.data["code"] == "portfolio_media_invalid"
+        assert "Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed." in response.data["field_errors"]["media"][0]
         assert self.profile.images.count() == 0
+
+    def test_upload_heic_image_returns_structured_400(self):
+        image = SimpleUploadedFile("portfolio.heic", b"heic-data", content_type="image/heic")
+
+        response = self.client.post(reverse("portfolio-list"), {"media": image}, format="multipart")
+
+        assert response.status_code == 400
+        assert response.data["field_errors"]["media"][0] == "Only JPEG, PNG, WEBP images or MP4/WEBM videos are allowed."
 
     @override_settings(VENDOR_PORTFOLIO_MAX_UPLOAD_SIZE=4)
     def test_upload_oversized_file_returns_400(self):
@@ -443,7 +491,7 @@ class TestPortfolioImageViews:
         response = self.client.post(reverse("portfolio-list"), {"media": image}, format="multipart")
 
         assert response.status_code == 400
-        assert "too large" in response.data["media"][0]
+        assert "too large" in response.data["field_errors"]["media"][0]
         assert self.profile.images.count() == 0
 
     def test_upload_low_resolution_image_returns_400(self):
@@ -452,7 +500,42 @@ class TestPortfolioImageViews:
         response = self.client.post(reverse("portfolio-list"), {"media": image}, format="multipart")
 
         assert response.status_code == 400
-        assert response.data["media"][0] == "This image is too small. Upload a clearer, higher-resolution photo."
+        assert response.data["field_errors"]["media"][0] == "This image is too small. Upload a clearer, higher-resolution photo."
+
+    def test_corrupt_video_returns_structured_400(self):
+        video = SimpleUploadedFile("highlight.mp4", b"not-a-real-video", content_type="video/mp4")
+
+        response = self.client.post(reverse("portfolio-list"), {"media": video}, format="multipart")
+
+        assert response.status_code == 400
+        assert response.data["field_errors"]["media"][0] == "This video could not be read. Upload a valid MP4, WEBM, or MOV highlight video."
+
+    def test_draft_vendor_with_saved_profile_can_upload_private_media(self, monkeypatch):
+        self.profile.status = DjangoProfile.Status.DRAFT
+        self.profile.save(update_fields=["status", "updated_at"])
+        monkeypatch.setattr(
+            "tasks.image_tasks.process_vendor_portfolio_media_task.delay",
+            lambda image_id: None,
+        )
+        image = SimpleUploadedFile("draft.jpg", valid_image_bytes(), content_type="image/jpeg")
+
+        response = self.client.post(reverse("portfolio-list"), {"media": image}, format="multipart")
+
+        assert response.status_code == 202
+        stored = PortfolioImage.objects.get()
+        assert stored.visibility_status == PortfolioImage.VisibilityStatus.PRIVATE
+
+    def test_rejected_vendor_upload_blocked_with_onboarding_contract(self):
+        self.profile.status = DjangoProfile.Status.REJECTED
+        self.profile.rejection_reason = "Please update your profile."
+        self.profile.save(update_fields=["status", "rejection_reason", "updated_at"])
+        image = SimpleUploadedFile("rejected.jpg", valid_image_bytes(), content_type="image/jpeg")
+
+        response = self.client.post(reverse("portfolio-list"), {"media": image}, format="multipart")
+
+        assert response.status_code == 403
+        assert response.data["field_errors"]["media"][0] == "Please update your profile."
+        assert response.data["onboarding"]["profile_status"] == "rejected"
 
     def test_list_includes_upload_status_for_existing_completed_images(self):
         PortfolioImage.objects.create(
@@ -566,11 +649,11 @@ def valid_pdf_bytes() -> bytes:
     )
 
 
-def valid_image_bytes(size=(800, 600)) -> bytes:
+def valid_image_bytes(size=(800, 600), image_format="JPEG") -> bytes:
     from PIL import Image
 
     buffer = BytesIO()
-    Image.new("RGB", size, color="white").save(buffer, format="JPEG")
+    Image.new("RGB", size, color="white").save(buffer, format=image_format)
     return buffer.getvalue()
 
 
