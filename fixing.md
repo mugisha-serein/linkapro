@@ -1,17 +1,15 @@
-Fix LinkaPro forgot-password email failure observability while preserving secure generic 202 user response.
+Fix LinkaPro identity token environment so password reset/email verification/2FA tokens do not depend on PAYMENT_ENV.
 
 Problem:
-Forgot-password currently returns generic 202 even when email sending fails. This is correct for security because it prevents account enumeration, but it is weak for operations because users think reset instructions were sent while the backend may have failed to queue or send the email.
+`JWTTokenService._token_env()` currently reads `PAYMENT_ENV`. This is semantically wrong because identity/security tokens are not payment tokens.
 
-Current desired behavior:
+Current behavior:
 
-* User must always receive generic 202:
-  {
-  "detail": "If an account exists for that email, password reset instructions have been sent."
-  }
-* Backend must internally track, log, alert, and expose operational health when email queue/send fails.
-* Do not reveal whether the submitted email belongs to an account.
-* Do not log reset tokens or full reset URLs.
+* Password reset token includes `env` from PAYMENT_ENV.
+* Email verification token includes `env` from PAYMENT_ENV.
+* 2FA temp token includes `env` from PAYMENT_ENV.
+* Verification rejects tokens if token env != current PAYMENT_ENV.
+* If PAYMENT_ENV changes from test to live, existing password reset links can become invalid even though identity environment did not change.
 
 Repository:
 
@@ -19,185 +17,167 @@ Repository:
 
 Files to inspect:
 
-* django_app/identity/views.py
-* django_app/identity/serializers.py
-* tasks/email_tasks.py
+* infrastructure/adapters/jwt_token_service.py
 * django_app/settings/base.py
 * django_app/settings/production.py
-* tasks/celery.py
-* governance/admin health endpoints if existing
-* logging/structlog setup
-* tests/django_app/identity
-* tests/django_app/governance if existing
+* django_app/settings/development.py
+* django_app/settings/test.py if present
+* tests/infrastructure/adapters/test_jwt_token_service.py
+* identity forgot/reset password tests
+* any code relying on PAYMENT_ENV in JWT claims
 
 Goal:
-Keep forgot-password secure for users, but make email delivery failures visible to backend/admin operations.
+Separate identity token environment from payment environment.
 
 Backend tasks:
 
-1. Preserve secure response contract.
-   Forgot-password endpoint must always return 202 with the same generic message for:
+1. Add dedicated identity token environment setting.
+   In settings, add:
 
-   * existing active email
-   * nonexistent email
-   * inactive user
-   * Celery dispatch failure
-   * email provider failure
+   TOKEN_ENV = os.environ.get(
+   "TOKEN_ENV",
+   os.environ.get("APP_ENV", os.environ.get("DJANGO_ENV", "development" if DEBUG else "production"))
+   )
 
-   Do not expose account existence or provider status to the user.
+   Or equivalent clean helper.
 
-2. Add structured email dispatch logging.
-   When forgot-password receives a valid email:
+   Requirements:
 
-   * log forgot_password_requested with safe metadata
-   * if user exists, log forgot_password_email_dispatch_attempted
-   * if Celery task dispatch succeeds, log forgot_password_email_queued
-   * if dispatch fails, log forgot_password_email_dispatch_failed or forgot_password_email_dispatch_deferred
+   * Production should default to "production" if not explicitly set.
+   * Development should default to "development".
+   * Test should default to "test".
+   * Do not read PAYMENT_ENV for identity token environment.
+   * Keep PAYMENT_ENV only for payments.
 
-   Safe metadata:
+2. Update JWTTokenService.
+   Replace `_token_env()` behavior.
 
-   * user_id if account exists
-   * email_domain only
-   * masked_email if needed, for example m***@gmail.com
-   * request_id/correlation_id if available
-   * do not log token
-   * do not log full reset URL
+   Current:
 
-3. Add task-level delivery logging.
-   In password reset email task:
+   * reads settings.PAYMENT_ENV
 
-   * log password_reset_email_send_started
-   * log password_reset_email_sent on success
-   * log password_reset_email_failed on failure
-   * include task_id, user_id, provider, attempt count
-   * mask email
-   * do not log reset token
-   * do not log full reset URL
+   New:
 
-4. Add durable delivery status if appropriate.
-   Add a lightweight model if there is no existing job/audit table:
+   * reads settings.TOKEN_ENV
+   * if missing/empty, raise clear ValueError:
+     "TOKEN_ENV must be configured"
 
-   PasswordResetEmailDelivery
+   All identity/security tokens should use TOKEN_ENV:
 
-   * id UUID
-   * user FK nullable or user_id UUID
-   * email_hash
-   * email_domain
-   * status: queued, sent, failed, deferred
-   * failure_reason safe text
-   * attempts integer
-   * provider: sendgrid_smtp or configured backend
-   * queued_at
-   * sent_at nullable
-   * failed_at nullable
-   * created_at/updated_at
+   * access tokens
+   * refresh tokens
+   * password reset tokens
+   * email verification tokens
+   * 2FA temp tokens
 
-   Do not store reset token.
-   Do not store raw email if avoidable. If raw email is required for sending, store only in task payload or use user lookup by id.
+3. Backward compatibility plan.
+   Decide how to handle currently issued tokens that used PAYMENT_ENV.
 
-5. Add retry behavior.
-   The email task should retry transient provider/network failures with backoff.
-   Example:
+   Safe short-term approach:
 
-   * max_retries = 3 or 5
-   * exponential backoff
-   * final failure marks delivery status as failed
-   * no user-facing 500
+   * For password reset/email verification/2FA tokens, accept either:
+     a) current TOKEN_ENV
+     b) legacy PAYMENT_ENV only during a short transitional window
+   * Log event:
+     legacy_identity_token_env_accepted
+   * Do not create new tokens with PAYMENT_ENV.
+   * Optionally remove legacy acceptance later.
 
-6. Add admin/ops health endpoint.
-   If governance/admin health endpoints exist, extend them.
-   Otherwise add a small admin-only endpoint:
+   More strict approach:
 
-   GET /api/django/governance/admin/health/email/
+   * Do not accept legacy PAYMENT_ENV.
+   * Existing links become invalid.
 
-   It should return:
-   {
-   "email_backend_configured": true,
-   "default_from_email_configured": true,
-   "frontend_url_configured": true,
-   "recent_password_reset_email_failures": 0,
-   "recent_password_reset_email_deferred": 0,
-   "last_success_at": "...",
-   "last_failure_at": null,
-   "status": "healthy|degraded|unhealthy"
-   }
+   Recommended:
 
-   Access:
+   * Accept legacy PAYMENT_ENV for password reset/email verification for 24–72 hours or until deployment stabilizes.
+   * Do not accept legacy for long-term session tokens if security policy says no.
+   * Add clear TODO/comment with removal date or setting:
+     ACCEPT_LEGACY_PAYMENT_ENV_TOKENS = os.environ.get("ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", "true").lower() == "true"
 
-   * admin only
-   * authenticated
-   * do not expose tokens or user emails
+4. Avoid breaking logged-in sessions unexpectedly.
+   Access/refresh tokens may currently carry PAYMENT_ENV.
+   If you change verification for auth tokens, ensure authenticated users are not immediately logged out unless intended.
+   Search all token verification/authentication code:
 
-7. Add management command for smoke test.
+   * HardenedJWTAuthentication
+   * auth session facade
+   * refresh token handling
+   * token blacklist/family logic
+
+   Apply a safe transition if these tokens also enforce env.
+
+5. Add production config validation.
+   In production settings:
+
+   * TOKEN_ENV should be set or default to production.
+   * It must not equal empty string.
+   * It must not be derived from PAYMENT_ENV.
+   * PAYMENT_ENV can remain test/live for payment behavior only.
+
+6. Update documentation / Render env.
    Add:
-   python manage.py send_test_email --to [someone@example.com](mailto:someone@example.com)
+   TOKEN_ENV=production
 
-   Behavior:
+   Keep:
+   PAYMENT_ENV=test or live depending on Flutterwave mode
 
-   * sends test email using configured backend
-   * prints success/failure
-   * masks provider secrets
-   * useful for Render deploy verification
+   Explain:
 
-8. Add alert-friendly logging.
-   Ensure failures are logged at warning/error level with stable event names:
+   * TOKEN_ENV controls identity/security token validity.
+   * PAYMENT_ENV controls payment provider mode.
+   * Changing PAYMENT_ENV must not invalidate password reset links.
 
-   * password_reset_email_dispatch_failed
-   * password_reset_email_failed
-   * email_backend_misconfigured
-   * email_health_unhealthy
+7. Update tests.
+   Add/update tests:
 
-   These names should be easy to search in Render logs.
+   * create_password_reset_token uses TOKEN_ENV, not PAYMENT_ENV
+   * changing PAYMENT_ENV does not invalidate password reset token
+   * changing TOKEN_ENV does invalidate password reset token
+   * email verification token uses TOKEN_ENV
+   * temp 2FA token uses TOKEN_ENV
+   * access/refresh tokens use TOKEN_ENV
+   * legacy PAYMENT_ENV token accepted only when compatibility flag is enabled
+   * legacy token rejected when compatibility flag disabled
+   * TOKEN_ENV missing raises clear error if applicable
 
-9. Add config validation.
-   In production settings, fail startup if core email config is missing:
+8. Security logging.
+   Add structured logs for:
 
-   * SENDGRID_API_KEY
-   * DEFAULT_FROM_EMAIL
-   * FRONTEND_URL
+   * identity_token_env_mismatch
+   * legacy_identity_token_env_accepted
+   * identity_token_env_missing
 
-   But runtime provider failures should not break forgot-password response.
+   Do not log token contents.
 
-10. Tests.
-    Add/update tests:
+9. Validation commands.
+   Run:
+   python manage.py check
+   pytest tests/infrastructure/adapters/test_jwt_token_service.py tests/django_app/identity -q
 
-* forgot-password existing user returns 202 and queues email
-* nonexistent email returns same 202 and queues nothing
-* Celery dispatch failure returns same 202 and logs/deferred status
-* email task success marks delivery sent
-* email task failure marks delivery failed after retries
-* logs do not contain reset token
-* logs do not contain full reset URL
-* admin health endpoint shows degraded/unhealthy when recent failures exist
-* admin health endpoint is admin-only
-* production settings require email env vars
+10. Deployment check.
+    In Render env for Django web and Celery worker/beat, set:
+    TOKEN_ENV=production
 
-11. Validation commands.
-    Run:
-    python manage.py makemigrations
-    python manage.py check
-    pytest tests/django_app/identity tests/django_app/governance -q
-
-Smoke test:
-python manage.py send_test_email --to [your-email@example.com](mailto:your-email@example.com)
+Leave payment env separate:
+PAYMENT_ENV=test or PAYMENT_ENV=live depending on current payment mode.
 
 Rules:
 
-* User-facing forgot-password response stays generic 202.
-* Never reveal if email exists.
-* Never log reset token.
-* Never log full reset URL.
-* Do not make the HTTP request wait for provider delivery.
-* Backend must expose operational visibility for email failures.
-* Admin/ops can see health, users cannot.
+* Identity tokens must not depend on PAYMENT_ENV.
+* PAYMENT_ENV remains only for payments.
+* New identity tokens must be minted with TOKEN_ENV.
+* Existing reset links should not be invalidated unnecessarily during migration.
+* Do not log tokens.
+* Keep password reset secure and predictable.
 
 Return:
 
-* Root cause of current operational blind spot
+* Root cause
 * Files changed
-* Migration name if model added
-* New log event names
-* New health endpoint response example
-* Smoke test command
+* New settings added
+* Backward compatibility decision
+* Tests added
+* Render env changes
 * Validation results
 * Suggested branch and commit message

@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Optional
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,8 @@ from rest_framework_simplejwt.tokens import (
     RefreshToken,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class JWTTokenService:
     """
@@ -18,17 +21,11 @@ class JWTTokenService:
     """
 
     def _token_env(self) -> str:
-        env = getattr(settings, "PAYMENT_ENV", None)
-        if not env:
-            raise ValueError("PAYMENT_ENV must be configured")
+        env = identity_token_env()
         return env
 
     def _enforce_env(self, payload: dict) -> Optional[str]:
-        expected_env = self._token_env()
-        token_env = payload.get("env")
-        if token_env != expected_env:
-            return None
-        return expected_env
+        return accepted_identity_token_env(payload.get("env"), context="jwt_token_service")
 
     @staticmethod
     def _apply_bootstrap_claims(token, bootstrap_claims: dict | None) -> None:
@@ -156,3 +153,32 @@ class JWTTokenService:
             return payload
         except jwt.PyJWTError:
             return None
+
+
+def identity_token_env() -> str:
+    env = str(getattr(settings, "TOKEN_ENV", "") or "").strip()
+    if not env:
+        logger.error("identity_token_env_missing")
+        raise ValueError("TOKEN_ENV must be configured")
+    return env
+
+
+def accepted_identity_token_env(token_env: str | None, context: str) -> Optional[str]:
+    expected_env = identity_token_env()
+    if token_env == expected_env:
+        return expected_env
+
+    legacy_env = getattr(settings, "PAYMENT_ENV", None)
+    accept_legacy = bool(getattr(settings, "ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", True))
+    if accept_legacy and legacy_env and token_env == legacy_env:
+        logger.warning(
+            "legacy_identity_token_env_accepted",
+            extra={"context": context, "token_env": token_env, "expected_env": expected_env},
+        )
+        return expected_env
+
+    logger.warning(
+        "identity_token_env_mismatch",
+        extra={"context": context, "token_env": token_env, "expected_env": expected_env},
+    )
+    return None

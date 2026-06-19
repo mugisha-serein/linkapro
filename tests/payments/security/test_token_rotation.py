@@ -10,6 +10,12 @@ TEST_SECRET = "test-secret-key-for-jwt-32bytes!"
 
 
 class TestTokenRotation:
+    @pytest.fixture(autouse=True)
+    def token_env(self, settings):
+        settings.TOKEN_ENV = "test"
+        settings.PAYMENT_ENV = "test"
+        settings.ACCEPT_LEGACY_PAYMENT_ENV_TOKENS = True
+
     @pytest.fixture
     def blacklist(self):
         mock = MagicMock()
@@ -39,7 +45,7 @@ class TestTokenRotation:
         blacklist.is_blacklisted.return_value = False
         old_refresh_str, _ = self._create_refresh_token_str()
 
-        new_access, new_refresh = handler.refresh_access_token(old_refresh_str)
+        new_access, new_refresh, _ = handler.refresh_access_token(old_refresh_str)
 
         # Tokens must differ from the old one
         assert new_access != old_refresh_str
@@ -56,7 +62,7 @@ class TestTokenRotation:
         blacklist.is_blacklisted.return_value = False
         user_id = str(uuid.uuid4())
         old_refresh_str, payload = self._create_refresh_token_str(user_id=user_id)
-        new_access, _ = handler.refresh_access_token(old_refresh_str)
+        new_access, _, _ = handler.refresh_access_token(old_refresh_str)
 
         from rest_framework_simplejwt.tokens import AccessToken
         decoded = AccessToken(new_access)
@@ -76,6 +82,34 @@ class TestTokenRotation:
 
         blacklist.blacklist.assert_called_once()
         blacklist.blacklist_family.assert_called_once_with(payload["family"])
+
+    def test_legacy_payment_env_refresh_rotates_to_token_env(self, handler, blacklist, settings):
+        settings.TOKEN_ENV = "production"
+        settings.PAYMENT_ENV = "test"
+        settings.ACCEPT_LEGACY_PAYMENT_ENV_TOKENS = True
+        settings.SECRET_KEY = TEST_SECRET
+        settings.SIMPLE_JWT = {"SIGNING_KEY": TEST_SECRET, "ALGORITHM": "HS256"}
+
+        refresh_str, _ = self._create_refresh_token_str(env="test")
+
+        new_access, new_refresh, _ = handler.refresh_access_token(refresh_str)
+
+        from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+        assert AccessToken(new_access)["env"] == "production"
+        assert RefreshToken(new_refresh)["env"] == "production"
+
+    def test_legacy_payment_env_refresh_rejected_when_disabled(self, handler, blacklist, settings):
+        settings.TOKEN_ENV = "production"
+        settings.PAYMENT_ENV = "test"
+        settings.ACCEPT_LEGACY_PAYMENT_ENV_TOKENS = False
+        settings.SECRET_KEY = TEST_SECRET
+        settings.SIMPLE_JWT = {"SIGNING_KEY": TEST_SECRET, "ALGORITHM": "HS256"}
+
+        refresh_str, _ = self._create_refresh_token_str(env="test")
+
+        with pytest.raises(ValueError, match="Token environment mismatch"):
+            handler.refresh_access_token(refresh_str)
+        blacklist.blacklist.assert_not_called()
 
     def test_missing_family_rejected(self, handler, blacklist):
         from rest_framework_simplejwt.tokens import RefreshToken

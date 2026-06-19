@@ -445,6 +445,7 @@ Required worker/beat environment variables:
 ```env
 DJANGO_SETTINGS_MODULE=django_app.settings.production
 DJANGO_SECRET_KEY=<production-secret>
+TOKEN_ENV=production
 DATABASE_URL=<production-database-url>
 DATABASE_SSL=true
 REDIS_URL=<redis-or-rediss-url>
@@ -495,10 +496,23 @@ Password reset emails use Django's SMTP email backend with SendGrid SMTP in prod
 Required Render environment variables for Django web, Celery Worker, and Celery Beat:
 
 ```env
+TOKEN_ENV=production
 SENDGRID_API_KEY=<sendgrid-api-key>
 DEFAULT_FROM_EMAIL=no-reply@linkapro.rw
 FRONTEND_URL=https://www.linkapro.rw
 ```
+
+`TOKEN_ENV` controls identity/security token validity for access tokens, refresh tokens, password reset links, email verification links, and temporary 2FA tokens. Keep it stable as `production` across Django web, Celery Worker, and Celery Beat.
+
+`PAYMENT_ENV` controls payment provider mode only, for example `PAYMENT_ENV=test` or `PAYMENT_ENV=live`. Changing `PAYMENT_ENV` must not invalidate identity tokens or password reset links.
+
+During the transition away from legacy identity tokens that used `PAYMENT_ENV`, the backend can accept them with:
+
+```env
+ACCEPT_LEGACY_PAYMENT_ENV_TOKENS=true
+```
+
+Set this to `false` after existing short-lived reset/email/2FA/session tokens have expired.
 
 Production settings provide these SendGrid SMTP defaults:
 
