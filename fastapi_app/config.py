@@ -1,7 +1,7 @@
 import os
 import logging
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
 
@@ -14,8 +14,15 @@ LOCAL_CORS_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 PRODUCTION_CORS_ORIGINS = [
+    "https://www.linkapro.rw",
+    "https://linkapro.rw",
     "https://linkapro.vercel.app",
     "https://linkapro-frontend.vercel.app",
+]
+REQUIRED_PRODUCTION_CORS_ORIGINS = [
+    "https://www.linkapro.rw",
+    "https://linkapro.rw",
+    "https://linkapro.vercel.app",
 ]
 
 
@@ -55,11 +62,11 @@ def get_cors_origins() -> list[str]:
     origins = [origin for origin in configured if origin]
 
     if env_name == "production":
-        missing_required = [origin for origin in PRODUCTION_CORS_ORIGINS if origin not in origins]
+        missing_required = [origin for origin in REQUIRED_PRODUCTION_CORS_ORIGINS if origin not in origins]
         if missing_required:
             message = (
-                "FASTAPI_CORS_ORIGINS must explicitly include production frontend origins: "
-                + ", ".join(PRODUCTION_CORS_ORIGINS)
+                "FASTAPI_CORS_ORIGINS must explicitly include required production frontend origins: "
+                + ", ".join(missing_required)
             )
             logger.error(message, extra={"missing_origins": missing_required})
             raise RuntimeError(message)
@@ -79,3 +86,48 @@ def _normalize_origin(value: str) -> str | None:
         logger.warning("Ignoring invalid CORS origin.", extra={"origin": value})
         return None
     return origin
+
+
+def normalize_redis_url(redis_url: str, *, production: bool | None = None) -> str:
+    url = (redis_url or "").strip().strip('"').strip("'")
+    if not url:
+        raise RuntimeError("REDIS_URL is missing.")
+    parsed = urlparse(url)
+    if parsed.scheme not in {"redis", "rediss"}:
+        raise RuntimeError("REDIS_URL must start with redis:// or rediss://.")
+
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if parsed.scheme == "rediss":
+        cert_reqs = query.get("ssl_cert_reqs")
+        if cert_reqs == "CERT_REQUIRED":
+            query["ssl_cert_reqs"] = "required"
+        elif not cert_reqs:
+            query["ssl_cert_reqs"] = "required"
+        elif cert_reqs.lower() == "cert_none" or cert_reqs.lower() == "none":
+            is_production = production if production is not None else os.getenv("FASTAPI_ENV", "").lower() == "production"
+            if is_production:
+                raise RuntimeError("REDIS_URL must not use ssl_cert_reqs=none in production.")
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def mask_redis_url_for_logs(redis_url: str) -> str:
+    parsed = urlparse(redis_url or "")
+    if not parsed.netloc:
+        return "<invalid-redis-url>"
+    hostname = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    username = f"{parsed.username}:***@" if parsed.username else ""
+    return urlunparse(parsed._replace(netloc=f"{username}{hostname}{port}", query=""))
+
+
+def normalize_database_url(database_url: str) -> str:
+    url = (database_url or "").strip()
+    if not url:
+        raise RuntimeError("FASTAPI_DATABASE_URL is missing.")
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if not url.startswith("postgresql+asyncpg://"):
+        raise RuntimeError("FASTAPI_DATABASE_URL must use postgresql+asyncpg://")
+    return url

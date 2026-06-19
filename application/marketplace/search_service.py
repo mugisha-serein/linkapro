@@ -182,7 +182,11 @@ class MarketplaceSearchService:
                     )
                     return self._payload_to_result(cached)
             except RedisError:
-                logger.exception("Redis unavailable for marketplace search; continuing with database query.")
+                logger.warning(
+                    "marketplace_redis_unavailable",
+                    extra={"operation": "read_or_rate_limit"},
+                    exc_info=True,
+                )
                 cache_key = None
 
         result = await self._execute_search(normalized)
@@ -190,7 +194,11 @@ class MarketplaceSearchService:
             try:
                 await self.cache.set_cached_result(cache_key, result)
             except RedisError:
-                logger.exception("Failed to cache marketplace search result.")
+                logger.warning(
+                    "marketplace_redis_unavailable",
+                    extra={"operation": "write"},
+                    exc_info=True,
+                )
 
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
         logger.info(
