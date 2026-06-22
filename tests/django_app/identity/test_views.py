@@ -21,6 +21,19 @@ from tasks.email_tasks import send_password_reset_email_task
 pytestmark = pytest.mark.django_db(transaction=True)
 
 GENERIC_FORGOT_PASSWORD_DETAIL = "If an account exists for that email, password reset instructions have been sent."
+FORGOT_PASSWORD_SUCCESS_RESPONSE = {
+    "success": True,
+    "code": "password_reset_email_queued",
+    "message": GENERIC_FORGOT_PASSWORD_DETAIL,
+    "data": {},
+    "detail": GENERIC_FORGOT_PASSWORD_DETAIL,
+}
+PASSWORD_RESET_TOKEN_INVALID_RESPONSE = {
+    "success": False,
+    "code": "password_reset_token_invalid",
+    "message": "This reset link has expired or is invalid.",
+    "field_errors": {"token": ["Invalid or expired reset token."]},
+}
 
 
 def _create_delivery(user: DjangoUser, status=PasswordResetEmailDelivery.Status.QUEUED):
@@ -289,7 +302,7 @@ class TestIdentityViews:
         response = self.client.post(reverse("forgot-password"), {"email": "reset@example.com"}, format="json")
 
         assert response.status_code == 202
-        assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
+        assert response.data == FORGOT_PASSWORD_SUCCESS_RESPONSE
         assert enqueued["user_id"]
         assert enqueued["token"]
         assert enqueued["delivery_id"]
@@ -317,7 +330,7 @@ class TestIdentityViews:
         response = self.client.post(reverse("forgot-password"), {"email": "missing@example.com"}, format="json")
 
         assert response.status_code == 202
-        assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
+        assert response.data == FORGOT_PASSWORD_SUCCESS_RESPONSE
         assert mail.outbox == []
         assert enqueued == []
         assert PasswordResetEmailDelivery.objects.count() == 0
@@ -343,10 +356,19 @@ class TestIdentityViews:
         response = self.client.post(reverse("forgot-password"), {"email": "inactive@example.com"}, format="json")
 
         assert response.status_code == 202
-        assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
+        assert response.data == FORGOT_PASSWORD_SUCCESS_RESPONSE
         assert mail.outbox == []
         assert enqueued == []
         assert PasswordResetEmailDelivery.objects.count() == 0
+
+    def test_forgot_password_validation_error_uses_standard_contract(self):
+        response = self.client.post(reverse("forgot-password"), {"email": "not-an-email"}, format="json")
+
+        assert response.status_code == 400
+        assert response.data["success"] is False
+        assert response.data["code"] == "password_recovery_validation_failed"
+        assert response.data["message"] == "Please fix the highlighted fields."
+        assert "email" in response.data["field_errors"]
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
@@ -405,7 +427,7 @@ class TestIdentityViews:
         response = self.client.post(reverse("forgot-password"), {"email": "fail@example.com"}, format="json")
 
         assert response.status_code == 202
-        assert response.data == {"detail": GENERIC_FORGOT_PASSWORD_DETAIL}
+        assert response.data == FORGOT_PASSWORD_SUCCESS_RESPONSE
         assert mail.outbox == []
         assert "password_reset_email_dispatch_failed" in caplog.text
         assert "forgot_password_email_dispatch_deferred" in caplog.text
@@ -535,7 +557,8 @@ class TestIdentityViews:
         )
 
         assert response.status_code == 400
-        assert response.data["code"] == "password_reset_invalid"
+        assert response.data["success"] is False
+        assert response.data["code"] == "password_reset_validation_failed"
         assert response.data["message"] == "Please fix the highlighted fields."
         assert "token" in response.data["field_errors"]
 
@@ -549,7 +572,8 @@ class TestIdentityViews:
         )
 
         assert response.status_code == 400
-        assert response.data["code"] == "password_reset_invalid"
+        assert response.data["success"] is False
+        assert response.data["code"] == "password_reset_validation_failed"
         assert response.data["message"] == "Please fix the highlighted fields."
         assert "new_password" in response.data["field_errors"]
 
@@ -561,11 +585,7 @@ class TestIdentityViews:
         )
 
         assert response.status_code == 400
-        assert response.data == {
-            "code": "password_reset_token_invalid",
-            "message": "This reset link has expired or is invalid.",
-            "field_errors": {"token": ["Invalid or expired reset token."]},
-        }
+        assert response.data == PASSWORD_RESET_TOKEN_INVALID_RESPONSE
 
     def test_reset_password_missing_user_returns_same_token_invalid_response(self):
         token = JWTTokenService().create_password_reset_token(str(uuid.uuid4()))
@@ -577,11 +597,7 @@ class TestIdentityViews:
         )
 
         assert response.status_code == 400
-        assert response.data == {
-            "code": "password_reset_token_invalid",
-            "message": "This reset link has expired or is invalid.",
-            "field_errors": {"token": ["Invalid or expired reset token."]},
-        }
+        assert response.data == PASSWORD_RESET_TOKEN_INVALID_RESPONSE
 
     def test_reset_password_inactive_user_returns_same_token_invalid_response(self):
         user = DjangoUser.objects.create_user(
@@ -601,11 +617,7 @@ class TestIdentityViews:
         )
 
         assert response.status_code == 400
-        assert response.data == {
-            "code": "password_reset_token_invalid",
-            "message": "This reset link has expired or is invalid.",
-            "field_errors": {"token": ["Invalid or expired reset token."]},
-        }
+        assert response.data == PASSWORD_RESET_TOKEN_INVALID_RESPONSE
 
     def test_reset_password_valid_token_resets_password_successfully(self):
         user = DjangoUser.objects.create_user(
@@ -627,8 +639,11 @@ class TestIdentityViews:
         reset_token = PasswordResetToken.objects.get(user=user)
         assert response.status_code == 200
         assert response.data == {
-            "status": "password_reset",
+            "success": True,
+            "code": "password_reset_completed",
             "message": "Password updated successfully.",
+            "data": {"status": "password_reset"},
+            "status": "password_reset",
         }
         assert user.check_password("NewValidPass1!") is True
         assert reset_token.status == PasswordResetToken.Status.USED
@@ -660,11 +675,7 @@ class TestIdentityViews:
         reset_token = PasswordResetToken.objects.get(user=user)
         assert first_response.status_code == 200
         assert second_response.status_code == 400
-        assert second_response.data == {
-            "code": "password_reset_token_invalid",
-            "message": "This reset link has expired or is invalid.",
-            "field_errors": {"token": ["Invalid or expired reset token."]},
-        }
+        assert second_response.data == PASSWORD_RESET_TOKEN_INVALID_RESPONSE
         assert user.check_password("NewValidPass1!") is True
         assert reset_token.status == PasswordResetToken.Status.USED
 
@@ -697,11 +708,7 @@ class TestIdentityViews:
         assert revoked_response.status_code == 400
         assert expired_response.status_code == 400
         assert revoked_response.data == expired_response.data
-        assert revoked_response.data == {
-            "code": "password_reset_token_invalid",
-            "message": "This reset link has expired or is invalid.",
-            "field_errors": {"token": ["Invalid or expired reset token."]},
-        }
+        assert revoked_response.data == PASSWORD_RESET_TOKEN_INVALID_RESPONSE
 
     def test_new_reset_request_revokes_previous_active_token(self):
         user = DjangoUser.objects.create_user(

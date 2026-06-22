@@ -1,17 +1,3 @@
-Main backend weak spots
 
-6. Response shapes are inconsistent
-
-Forgot password returns:
-
-{ "detail": "..." }
-
-Reset password returns success:
-
-{ "status": "password_reset" }
-
-Reset failure returns:
-
-{ "error": "Invalid or expired reset token" }
 
 <|right now, I think vendor is completed for now, next move on planner but we start for wedding event especially, analyze the current planner backend and frontend and display all main|>

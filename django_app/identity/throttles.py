@@ -9,6 +9,8 @@ from django.core.cache import cache
 from rest_framework.exceptions import APIException
 from rest_framework.throttling import SimpleRateThrottle
 
+from django_app.common.api_responses import api_error_payload
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,11 +20,10 @@ class PasswordRecoveryRateLimited(APIException):
 
     def __init__(self, wait=None):
         self.wait = math.ceil(wait) if wait else None
-        super().__init__(
-            {
-                "code": self.default_code,
-                "message": "Too many password reset attempts. Please try again later.",
-            }
+        super().__init__("Too many password reset attempts. Please try again later.")
+        self.detail = api_error_payload(
+            code=self.default_code,
+            message="Too many password reset attempts. Please try again later.",
         )
 
 
@@ -32,11 +33,10 @@ class PasswordResetRateLimited(APIException):
 
     def __init__(self, wait=None):
         self.wait = math.ceil(wait) if wait else None
-        super().__init__(
-            {
-                "code": self.default_code,
-                "message": "Too many reset attempts. Please wait before trying again.",
-            }
+        super().__init__("Too many reset attempts. Please wait before trying again.")
+        self.detail = api_error_payload(
+            code=self.default_code,
+            message="Too many reset attempts. Please wait before trying again.",
         )
 
 

@@ -522,6 +522,18 @@ PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR=true
 
 Set `PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR=true` only on services behind Render or another trusted proxy that overwrites the forwarding header. Direct deployments should leave it `false` so clients cannot spoof their source IP. If the Redis-backed cache is unavailable, password recovery fails closed with a safe `429` and logs `rate_limiter_unavailable`.
 
+Password recovery responses use a stable envelope:
+
+```json
+{"success":true,"code":"password_reset_email_queued","message":"If an account exists for that email, password reset instructions have been sent.","data":{}}
+```
+
+```json
+{"success":false,"code":"password_reset_token_invalid","message":"This reset link has expired or is invalid.","field_errors":{"token":["Invalid or expired reset token."]}}
+```
+
+The forgot-password response temporarily retains `detail`, and reset success temporarily retains top-level `status`, while clients migrate to `message` and `data.status`.
+
 Required Render environment variables for Django web, Celery Worker, and Celery Beat:
 
 ```env
