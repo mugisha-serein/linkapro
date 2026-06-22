@@ -1,1 +1,1 @@
-"""Event template seeding helpers."""
+"""Temporary marker for event template seeding helpers."""
