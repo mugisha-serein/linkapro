@@ -145,7 +145,18 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
+    "DEFAULT_THROTTLE_RATES": {
+        "forgot_password_ip": os.environ.get("FORGOT_PASSWORD_IP_RATE", "5/min"),
+        "forgot_password_email": os.environ.get("FORGOT_PASSWORD_EMAIL_RATE", "3/hour"),
+        "reset_password_ip": os.environ.get("RESET_PASSWORD_IP_RATE", "10/min"),
+        "reset_password_token": os.environ.get("RESET_PASSWORD_TOKEN_RATE", "5/hour"),
+    },
 }
+
+RATE_LIMIT_HASH_KEY = os.environ.get("RATE_LIMIT_HASH_KEY", "")
+PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR = (
+    os.environ.get("PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR", "false").lower() == "true"
+)
 
 AUTH_USER_MODEL = "identity.User"
 

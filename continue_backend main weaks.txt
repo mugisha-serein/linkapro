@@ -1,9 +1,5 @@
 Main backend weak spots
 
-5. No visible rate limiting
-
-I did not see rate limiting around forgot password or reset password. That means /forgot-password/ can be spammed to send many emails, and /reset-password/ can be hammered with invalid tokens.
-
 6. Response shapes are inconsistent
 
 Forgot password returns:

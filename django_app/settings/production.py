@@ -5,6 +5,9 @@ from .base import _csv_env
 from django_app.common.redis_config import redis_ssl_options, redis_uses_tls, validate_redis_url
 
 DEBUG = False
+PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR = (
+    os.environ.get("PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR", "true").lower() == "true"
+)
 ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS")
 render_external_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
 if render_external_hostname and render_external_hostname not in ALLOWED_HOSTS:
