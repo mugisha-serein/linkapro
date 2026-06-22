@@ -42,6 +42,14 @@ from .services import (
 from application.identity.oauth_state import build_oauth_state, parse_oauth_state, ALLOWED_OAUTH_SIGNUP_ROLES
 from .cookies import clear_auth_cookies, set_refresh_cookie
 from .password_reset_email import GENERIC_FORGOT_PASSWORD_DETAIL, request_password_reset_email
+from .throttles import (
+    ForgotPasswordEmailThrottle,
+    ForgotPasswordIPThrottle,
+    PasswordRecoveryRateLimited,
+    PasswordResetRateLimited,
+    ResetPasswordIPThrottle,
+    ResetPasswordTokenThrottle,
+)
 from django_app.identity.models import PasswordResetToken, User
 from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_value_hash
 
@@ -389,6 +397,10 @@ class SetupPasswordView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ForgotPasswordIPThrottle, ForgotPasswordEmailThrottle]
+
+    def throttled(self, request, wait):
+        raise PasswordRecoveryRateLimited(wait)
 
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
@@ -412,6 +424,10 @@ class ForgotPasswordView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ResetPasswordIPThrottle, ResetPasswordTokenThrottle]
+
+    def throttled(self, request, wait):
+        raise PasswordResetRateLimited(wait)
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)

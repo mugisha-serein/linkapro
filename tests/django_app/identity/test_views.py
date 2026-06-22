@@ -3,6 +3,7 @@ import logging
 import pytest
 from datetime import timedelta
 from django.core import mail
+from django.core.cache import cache
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -39,6 +40,7 @@ def _issue_reset_token(user: DjangoUser) -> str:
 class TestIdentityViews:
     @pytest.fixture(autouse=True)
     def setup(self):
+        cache.clear()
         self.repo = DjangoUserRepository()
         self.hasher = DjangoPasswordHasher()
         self.client = APIClient()

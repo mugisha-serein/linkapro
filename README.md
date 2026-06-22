@@ -509,6 +509,19 @@ Password reset emails use Django's SMTP email backend with SendGrid SMTP in prod
 
 Password reset links are single-use. Django stores only a reset token `jti` and HMAC token hash, never the raw token or full reset URL. Requesting a new reset link revokes older active links for that user, and a successful reset marks the token as used. Legacy JWT-only reset links issued before single-use tracking are invalid after deployment; users can request a fresh reset link.
 
+Password recovery endpoints use Redis-backed DRF throttles keyed by HMAC fingerprints rather than raw emails or reset tokens:
+
+```env
+FORGOT_PASSWORD_IP_RATE=5/min
+FORGOT_PASSWORD_EMAIL_RATE=3/hour
+RESET_PASSWORD_IP_RATE=10/min
+RESET_PASSWORD_TOKEN_RATE=5/hour
+RATE_LIMIT_HASH_KEY=<optional-dedicated-hmac-key>
+PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR=true
+```
+
+Set `PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR=true` only on services behind Render or another trusted proxy that overwrites the forwarding header. Direct deployments should leave it `false` so clients cannot spoof their source IP. If the Redis-backed cache is unavailable, password recovery fails closed with a safe `429` and logs `rate_limiter_unavailable`.
+
 Required Render environment variables for Django web, Celery Worker, and Celery Beat:
 
 ```env
