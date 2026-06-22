@@ -22,6 +22,7 @@ from application.identity.commands import (
 )
 from application.identity.auth_policy import AuthenticationStatus
 from application.identity.queries import GetUserByIdQuery
+from django_app.common.api_responses import api_error, api_success
 
 from .serializers import (
     ForgotPasswordSerializer,
@@ -57,25 +58,19 @@ logger = logging.getLogger(__name__)
 
 
 def _password_reset_invalid_response(field_errors):
-    return Response(
-        {
-            "code": "password_reset_invalid",
-            "message": "Please fix the highlighted fields.",
-            "field_errors": field_errors,
-        },
+    return api_error(
+        code="password_reset_validation_failed",
+        message="Please fix the highlighted fields.",
+        field_errors=field_errors,
         status=status.HTTP_400_BAD_REQUEST,
     )
 
 
 def _password_reset_token_invalid_response():
-    return Response(
-        {
-            "code": "password_reset_token_invalid",
-            "message": "This reset link has expired or is invalid.",
-            "field_errors": {
-                "token": ["Invalid or expired reset token."],
-            },
-        },
+    return api_error(
+        code="password_reset_token_invalid",
+        message="This reset link has expired or is invalid.",
+        field_errors={"token": ["Invalid or expired reset token."]},
         status=status.HTTP_400_BAD_REQUEST,
     )
 
@@ -404,7 +399,13 @@ class ForgotPasswordView(APIView):
 
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return api_error(
+                code="password_recovery_validation_failed",
+                message="Please fix the highlighted fields.",
+                field_errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         email = serializer.validated_data["email"].strip().lower()
         try:
             request_password_reset_email(email)
@@ -415,9 +416,12 @@ class ForgotPasswordView(APIView):
                 exc_info=True,
             )
 
-        return Response(
-            {"detail": GENERIC_FORGOT_PASSWORD_DETAIL},
+        return api_success(
+            code="password_reset_email_queued",
+            message=GENERIC_FORGOT_PASSWORD_DETAIL,
+            data={},
             status=status.HTTP_202_ACCEPTED,
+            extra={"detail": GENERIC_FORGOT_PASSWORD_DETAIL},
         )
 
 
@@ -473,9 +477,12 @@ class ResetPasswordView(APIView):
                 "password_reset_token_consumed",
                 extra={"user_id": str(user.id), "jti": token_record.jti},
             )
-        return Response(
-            {"status": "password_reset", "message": "Password updated successfully."},
+        return api_success(
+            code="password_reset_completed",
+            message="Password updated successfully.",
+            data={"status": "password_reset"},
             status=status.HTTP_200_OK,
+            extra={"status": "password_reset"},
         )
 
 

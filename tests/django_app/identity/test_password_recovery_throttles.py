@@ -90,8 +90,10 @@ def test_forgot_password_ip_limit_returns_safe_429(client):
 
     assert response.status_code == 429
     assert response.data == {
+        "success": False,
         "code": "password_recovery_rate_limited",
         "message": "Too many password reset attempts. Please try again later.",
+        "field_errors": {},
     }
     assert int(response.headers["Retry-After"]) > 0
 
@@ -113,8 +115,10 @@ def test_reset_password_ip_limit_returns_safe_429(client):
 
     assert response.status_code == 429
     assert response.data == {
+        "success": False,
         "code": "password_reset_rate_limited",
         "message": "Too many reset attempts. Please wait before trying again.",
+        "field_errors": {},
     }
 
 
