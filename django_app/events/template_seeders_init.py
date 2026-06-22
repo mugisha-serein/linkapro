@@ -1,0 +1,1 @@
+"""Event template seeding helpers."""
