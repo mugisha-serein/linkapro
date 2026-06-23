@@ -524,18 +524,43 @@ Password reset emails use Django's SMTP email backend with SendGrid SMTP in prod
 
 Password reset links are single-use. Django stores only a reset token `jti` and HMAC token hash, never the raw token or full reset URL. Requesting a new reset link revokes older active links for that user, and a successful reset marks the token as used. Legacy JWT-only reset links issued before single-use tracking are invalid after deployment; users can request a fresh reset link.
 
-Password recovery endpoints use Redis-backed DRF throttles keyed by HMAC fingerprints rather than raw emails or reset tokens:
+Password recovery and identity auth endpoints use Redis-backed DRF throttles keyed by HMAC fingerprints rather than raw emails, reset tokens, or MFA temp tokens:
 
 ```env
 FORGOT_PASSWORD_IP_RATE=5/min
 FORGOT_PASSWORD_EMAIL_RATE=3/hour
 RESET_PASSWORD_IP_RATE=10/min
 RESET_PASSWORD_TOKEN_RATE=5/hour
+LOGIN_IP_RATE=10/min
+LOGIN_EMAIL_RATE=5/min
+LOGIN_USER_RATE=20/hour
+REGISTER_IP_RATE=5/hour
+REGISTER_EMAIL_DOMAIN_RATE=20/hour
+TWO_FACTOR_IP_RATE=10/min
+TWO_FACTOR_TEMP_TOKEN_RATE=5/min
+LOGIN_FAILURE_LOCKOUT_THRESHOLD=8
+LOGIN_FAILURE_LOCKOUT_SECONDS=900
+MFA_FAILURE_LOCKOUT_THRESHOLD=5
+MFA_FAILURE_LOCKOUT_SECONDS=900
 RATE_LIMIT_HASH_KEY=<optional-dedicated-hmac-key>
 PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR=true
 ```
 
-Set `PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR=true` only on services behind Render or another trusted proxy that overwrites the forwarding header. Direct deployments should leave it `false` so clients cannot spoof their source IP. If the Redis-backed cache is unavailable, password recovery fails closed with a safe `429` and logs `rate_limiter_unavailable`.
+Set `PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR=true` only on services behind Render or another trusted proxy that overwrites the forwarding header. Direct deployments should leave it `false` so clients cannot spoof their source IP. If the Redis-backed cache is unavailable, password recovery, login, registration, and MFA login fail closed with a safe `429` and log `rate_limiter_unavailable`.
+
+Login, registration, and MFA throttled responses use the standard identity error envelope:
+
+```json
+{"success":false,"code":"login_rate_limited","message":"Too many sign-in attempts. Please try again later.","field_errors":{}}
+```
+
+```json
+{"success":false,"code":"registration_rate_limited","message":"Too many account creation attempts. Please try again later.","field_errors":{}}
+```
+
+```json
+{"success":false,"code":"mfa_rate_limited","message":"Too many verification attempts. Please try again later.","field_errors":{}}
+```
 
 Password recovery responses use a stable envelope:
 
@@ -556,6 +581,18 @@ TOKEN_ENV=production
 SENDGRID_API_KEY=<sendgrid-api-key>
 DEFAULT_FROM_EMAIL=no-reply@linkapro.rw
 FRONTEND_URL=https://www.linkapro.rw
+LOGIN_IP_RATE=10/min
+LOGIN_EMAIL_RATE=5/min
+LOGIN_USER_RATE=20/hour
+REGISTER_IP_RATE=5/hour
+REGISTER_EMAIL_DOMAIN_RATE=20/hour
+TWO_FACTOR_IP_RATE=10/min
+TWO_FACTOR_TEMP_TOKEN_RATE=5/min
+LOGIN_FAILURE_LOCKOUT_THRESHOLD=8
+LOGIN_FAILURE_LOCKOUT_SECONDS=900
+MFA_FAILURE_LOCKOUT_THRESHOLD=5
+MFA_FAILURE_LOCKOUT_SECONDS=900
+RATE_LIMIT_HASH_KEY=<strong-dedicated-hmac-key>
 ```
 
 `TOKEN_ENV` controls identity/security token validity for access tokens, refresh tokens, password reset links, email verification links, and temporary 2FA tokens. Keep it stable as `production` across Django web, Celery Worker, and Celery Beat.
