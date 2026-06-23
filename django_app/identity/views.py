@@ -1,4 +1,3 @@
-import json
 import logging
 from urllib.parse import urlencode
 
@@ -95,7 +94,14 @@ def _frontend_url() -> str:
 
 def _redirect_error(reason: str):
     params = urlencode({"reason": reason})
-    return redirect(f"{_frontend_url()}/auth/error?{params}")
+    return _no_store_redirect(f"{_frontend_url()}/auth/error?{params}")
+
+
+def _no_store_redirect(url: str):
+    response = redirect(url)
+    response["Cache-Control"] = "no-store"
+    response["Pragma"] = "no-cache"
+    return response
 
 
 def _extract_refresh_token(request) -> str | None:
@@ -534,13 +540,11 @@ class GoogleCallbackView(View):
 
         if result.requires_2fa:
             params = urlencode({"temp_token": result.temp_token or ""})
-            response = redirect(f"{frontend_url}/auth/2fa?{params}")
+            response = _no_store_redirect(f"{frontend_url}/auth/2fa?{params}")
             clear_auth_cookies(response)
             return response
 
-        user_json = json.dumps(result.bootstrap_user or {})
-        params = urlencode({"access": result.access or "", "user": user_json})
-        response = redirect(f"{frontend_url}/auth/success?{params}")
+        response = _no_store_redirect(f"{frontend_url}/auth/success")
         if result.refresh:
             set_refresh_cookie(response, result.refresh)
         return response

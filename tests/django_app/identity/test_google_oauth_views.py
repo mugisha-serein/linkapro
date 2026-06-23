@@ -73,6 +73,9 @@ class TestGoogleOAuthViews:
         response = self.client.get(reverse("google-callback"))
         assert response.status_code == 302
         assert response.url == "http://localhost:3000/auth/error?reason=missing_code"
+        assert response["Cache-Control"] == "no-store"
+        assert response["Pragma"] == "no-cache"
+        assert response.cookies["refresh_token"].value == ""
 
     def test_google_callback_redirects_to_2fa_when_required(self, monkeypatch, settings):
         from django_app.identity import views
@@ -91,8 +94,13 @@ class TestGoogleOAuthViews:
         response = self.client.get(reverse("google-callback"), {"code": "oauth-code"})
         assert response.status_code == 302
         assert response.url == "http://localhost:3000/auth/2fa?temp_token=temp-abc"
+        assert "access=" not in response.url
+        assert "user=" not in response.url
+        assert response.cookies["refresh_token"].value == ""
+        assert response["Cache-Control"] == "no-store"
+        assert response["Pragma"] == "no-cache"
 
-    def test_google_callback_redirects_success_with_tokens(self, monkeypatch, settings):
+    def test_google_callback_redirects_success_with_refresh_cookie_only(self, monkeypatch, settings):
         from django_app.identity import views
 
         settings.DEBUG = True
@@ -130,10 +138,27 @@ class TestGoogleOAuthViews:
 
         response = self.client.get(reverse("google-callback"), {"code": "oauth-code"})
         assert response.status_code == 302
-        assert response.url.startswith("http://localhost:3000/auth/success?access=access-token")
-        assert "user=" in response.url
-        assert "OAuth" in response.url
+        assert response.url == "http://localhost:3000/auth/success"
+        assert "access" not in response.url
+        assert "user" not in response.url
+        assert "OAuth" not in response.url
         assert "refresh_token" in response.cookies
+        assert response.cookies["refresh_token"].value == "refresh-token"
+        assert response.cookies["refresh_token"]["httponly"] is True
+        assert response["Cache-Control"] == "no-store"
+        assert response["Pragma"] == "no-cache"
+
+    def test_google_callback_oauth_error_redirect_clears_cookies(self, settings):
+        settings.DEBUG = True
+        settings.FRONTEND_URL = "http://localhost:3000"
+
+        response = self.client.get(reverse("google-callback"), {"error": "access_denied"})
+
+        assert response.status_code == 302
+        assert response.url == "http://localhost:3000/auth/error?reason=access_denied"
+        assert response["Cache-Control"] == "no-store"
+        assert response["Pragma"] == "no-cache"
+        assert response.cookies["refresh_token"].value == ""
 
     def test_google_callback_rejects_non_https_frontend_in_production(self, settings):
         settings.DEBUG = False
