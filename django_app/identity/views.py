@@ -10,7 +10,6 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from application.identity.commands import (
@@ -54,6 +53,52 @@ from django_app.identity.models import PasswordResetToken, User
 from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_value_hash
 
 logger = logging.getLogger(__name__)
+
+
+def _auth_error_contract(auth_status):
+    mapping = {
+        AuthenticationStatus.INVALID_CREDENTIALS: (
+            "invalid_credentials",
+            "Invalid email or password.",
+            {},
+        ),
+        AuthenticationStatus.INACTIVE: (
+            "invalid_credentials",
+            "Invalid email or password.",
+            {},
+        ),
+        AuthenticationStatus.SOCIAL_LOGIN_ONLY: (
+            "invalid_credentials",
+            "Invalid email or password.",
+            {},
+        ),
+        AuthenticationStatus.INVALID_MFA_CODE: (
+            "invalid_mfa_code",
+            "Invalid verification code.",
+            {"token": ["Invalid verification code."]},
+        ),
+        AuthenticationStatus.INVALID_TEMP_TOKEN: (
+            "invalid_mfa_session",
+            "Your verification session has expired. Please sign in again.",
+            {"temp_token": ["Verification session expired."]},
+        ),
+    }
+    return mapping.get(
+        auth_status,
+        ("authentication_failed", "Authentication failed.", {}),
+    )
+
+
+def _auth_error_response(auth_status, request=None):
+    code, message, field_errors = _auth_error_contract(auth_status)
+    logger.info("identity_authentication_failed", extra={"auth_status": getattr(auth_status, "value", str(auth_status))})
+    return api_error(
+        code=code,
+        message=message,
+        field_errors=field_errors,
+        status=status.HTTP_401_UNAUTHORIZED,
+        request=request,
+    )
 
 
 def _password_reset_invalid_response(field_errors):
@@ -153,23 +198,42 @@ class RegisterView(APIView):
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return api_error(
+                code="registration_validation_failed",
+                message="Please fix the highlighted fields.",
+                field_errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+                request=request,
+            )
         cmd = serializer.to_command()
         handlers = get_command_handlers()
         try:
             user_dto = handlers.register_user(cmd)
-            return Response(
-                {
-                    "id": str(user_dto.id),
-                    "email": user_dto.email,
-                    "first_name": user_dto.first_name,
-                    "last_name": user_dto.last_name,
-                    "role": user_dto.role,
+            return api_success(
+                code="registration_completed",
+                message="Account created successfully.",
+                data={
+                    "user": {
+                        "id": str(user_dto.id),
+                        "email": user_dto.email,
+                        "first_name": user_dto.first_name,
+                        "last_name": user_dto.last_name,
+                        "role": user_dto.role,
+                        "is_verified": getattr(user_dto, "is_verified", False),
+                    }
                 },
                 status=status.HTTP_201_CREATED,
+                request=request,
             )
-        except ValueError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError:
+            return api_error(
+                code="registration_validation_failed",
+                message="Please fix the highlighted fields.",
+                field_errors={"email": ["Unable to create an account with these details."]},
+                status=status.HTTP_400_BAD_REQUEST,
+                request=request,
+            )
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -178,36 +242,46 @@ class LoginView(APIView):
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return api_error(
+                code="login_validation_failed",
+                message="Please fix the highlighted fields.",
+                field_errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+                request=request,
+            )
         cmd = serializer.to_command()
         session = get_auth_session_facade()
         auth_result = session.login(cmd)
         if auth_result.status is AuthenticationStatus.MFA_REQUIRED:
-            response = Response(
-                {
+            response = api_success(
+                code="mfa_required",
+                message="Two-factor authentication is required.",
+                data={
                     "requires_2fa": True,
                     "temp_token": auth_result.temp_token,
                     "expires_in": 180,
-                }
+                },
+                request=request,
             )
             clear_auth_cookies(response)
             return response
 
         if auth_result.status is not AuthenticationStatus.AUTHENTICATED:
-            response = Response(
-                {"error": auth_result.status.value},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            response = _auth_error_response(auth_result.status, request=request)
             clear_auth_cookies(response)
             return response
 
         user = auth_result.user
-        response = Response(
-            {
-                "access_token": auth_result.access_token,
+        response = api_success(
+            code="login_completed",
+            message="Signed in successfully.",
+            data={
+                "access": auth_result.access_token,
                 "token_type": "Bearer",
                 "user": auth_result.bootstrap_user or _bootstrap_user_payload(user),
-            }
+            },
+            request=request,
         )
         set_refresh_cookie(response, auth_result.refresh_token)
         return response
@@ -218,7 +292,14 @@ class LoginTwoFactorView(APIView):
 
     def post(self, request):
         serializer = TwoFactorLoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return api_error(
+                code="mfa_validation_failed",
+                message="Please fix the highlighted fields.",
+                field_errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+                request=request,
+            )
         cmd = LoginTwoFactorCommand(
             temp_token=serializer.validated_data["temp_token"],
             token=serializer.validated_data["token"],
@@ -226,21 +307,21 @@ class LoginTwoFactorView(APIView):
         session = get_auth_session_facade()
         auth_result = session.login_two_factor(cmd)
         if auth_result.status is not AuthenticationStatus.AUTHENTICATED:
-            response = Response(
-                {"error": auth_result.status.value},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            response = _auth_error_response(auth_result.status, request=request)
             clear_auth_cookies(response)
             return response
 
         user = auth_result.user
-        response = Response(
-            {
-                "access_token": auth_result.access_token,
+        response = api_success(
+            code="mfa_login_completed",
+            message="Signed in successfully.",
+            data={
+                "access": auth_result.access_token,
                 "token_type": "Bearer",
                 "user": auth_result.bootstrap_user or _bootstrap_user_payload(user),
             },
             status=status.HTTP_200_OK,
+            request=request,
         )
         set_refresh_cookie(response, auth_result.refresh_token)
         return response
@@ -253,24 +334,37 @@ class TokenRefreshView(APIView):
     def post(self, request):
         refresh_token = _extract_refresh_token(request)
         if not refresh_token:
-            response = Response({"error": "Missing refresh token"}, status=status.HTTP_401_UNAUTHORIZED)
+            response = api_error(
+                code="refresh_token_missing",
+                message="Authentication required.",
+                status=status.HTTP_401_UNAUTHORIZED,
+                request=request,
+            )
             clear_auth_cookies(response)
             return response
 
         session = get_auth_session_facade()
         try:
             result = session.refresh_session(refresh_token)
-        except ValueError as e:
-            response = Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+        except ValueError:
+            response = api_error(
+                code="refresh_token_invalid",
+                message="Authentication required.",
+                status=status.HTTP_401_UNAUTHORIZED,
+                request=request,
+            )
             clear_auth_cookies(response)
             return response
 
-        response = Response(
-            {
+        response = api_success(
+            code="token_refreshed",
+            message="Session refreshed.",
+            data={
                 "access": result.access_token,
                 "user": result.bootstrap_user,
             },
             status=status.HTTP_200_OK,
+            request=request,
         )
         set_refresh_cookie(response, result.refresh_token)
         return response
@@ -283,19 +377,37 @@ class TokenRevokeView(APIView):
     def post(self, request):
         refresh_token = _extract_refresh_token(request)
         if not refresh_token:
-            response = Response({"error": "Missing refresh token"}, status=status.HTTP_401_UNAUTHORIZED)
+            response = api_success(
+                code="session_revoked",
+                message="Signed out successfully.",
+                data={},
+                status=status.HTTP_200_OK,
+                request=request,
+            )
             clear_auth_cookies(response)
             return response
 
         session = get_auth_session_facade()
         try:
             session.revoke_session(refresh_token)
-        except ValueError as e:
-            response = Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+        except ValueError:
+            response = api_success(
+                code="session_revoked",
+                message="Signed out successfully.",
+                data={},
+                status=status.HTTP_200_OK,
+                request=request,
+            )
             clear_auth_cookies(response)
             return response
 
-        response = Response({"status": "revoked"}, status=status.HTTP_200_OK)
+        response = api_success(
+            code="session_revoked",
+            message="Signed out successfully.",
+            data={},
+            status=status.HTTP_200_OK,
+            request=request,
+        )
         clear_auth_cookies(response)
         return response
 
@@ -308,15 +420,23 @@ class EnableTwoFactorView(APIView):
         handlers = get_command_handlers()
         try:
             setup_dto = handlers.enable_two_factor(cmd)
-            return Response(
-                {
+            return api_success(
+                code="mfa_setup_started",
+                message="Two-factor setup started.",
+                data={
                     "secret": setup_dto.secret,
                     "provisioning_uri": setup_dto.provisioning_uri,
                     "qr_code_base64": setup_dto.qr_code_base64,
-                }
+                },
+                request=request,
             )
-        except ValueError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError:
+            return api_error(
+                code="mfa_setup_failed",
+                message="Unable to start two-factor setup.",
+                status=status.HTTP_400_BAD_REQUEST,
+                request=request,
+            )
 
 
 class VerifyTwoFactorSetupView(APIView):
@@ -324,7 +444,14 @@ class VerifyTwoFactorSetupView(APIView):
 
     def post(self, request):
         serializer = TwoFactorSetupVerifySerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return api_error(
+                code="mfa_setup_validation_failed",
+                message="Please fix the highlighted fields.",
+                field_errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+                request=request,
+            )
         cmd = VerifyTwoFactorSetupCommand(
             user_id=request.user.id,
             token=serializer.validated_data["token"],
@@ -332,9 +459,20 @@ class VerifyTwoFactorSetupView(APIView):
         handlers = get_command_handlers()
         try:
             handlers.verify_two_factor_setup(cmd)
-            return Response({"status": "2FA enabled"})
-        except ValueError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return api_success(
+                code="mfa_enabled",
+                message="Two-factor authentication enabled.",
+                data={},
+                request=request,
+            )
+        except ValueError:
+            return api_error(
+                code="mfa_setup_verification_failed",
+                message="Invalid verification code.",
+                field_errors={"token": ["Invalid verification code."]},
+                status=status.HTTP_400_BAD_REQUEST,
+                request=request,
+            )
 
 
 def _serialize_user_profile(user_dto) -> dict:
@@ -355,13 +493,30 @@ class ProfileView(APIView):
         handlers = get_query_handlers()
         user_dto = handlers.get_user_by_id(GetUserByIdQuery(user_id=request.user.id))
         if not user_dto:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+            return api_error(
+                code="profile_not_found",
+                message="User profile not found.",
+                status=status.HTTP_404_NOT_FOUND,
+                request=request,
+            )
 
-        return Response(_serialize_user_profile(user_dto))
+        return api_success(
+            code="profile_loaded",
+            message="Profile loaded.",
+            data={"user": _serialize_user_profile(user_dto)},
+            request=request,
+        )
 
     def patch(self, request):
         serializer = UpdateProfileSerializer(data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return api_error(
+                code="profile_validation_failed",
+                message="Please fix the highlighted fields.",
+                field_errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+                request=request,
+            )
         handlers = get_command_handlers()
         try:
             user_dto = handlers.update_profile(
@@ -371,9 +526,19 @@ class ProfileView(APIView):
                     last_name=serializer.validated_data.get("last_name"),
                 )
             )
-            return Response(_serialize_user_profile(user_dto))
-        except ValueError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return api_success(
+                code="profile_updated",
+                message="Profile updated successfully.",
+                data={"user": _serialize_user_profile(user_dto)},
+                request=request,
+            )
+        except ValueError:
+            return api_error(
+                code="profile_update_failed",
+                message="Unable to update profile.",
+                status=status.HTTP_400_BAD_REQUEST,
+                request=request,
+            )
 
 
 class SetupPasswordView(APIView):
@@ -381,18 +546,30 @@ class SetupPasswordView(APIView):
 
     def post(self, request):
         serializer = SetupPasswordSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return api_error(
+                code="password_setup_validation_failed",
+                message="Please fix the highlighted fields.",
+                field_errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+                request=request,
+            )
         request.user.set_password(serializer.validated_data["password"])
         request.user.save(update_fields=["password", "updated_at"])
         handlers = get_query_handlers()
         user_dto = handlers.get_user_by_id(GetUserByIdQuery(user_id=request.user.id))
-        return Response({
-            "user": _serialize_user_profile(user_dto),
-            "role": user_dto.role,
-            "next_path": "/dashboard" if user_dto.role == "planner" else f"/{user_dto.role}/dashboard",
-            "requires_password_setup": False,
-            "vendor_profile": None,
-        })
+        return api_success(
+            code="password_setup_completed",
+            message="Password set successfully.",
+            data={
+                "user": _serialize_user_profile(user_dto),
+                "role": user_dto.role,
+                "next_path": "/dashboard" if user_dto.role == "planner" else f"/{user_dto.role}/dashboard",
+                "requires_password_setup": False,
+                "vendor_profile": None,
+            },
+            request=request,
+        )
 
 
 @method_decorator(csrf_exempt, name="dispatch")

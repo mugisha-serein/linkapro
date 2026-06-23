@@ -52,7 +52,24 @@ def _issue_reset_token(user: DjangoUser) -> str:
 
 class TestIdentityViews:
     @pytest.fixture(autouse=True)
-    def setup(self):
+    def setup(self, monkeypatch):
+        class InMemoryTokenBlacklist:
+            blacklisted = set()
+            blacklisted_families = set()
+
+            def is_blacklisted(self, jti):
+                return jti in self.blacklisted
+
+            def blacklist(self, jti, ttl):
+                self.blacklisted.add(jti)
+
+            def is_family_blacklisted(self, family_id):
+                return family_id in self.blacklisted_families
+
+            def blacklist_family(self, family_id):
+                self.blacklisted_families.add(family_id)
+
+        monkeypatch.setattr("django_app.identity.services.RedisTokenBlacklist", InMemoryTokenBlacklist)
         cache.clear()
         self.repo = DjangoUserRepository()
         self.hasher = DjangoPasswordHasher()
@@ -69,7 +86,9 @@ class TestIdentityViews:
         }
         response = self.client.post(url, data, format="json")
         assert response.status_code == 201
-        assert response.data["email"] == "new@example.com"
+        assert response.data["success"] is True
+        assert response.data["code"] == "registration_completed"
+        assert response.data["data"]["user"]["email"] == "new@example.com"
 
         user = self.repo.get_by_email(Email("new@example.com"))
         assert user is not None
@@ -97,7 +116,9 @@ class TestIdentityViews:
         }
         response = self.client.post(url, data, format="json")
         assert response.status_code == 400
-        assert "already exists" in str(response.data["error"])
+        assert response.data["success"] is False
+        assert response.data["code"] == "registration_validation_failed"
+        assert "email" in response.data["field_errors"]
 
     def test_register_then_login_success(self):
         register_url = reverse("register")
@@ -125,11 +146,13 @@ class TestIdentityViews:
             format="json",
         )
         assert login_response.status_code == 200
-        assert "access_token" in login_response.data
+        assert login_response.data["success"] is True
+        assert login_response.data["code"] == "login_completed"
+        assert "access" in login_response.data["data"]
         assert "refresh_token" not in login_response.data
-        assert "user" in login_response.data
-        assert login_response.data["user"]["display_name"] == "Fresh User"
-        assert login_response.data["user"]["requires_password_setup"] is False
+        assert "user" in login_response.data["data"]
+        assert login_response.data["data"]["user"]["display_name"] == "Fresh User"
+        assert login_response.data["data"]["user"]["requires_password_setup"] is False
         assert "refresh_token" in login_response.cookies
 
     def test_login_success(self):
@@ -168,7 +191,56 @@ class TestIdentityViews:
         data = {"email": "wrong-login@example.com", "password": "WrongPass1"}
         response = self.client.post(url, data, format="json")
         assert response.status_code == 401
-        assert "error" in response.data
+        assert response.data["success"] is False
+        assert response.data["code"] == "invalid_credentials"
+        assert "error" not in response.data
+
+    def test_login_mfa_required_uses_standard_contract(self):
+        user = DjangoUser.objects.create_user(
+            email="mfa-required@example.com",
+            password="StrongPass1",
+            first_name="Mfa",
+            last_name="Required",
+            role="planner",
+        )
+        user.totp_secret = "JBSWY3DPEHPK3PXP"
+        user.two_factor_enabled = True
+        user.save(update_fields=["totp_secret", "two_factor_enabled"])
+
+        response = self.client.post(
+            reverse("login"),
+            {"email": "mfa-required@example.com", "password": "StrongPass1"},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        assert response.data["success"] is True
+        assert response.data["code"] == "mfa_required"
+        assert response.data["data"]["requires_2fa"] is True
+        assert response.data["data"]["temp_token"]
+
+    def test_login_two_factor_invalid_code_uses_standard_contract(self):
+        user = DjangoUser.objects.create_user(
+            email="mfa-invalid@example.com",
+            password="StrongPass1",
+            first_name="Mfa",
+            last_name="Invalid",
+            role="planner",
+            totp_secret="JBSWY3DPEHPK3PXP",
+            two_factor_enabled=True,
+        )
+        temp_token = JWTTokenService().create_temp_token(str(user.id))
+
+        response = self.client.post(
+            reverse("2fa-login"),
+            {"temp_token": temp_token, "token": "000000"},
+            format="json",
+        )
+
+        assert response.status_code == 401
+        assert response.data["success"] is False
+        assert response.data["code"] == "invalid_mfa_code"
+        assert response.data["field_errors"]["token"] == ["Invalid verification code."]
 
     def test_profile_endpoint_returns_authenticated_user(self):
         user = DjangoUser.objects.create_user(
@@ -182,9 +254,11 @@ class TestIdentityViews:
 
         response = self.client.get(reverse("profile"))
         assert response.status_code == 200
-        assert response.data["email"] == "profile@example.com"
-        assert response.data["role"] == "planner"
-        assert response.data["requires_password_setup"] is False
+        assert response.data["success"] is True
+        assert response.data["code"] == "profile_loaded"
+        assert response.data["data"]["user"]["email"] == "profile@example.com"
+        assert response.data["data"]["user"]["role"] == "planner"
+        assert response.data["data"]["user"]["requires_password_setup"] is False
 
     def test_profile_update_preserves_password_setup_state(self):
         user = DjangoUser.objects.create_user(
@@ -203,9 +277,34 @@ class TestIdentityViews:
         )
 
         assert response.status_code == 200
-        assert response.data["first_name"] == "Updated"
-        assert response.data["requires_password_setup"] is False
-        assert response.data["has_password"] is True
+        assert response.data["success"] is True
+        assert response.data["code"] == "profile_updated"
+        assert response.data["data"]["user"]["first_name"] == "Updated"
+        assert response.data["data"]["user"]["requires_password_setup"] is False
+        assert response.data["data"]["user"]["has_password"] is True
+
+    def test_setup_password_success_uses_standard_contract(self):
+        user = DjangoUser.objects.create_user(
+            email="setup-contract@example.com",
+            password=None,
+            first_name="Setup",
+            last_name="Contract",
+            role="vendor",
+        )
+        self.client.force_authenticate(user=user)
+
+        response = self.client.post(
+            reverse("setup-password"),
+            {"password": "StrongPass1"},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        assert response.data["success"] is True
+        assert response.data["code"] == "password_setup_completed"
+        assert response.data["data"]["user"]["email"] == "setup-contract@example.com"
+        assert response.data["data"]["requires_password_setup"] is False
+        assert response.data["data"]["next_path"] == "/vendor/dashboard"
 
     def test_refresh_token_returns_access_token(self):
         user = DjangoUser.objects.create_user(
@@ -226,8 +325,10 @@ class TestIdentityViews:
         self.client.credentials()
         response = self.client.post(reverse("token-refresh"), {"refresh": refresh_token}, format="json")
         assert response.status_code == 200
-        assert "access" in response.data
-        assert "user" in response.data
+        assert response.data["success"] is True
+        assert response.data["code"] == "token_refreshed"
+        assert "access" in response.data["data"]
+        assert "user" in response.data["data"]
         assert "refresh_token" in response.cookies
 
     def test_refresh_token_can_use_cookie(self):
@@ -248,8 +349,10 @@ class TestIdentityViews:
         self.client.cookies["refresh_token"] = refresh_token
         response = self.client.post(reverse("token-refresh"), format="json")
         assert response.status_code == 200
-        assert "access" in response.data
-        assert "user" in response.data
+        assert response.data["success"] is True
+        assert response.data["code"] == "token_refreshed"
+        assert "access" in response.data["data"]
+        assert "user" in response.data["data"]
 
     def test_revoke_token_clears_cookies(self):
         user = DjangoUser.objects.create_user(
@@ -268,7 +371,9 @@ class TestIdentityViews:
 
         response = self.client.post(reverse("token-revoke"), {"refresh": refresh_token}, format="json")
         assert response.status_code == 200
-        assert response.data["status"] == "revoked"
+        assert response.data["success"] is True
+        assert response.data["code"] == "session_revoked"
+        assert response.data["data"] == {}
         assert "access_token" in response.cookies
         assert response.cookies["access_token"].value == ""
         assert response.cookies["access_token"]["max-age"] == 0

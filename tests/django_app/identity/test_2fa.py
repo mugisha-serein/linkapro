@@ -25,8 +25,10 @@ class TestTwoFactor:
         url = reverse("2fa-enable")
         response = self.client.post(url)
         assert response.status_code == 200
-        assert "secret" in response.data
-        assert "provisioning_uri" in response.data
+        assert response.data["success"] is True
+        assert response.data["code"] == "mfa_setup_started"
+        assert "secret" in response.data["data"]
+        assert "provisioning_uri" in response.data["data"]
 
     def test_verify_setup_with_valid_code(self):
         user = User.objects.create_user(
@@ -41,7 +43,7 @@ class TestTwoFactor:
         # Enable 2FA (gets secret)
         enable_url = reverse("2fa-enable")
         resp = self.client.post(enable_url)
-        secret = resp.data["secret"]
+        secret = resp.data["data"]["secret"]
 
         # Generate valid TOTP code
         totp = pyotp.TOTP(secret)
@@ -51,6 +53,8 @@ class TestTwoFactor:
         verify_url = reverse("2fa-verify-setup")
         resp = self.client.post(verify_url, {"token": valid_code}, format="json")
         assert resp.status_code == 200
+        assert resp.data["success"] is True
+        assert resp.data["code"] == "mfa_enabled"
 
         user.refresh_from_db()
         assert user.two_factor_enabled is True
@@ -81,8 +85,10 @@ class TestTwoFactor:
             format="json",
         )
         assert resp.status_code == 200
-        assert resp.data.get("requires_2fa") is True
-        temp_token = resp.data["temp_token"]
+        assert resp.data["success"] is True
+        assert resp.data["code"] == "mfa_required"
+        assert resp.data["data"]["requires_2fa"] is True
+        temp_token = resp.data["data"]["temp_token"]
 
         # Step 2: complete 2FA
         code = pyotp.TOTP(secret).now()
@@ -93,4 +99,6 @@ class TestTwoFactor:
             format="json",
         )
         assert resp.status_code == 200
-        assert "access_token" in resp.data
+        assert resp.data["success"] is True
+        assert resp.data["code"] == "mfa_login_completed"
+        assert "access" in resp.data["data"]
