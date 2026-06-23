@@ -150,6 +150,7 @@ REST_FRAMEWORK = {
         "forgot_password_email": os.environ.get("FORGOT_PASSWORD_EMAIL_RATE", "3/hour"),
         "reset_password_ip": os.environ.get("RESET_PASSWORD_IP_RATE", "10/min"),
         "reset_password_token": os.environ.get("RESET_PASSWORD_TOKEN_RATE", "5/hour"),
+        "public_vendor_inquiry": os.environ.get("PUBLIC_VENDOR_INQUIRY_RATE", "5/hour"),
     },
 }
 

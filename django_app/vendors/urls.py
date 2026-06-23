@@ -15,6 +15,7 @@ from .views import (
     VendorAnalyticsView,
     VendorActivityView,
     AdminPendingVendorListView,
+    PublicVendorProfileView,
 )
 
 urlpatterns = [
@@ -33,5 +34,7 @@ urlpatterns = [
     path("analytics/", VendorAnalyticsView.as_view(), name="vendor-analytics"),
     path("activity/", VendorActivityView.as_view(), name="vendor-activity"),
     path("pending/", AdminPendingVendorListView.as_view(), name="admin-pending-vendors"),
+    path("public/<uuid:vendor_id>/", PublicVendorProfileView.as_view(), name="public-vendor-profile"),
+    path("public/<uuid:vendor_id>/inquiries/", PublicInquiryView.as_view(), name="public-inquiries"),
     path("public/<uuid:vendor_id>/inquiry/", PublicInquiryView.as_view(), name="public-inquiry"),
 ]
