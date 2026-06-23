@@ -38,14 +38,20 @@ class SearchResponse(BaseModel):
 class ReviewResponse(BaseModel):
     id: str
     vendor_id: str
-    author_user_id: str
+    author_display_name: str = "Verified customer"
     rating: int
     comment: Optional[str]
     created_at: datetime
 
     @classmethod
     def from_dto(cls, dto):
-        return cls(**dto.__dict__)
+        return cls(
+            id=str(dto.id),
+            vendor_id=str(dto.vendor_id),
+            rating=dto.rating,
+            comment=dto.comment,
+            created_at=dto.created_at,
+        )
 
 class PostReviewRequest(BaseModel):
     author_user_id: str  # UUID as string

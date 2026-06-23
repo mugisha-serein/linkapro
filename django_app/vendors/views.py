@@ -1,18 +1,20 @@
 import logging
 import uuid
+import httpx
 from pathlib import Path
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.conf import settings
 from django.core.files.storage import default_storage
-from django.db.models import Max
+from django.db.models import Max, Prefetch
 from django.utils.decorators import method_decorator
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django_app.common.permissions import IsVendor, IsAdmin
+from django_app.common.api_responses import api_success
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .serializers import (
@@ -23,10 +25,13 @@ from .serializers import (
     SubmitForReviewSerializer,
     ReorderImagesSerializer,
     VerificationDocumentUploadSerializer,
+    VendorPublicProfileSerializer,
 )
 from .models import PortfolioImage as PortfolioImageModel
 from .models import VerificationDocument
 from .models import VendorProfile as VendorProfileModel
+from .models import ServicePackage as ServicePackageModel
+from .throttles import PublicVendorInquiryThrottle
 from .services import get_command_handlers, get_query_handlers
 from application.vendors.commands import (
     CreateVendorProfileCommand,
@@ -67,6 +72,24 @@ DOCUMENT_RECEIVED_MESSAGE = "Document received. Verification will continue autom
 logger = logging.getLogger(__name__)
 PORTFOLIO_MEDIA_INVALID_CODE = "portfolio_media_invalid"
 PORTFOLIO_MEDIA_INVALID_MESSAGE = "Upload a valid portfolio image or highlight video."
+
+
+def _get_public_marketplace_stats(vendor_id) -> dict:
+    settings_module = getattr(settings, "SETTINGS_MODULE", "")
+    base_url = (getattr(settings, "FASTAPI_INTERNAL_URL", None) or "").strip().rstrip("/")
+    if not base_url or settings_module.endswith(".test"):
+        return {"average_rating": 0, "total_reviews": 0}
+    try:
+        response = httpx.get(f"{base_url}/marketplace/vendors/{vendor_id}", timeout=3)
+        response.raise_for_status()
+        payload = response.json()
+        return {
+            "average_rating": payload.get("average_rating", 0),
+            "total_reviews": payload.get("total_reviews", 0),
+        }
+    except (httpx.HTTPError, ValueError, TypeError):
+        logger.warning("Public marketplace rating summary unavailable.", extra={"vendor_id": str(vendor_id)})
+        return {"average_rating": 0, "total_reviews": 0}
 
 
 def _profile_completion_errors(profile: VendorProfileDTO) -> dict[str, list[str]]:
@@ -978,17 +1001,67 @@ class VendorVerificationDocumentView(APIView):
         }
 
 
+class PublicVendorProfileView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, vendor_id):
+        public_portfolio = (
+            PortfolioImageModel.objects.filter(
+                is_active=True,
+                is_deleted=False,
+                upload_status=PortfolioImageModel.UploadStatus.UPLOADED,
+                quality_status=PortfolioImageModel.QualityStatus.PASSED,
+                visibility_status=PortfolioImageModel.VisibilityStatus.APPROVED,
+            )
+            .exclude(cloudinary_secure_url__isnull=True, secure_url="")
+            .exclude(cloudinary_secure_url="", secure_url="")
+            .order_by("order", "created_at")
+        )
+        public_packages = ServicePackageModel.objects.filter(
+            is_active=True,
+            is_deleted=False,
+            approval_status=ServicePackageModel.ApprovalStatus.APPROVED,
+        ).order_by("price", "created_at")
+        vendor = (
+            VendorProfileModel.objects.filter(id=vendor_id, status=VendorProfileModel.Status.APPROVED)
+            .prefetch_related(
+                Prefetch("images", queryset=public_portfolio, to_attr="public_portfolio"),
+                Prefetch("packages", queryset=public_packages, to_attr="public_packages"),
+            )
+            .first()
+        )
+        if not vendor:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        marketplace_stats = _get_public_marketplace_stats(vendor.id)
+        return api_success(
+            code="vendor_public_profile_loaded",
+            message="Vendor profile loaded.",
+            data=VendorPublicProfileSerializer(vendor, context=marketplace_stats).data,
+            request=request,
+        )
+
+
 class PublicInquiryView(APIView):
     """Public endpoint for clients to send inquiries to a vendor (no auth required)."""
-    permission_classes = []  # Allow any
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [PublicVendorInquiryThrottle]
+    throttle_scope = "public_vendor_inquiry"
 
     def post(self, request, vendor_id):
+        if not VendorProfileModel.objects.filter(
+            id=vendor_id,
+            status=VendorProfileModel.Status.APPROVED,
+        ).exists():
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = InquirySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
         cmd = SendInquiryCommand(
-            vendor_id=uuid.UUID(vendor_id),
+            vendor_id=uuid.UUID(str(vendor_id)),
             client_name=data["client_name"],
             client_email=data["client_email"],
             message=data["message"],
@@ -999,9 +1072,12 @@ class PublicInquiryView(APIView):
         command_handlers = get_command_handlers()
         try:
             inquiry = command_handlers.send_inquiry(cmd)
-            return Response(
-                {"detail": "Inquiry sent successfully.", "id": str(inquiry.id)},
-                status=status.HTTP_201_CREATED
+            return api_success(
+                code="vendor_inquiry_created",
+                message="Inquiry sent successfully.",
+                data={"id": str(inquiry.id)},
+                status=status.HTTP_201_CREATED,
+                request=request,
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)

@@ -14,7 +14,7 @@ from fastapi_app.database import get_session
 from fastapi_app.config import get_cors_origins, normalize_database_url, normalize_redis_url
 from fastapi_app.marketplace.models import VendorListingModel
 from application.marketplace.search_service import MarketplaceSearchCache, MarketplaceSearchCriteria, MarketplaceSearchService
-from application.marketplace.dtos import SearchResultDTO, VendorListingDTO
+from application.marketplace.dtos import ReviewDTO, SearchResultDTO, VendorListingDTO
 
 
 @pytest.fixture
@@ -47,6 +47,33 @@ async def test_post_review_requires_authenticated_django_context(test_app):
         )
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_public_reviews_hide_author_user_id(test_app, mock_query_handlers):
+    vendor_id = str(uuid.uuid4())
+    mock_query_handlers.get_vendor_listing.return_value = Mock()
+    mock_query_handlers.get_vendor_reviews.return_value = (
+        [
+            ReviewDTO(
+                id=str(uuid.uuid4()),
+                vendor_id=vendor_id,
+                author_user_id=str(uuid.uuid4()),
+                rating=5,
+                comment="Excellent service",
+                created_at=datetime.now(timezone.utc),
+            )
+        ],
+        1,
+    )
+
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/api/v1/marketplace/vendors/{vendor_id}/reviews")
+
+    assert response.status_code == 200
+    assert response.json()[0]["author_display_name"] == "Verified customer"
+    assert "author_user_id" not in response.json()[0]
 
 
 class FakeSearchService:
