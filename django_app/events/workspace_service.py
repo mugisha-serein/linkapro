@@ -14,6 +14,7 @@ from .models import (
     EventTemplate,
     EventVendorRequirement,
 )
+from .template_seeders.rwanda_wedding import ensure_rwanda_wedding_template
 
 
 @transaction.atomic
@@ -22,12 +23,18 @@ def generate_event_workspace(event: Event) -> list[EventStage]:
     if existing:
         return existing
 
+    if event.event_type == Event.EventType.WEDDING and event.country.lower() == "rwanda":
+        template = ensure_rwanda_wedding_template()
+        template_filter = {"id": template.id}
+    else:
+        template_filter = {
+            "event_type": event.event_type,
+            "country__iexact": event.country,
+            "is_active": True,
+        }
+
     template = (
-        EventTemplate.objects.filter(
-            event_type=event.event_type,
-            country__iexact=event.country,
-            is_active=True,
-        )
+        EventTemplate.objects.filter(**template_filter)
         .prefetch_related(
             Prefetch(
                 "stages",

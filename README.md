@@ -436,6 +436,21 @@ python manage.py sync_marketplace_listings
 The Django vendor profile remains the source of truth. Run `sync_marketplace_listings` after deployment or data imports to backfill existing approved vendors into the FastAPI projection.
 
 ---
+### Rwanda Wedding Workspace Operations
+
+The Rwanda wedding workspace template is system-owned seed data. Wedding event creation automatically ensures the active built-in template exists and clones a private editable workspace for the event in the same transaction.
+
+Run these commands during Django deployments or one-off production maintenance:
+
+```bash
+python manage.py migrate
+python manage.py seed_rwanda_wedding_template
+python manage.py backfill_wedding_workspaces
+```
+
+Normal planners do not need to ask an administrator to prepare a wedding workspace after creating an event. If the bundled workbook seed files are missing from deployment, Django returns a controlled `rwanda_wedding_template_missing` configuration error instead of creating an empty wedding event.
+
+---
 ### Render Celery Worker and Beat
 
 Render Celery Worker and Celery Beat services must set `DJANGO_SETTINGS_MODULE=django_app.settings.production`. Celery intentionally fails at startup in Render/production-like environments when this variable is missing.
