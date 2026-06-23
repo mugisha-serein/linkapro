@@ -16,6 +16,7 @@ from infrastructure.adapters.password_hasher import DjangoPasswordHasher
 from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_token_hash
 from django_app.identity.models import PasswordResetEmailDelivery, PasswordResetToken, User as DjangoUser
 from django_app.identity.password_reset_email import send_password_reset_email
+from django_app.identity.throttles import rate_limit_hash
 from tasks.email_tasks import send_password_reset_email_task
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -34,6 +35,20 @@ PASSWORD_RESET_TOKEN_INVALID_RESPONSE = {
     "message": "This reset link has expired or is invalid.",
     "field_errors": {"token": ["Invalid or expired reset token."]},
 }
+
+
+def _auth_throttle_rates(**overrides):
+    rates = {
+        "login_ip": "100/min",
+        "login_email": "100/min",
+        "login_user": "100/hour",
+        "register_ip": "100/hour",
+        "register_email_domain": "100/hour",
+        "two_factor_ip": "100/min",
+        "two_factor_temp_token": "100/min",
+    }
+    rates.update(overrides)
+    return {"DEFAULT_THROTTLE_RATES": rates}
 
 
 def _create_delivery(user: DjangoUser, status=PasswordResetEmailDelivery.Status.QUEUED):
@@ -195,6 +210,148 @@ class TestIdentityViews:
         assert response.data["code"] == "invalid_credentials"
         assert "error" not in response.data
 
+    @override_settings(REST_FRAMEWORK=_auth_throttle_rates(login_ip="2/min"))
+    def test_login_ip_throttle_blocks_after_configured_limit(self):
+        for index in range(2):
+            response = self.client.post(
+                reverse("login"),
+                {"email": f"ip-throttle-{index}@example.com", "password": "WrongPass1"},
+                format="json",
+                REMOTE_ADDR="203.0.113.10",
+            )
+            assert response.status_code == 401
+
+        response = self.client.post(
+            reverse("login"),
+            {"email": "ip-throttle-final@example.com", "password": "WrongPass1"},
+            format="json",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        assert response.status_code == 429
+        assert response.data["success"] is False
+        assert response.data["code"] == "login_rate_limited"
+        assert response.data["message"] == "Too many sign-in attempts. Please try again later."
+        assert response.data["field_errors"] == {}
+
+    @override_settings(REST_FRAMEWORK=_auth_throttle_rates(login_email="2/min"))
+    def test_login_email_throttle_blocks_repeated_same_email(self):
+        for index in range(2):
+            response = self.client.post(
+                reverse("login"),
+                {"email": "email-throttle@example.com", "password": "WrongPass1"},
+                format="json",
+                REMOTE_ADDR=f"203.0.113.{index + 20}",
+            )
+            assert response.status_code == 401
+
+        response = self.client.post(
+            reverse("login"),
+            {"email": "email-throttle@example.com", "password": "WrongPass1"},
+            format="json",
+            REMOTE_ADDR="203.0.113.30",
+        )
+
+        assert response.status_code == 429
+        assert response.data["code"] == "login_rate_limited"
+
+    @override_settings(REST_FRAMEWORK=_auth_throttle_rates(login_user="2/hour"))
+    def test_login_user_hour_throttle_blocks_repeated_same_user_identifier(self):
+        for index in range(2):
+            response = self.client.post(
+                reverse("login"),
+                {"email": "user-throttle@example.com", "password": "WrongPass1"},
+                format="json",
+                REMOTE_ADDR=f"203.0.113.{index + 40}",
+            )
+            assert response.status_code == 401
+
+        response = self.client.post(
+            reverse("login"),
+            {"email": "user-throttle@example.com", "password": "WrongPass1"},
+            format="json",
+            REMOTE_ADDR="203.0.113.50",
+        )
+
+        assert response.status_code == 429
+        assert response.data["code"] == "login_rate_limited"
+
+    @override_settings(LOGIN_FAILURE_LOCKOUT_THRESHOLD=2, LOGIN_FAILURE_LOCKOUT_SECONDS=900)
+    def test_failed_login_increments_progressive_counter_and_locks_out(self):
+        for _ in range(2):
+            response = self.client.post(
+                reverse("login"),
+                {"email": "progressive@example.com", "password": "WrongPass1"},
+                format="json",
+            )
+            assert response.status_code == 401
+
+        response = self.client.post(
+            reverse("login"),
+            {"email": "progressive@example.com", "password": "WrongPass1"},
+            format="json",
+        )
+
+        assert response.status_code == 429
+        assert response.data["code"] == "login_rate_limited"
+
+    @override_settings(LOGIN_FAILURE_LOCKOUT_THRESHOLD=8, LOGIN_FAILURE_LOCKOUT_SECONDS=900)
+    def test_successful_login_clears_progressive_failure_counter(self):
+        user = DjangoUser.objects.create_user(
+            email="clear-failure@example.com",
+            password="StrongPass1",
+            first_name="Clear",
+            last_name="Failure",
+            role="planner",
+        )
+        self.client.post(
+            reverse("login"),
+            {"email": "clear-failure@example.com", "password": "WrongPass1"},
+            format="json",
+        )
+
+        email_hash = rate_limit_hash("clear-failure@example.com")
+        assert cache.get(f"login_fail:{email_hash}") == 1
+
+        response = self.client.post(
+            reverse("login"),
+            {"email": "clear-failure@example.com", "password": "StrongPass1"},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        assert response.data["code"] == "login_completed"
+        assert cache.get(f"login_fail:{email_hash}") is None
+        assert user.id
+
+    def test_login_rate_limiter_cache_failure_fails_closed(self, monkeypatch):
+        def unavailable(*args, **kwargs):
+            raise RuntimeError("cache down")
+
+        monkeypatch.setattr("django_app.identity.throttles.cache.get", unavailable)
+
+        response = self.client.post(
+            reverse("login"),
+            {"email": "cache-failure@example.com", "password": "WrongPass1"},
+            format="json",
+        )
+
+        assert response.status_code == 429
+        assert response.data["code"] == "login_rate_limited"
+
+    def test_login_failure_logs_do_not_include_raw_secrets(self, caplog):
+        caplog.set_level(logging.INFO, logger="django_app.identity.throttles")
+
+        response = self.client.post(
+            reverse("login"),
+            {"email": "secret-log@example.com", "password": "DoNotLogPass1"},
+            format="json",
+        )
+
+        assert response.status_code == 401
+        assert "secret-log@example.com" not in caplog.text
+        assert "DoNotLogPass1" not in caplog.text
+
     def test_login_mfa_required_uses_standard_contract(self):
         user = DjangoUser.objects.create_user(
             email="mfa-required@example.com",
@@ -241,6 +398,65 @@ class TestIdentityViews:
         assert response.data["success"] is False
         assert response.data["code"] == "invalid_mfa_code"
         assert response.data["field_errors"]["token"] == ["Invalid verification code."]
+
+    @override_settings(REST_FRAMEWORK=_auth_throttle_rates(two_factor_ip="1/min"))
+    def test_two_factor_ip_throttle_blocks_repeated_attempts(self):
+        response = self.client.post(
+            reverse("2fa-login"),
+            {"temp_token": "bad-temp-token-a", "token": "000000"},
+            format="json",
+            REMOTE_ADDR="198.51.100.10",
+        )
+        assert response.status_code == 401
+
+        response = self.client.post(
+            reverse("2fa-login"),
+            {"temp_token": "bad-temp-token-b", "token": "000000"},
+            format="json",
+            REMOTE_ADDR="198.51.100.10",
+        )
+
+        assert response.status_code == 429
+        assert response.data["code"] == "mfa_rate_limited"
+
+    @override_settings(REST_FRAMEWORK=_auth_throttle_rates(two_factor_temp_token="1/min"))
+    def test_two_factor_temp_token_throttle_blocks_repeated_token_attempts(self):
+        response = self.client.post(
+            reverse("2fa-login"),
+            {"temp_token": "same-bad-temp-token", "token": "000000"},
+            format="json",
+            REMOTE_ADDR="198.51.100.20",
+        )
+        assert response.status_code == 401
+
+        response = self.client.post(
+            reverse("2fa-login"),
+            {"temp_token": "same-bad-temp-token", "token": "000000"},
+            format="json",
+            REMOTE_ADDR="198.51.100.21",
+        )
+
+        assert response.status_code == 429
+        assert response.data["code"] == "mfa_rate_limited"
+
+    @override_settings(MFA_FAILURE_LOCKOUT_THRESHOLD=2, MFA_FAILURE_LOCKOUT_SECONDS=900)
+    def test_two_factor_progressive_lockout_blocks_after_failures(self):
+        for _ in range(2):
+            response = self.client.post(
+                reverse("2fa-login"),
+                {"temp_token": "progressive-bad-token", "token": "000000"},
+                format="json",
+            )
+            assert response.status_code == 401
+
+        response = self.client.post(
+            reverse("2fa-login"),
+            {"temp_token": "progressive-bad-token", "token": "000000"},
+            format="json",
+        )
+
+        assert response.status_code == 429
+        assert response.data["code"] == "mfa_rate_limited"
 
     def test_profile_endpoint_returns_authenticated_user(self):
         user = DjangoUser.objects.create_user(
@@ -305,6 +521,70 @@ class TestIdentityViews:
         assert response.data["data"]["user"]["email"] == "setup-contract@example.com"
         assert response.data["data"]["requires_password_setup"] is False
         assert response.data["data"]["next_path"] == "/vendor/dashboard"
+
+    @override_settings(REST_FRAMEWORK=_auth_throttle_rates(register_ip="1/hour"))
+    def test_register_ip_throttle_blocks_account_spam(self):
+        first_response = self.client.post(
+            reverse("register"),
+            {
+                "email": "register-ip-one@example.com",
+                "password": "StrongPass1",
+                "first_name": "One",
+                "last_name": "User",
+                "role": "planner",
+            },
+            format="json",
+            REMOTE_ADDR="192.0.2.10",
+        )
+        assert first_response.status_code == 201
+
+        response = self.client.post(
+            reverse("register"),
+            {
+                "email": "register-ip-two@example.net",
+                "password": "StrongPass1",
+                "first_name": "Two",
+                "last_name": "User",
+                "role": "planner",
+            },
+            format="json",
+            REMOTE_ADDR="192.0.2.10",
+        )
+
+        assert response.status_code == 429
+        assert response.data["code"] == "registration_rate_limited"
+
+    @override_settings(REST_FRAMEWORK=_auth_throttle_rates(register_email_domain="1/hour"))
+    def test_register_email_domain_throttle_blocks_domain_bursts(self):
+        first_response = self.client.post(
+            reverse("register"),
+            {
+                "email": "domain-one@example.org",
+                "password": "StrongPass1",
+                "first_name": "One",
+                "last_name": "User",
+                "role": "planner",
+            },
+            format="json",
+            REMOTE_ADDR="192.0.2.20",
+        )
+        assert first_response.status_code == 201
+
+        response = self.client.post(
+            reverse("register"),
+            {
+                "email": "domain-two@example.org",
+                "password": "StrongPass1",
+                "first_name": "Two",
+                "last_name": "User",
+                "role": "planner",
+            },
+            format="json",
+            REMOTE_ADDR="192.0.2.21",
+        )
+
+        assert response.status_code == 429
+        assert response.data["code"] == "registration_rate_limited"
 
     def test_refresh_token_returns_access_token(self):
         user = DjangoUser.objects.create_user(

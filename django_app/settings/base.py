@@ -150,11 +150,22 @@ REST_FRAMEWORK = {
         "forgot_password_email": os.environ.get("FORGOT_PASSWORD_EMAIL_RATE", "3/hour"),
         "reset_password_ip": os.environ.get("RESET_PASSWORD_IP_RATE", "10/min"),
         "reset_password_token": os.environ.get("RESET_PASSWORD_TOKEN_RATE", "5/hour"),
+        "login_ip": os.environ.get("LOGIN_IP_RATE", "10/min"),
+        "login_email": os.environ.get("LOGIN_EMAIL_RATE", "5/min"),
+        "login_user": os.environ.get("LOGIN_USER_RATE", "20/hour"),
+        "register_ip": os.environ.get("REGISTER_IP_RATE", "5/hour"),
+        "register_email_domain": os.environ.get("REGISTER_EMAIL_DOMAIN_RATE", "20/hour"),
+        "two_factor_ip": os.environ.get("TWO_FACTOR_IP_RATE", "10/min"),
+        "two_factor_temp_token": os.environ.get("TWO_FACTOR_TEMP_TOKEN_RATE", "5/min"),
         "public_vendor_inquiry": os.environ.get("PUBLIC_VENDOR_INQUIRY_RATE", "5/hour"),
     },
 }
 
 RATE_LIMIT_HASH_KEY = os.environ.get("RATE_LIMIT_HASH_KEY", "")
+LOGIN_FAILURE_LOCKOUT_THRESHOLD = int(os.environ.get("LOGIN_FAILURE_LOCKOUT_THRESHOLD", "8"))
+LOGIN_FAILURE_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_FAILURE_LOCKOUT_SECONDS", "900"))
+MFA_FAILURE_LOCKOUT_THRESHOLD = int(os.environ.get("MFA_FAILURE_LOCKOUT_THRESHOLD", "5"))
+MFA_FAILURE_LOCKOUT_SECONDS = int(os.environ.get("MFA_FAILURE_LOCKOUT_SECONDS", "900"))
 PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR = (
     os.environ.get("PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR", "false").lower() == "true"
 )

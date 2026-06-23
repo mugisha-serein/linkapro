@@ -42,12 +42,30 @@ from application.identity.oauth_state import build_oauth_state, parse_oauth_stat
 from .cookies import clear_auth_cookies, set_refresh_cookie
 from .password_reset_email import GENERIC_FORGOT_PASSWORD_DETAIL, request_password_reset_email
 from .throttles import (
+    AuthRateLimited,
     ForgotPasswordEmailThrottle,
     ForgotPasswordIPThrottle,
+    LoginEmailThrottle,
+    LoginIPThrottle,
+    LoginUserThrottle,
     PasswordRecoveryRateLimited,
     PasswordResetRateLimited,
+    RegisterEmailDomainThrottle,
+    RegisterIPThrottle,
+    RegistrationRateLimited,
     ResetPasswordIPThrottle,
     ResetPasswordTokenThrottle,
+    TwoFactorIPThrottle,
+    TwoFactorRateLimited,
+    TwoFactorTempTokenThrottle,
+    clear_login_failures,
+    clear_mfa_failures,
+    get_client_ip,
+    is_login_locked_out,
+    is_mfa_locked_out,
+    rate_limit_hash,
+    record_login_failure,
+    record_mfa_failure,
 )
 from django_app.identity.models import PasswordResetToken, User
 from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_value_hash
@@ -99,6 +117,32 @@ def _auth_error_response(auth_status, request=None):
         status=status.HTTP_401_UNAUTHORIZED,
         request=request,
     )
+
+
+def _rate_limited_response(code, message, request=None):
+    return api_error(
+        code=code,
+        message=message,
+        field_errors={},
+        status=status.HTTP_429_TOO_MANY_REQUESTS,
+        request=request,
+    )
+
+
+def _safe_auth_log_metadata(request, *, email=None, temp_token=None, user_id=None):
+    normalized_email = str(email or request.data.get("email", "") or "").strip().lower()
+    metadata = {
+        "request_id": getattr(request, "correlation_id", None),
+        "client_ip_hash": rate_limit_hash(get_client_ip(request)),
+    }
+    if normalized_email:
+        metadata["email_hash"] = rate_limit_hash(normalized_email)
+        metadata["email_domain"] = normalized_email.rsplit("@", 1)[1] if "@" in normalized_email else ""
+    if temp_token:
+        metadata["temp_token_hash"] = rate_limit_hash(str(temp_token).strip())
+    if user_id:
+        metadata["user_id"] = str(user_id)
+    return metadata
 
 
 def _password_reset_invalid_response(field_errors):
@@ -195,6 +239,10 @@ def _bootstrap_user_payload(source) -> dict:
 @method_decorator(csrf_exempt, name="dispatch")
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [RegisterIPThrottle, RegisterEmailDomainThrottle]
+
+    def throttled(self, request, wait):
+        raise RegistrationRateLimited(wait=wait, request=request)
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
@@ -210,6 +258,10 @@ class RegisterView(APIView):
         handlers = get_command_handlers()
         try:
             user_dto = handlers.register_user(cmd)
+            logger.info(
+                "registration_completed",
+                extra=_safe_auth_log_metadata(request, email=serializer.validated_data["email"], user_id=user_dto.id),
+            )
             return api_success(
                 code="registration_completed",
                 message="Account created successfully.",
@@ -239,6 +291,10 @@ class RegisterView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [LoginIPThrottle, LoginEmailThrottle, LoginUserThrottle]
+
+    def throttled(self, request, wait):
+        raise AuthRateLimited(wait=wait, request=request)
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -250,10 +306,18 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
                 request=request,
             )
+        email = serializer.validated_data["email"]
+        if is_login_locked_out(request, email):
+            return _rate_limited_response(
+                code="login_rate_limited",
+                message="Too many sign-in attempts. Please try again later.",
+                request=request,
+            )
         cmd = serializer.to_command()
         session = get_auth_session_facade()
         auth_result = session.login(cmd)
         if auth_result.status is AuthenticationStatus.MFA_REQUIRED:
+            clear_login_failures(request, email, user_id=getattr(auth_result.user, "id", None))
             response = api_success(
                 code="mfa_required",
                 message="Two-factor authentication is required.",
@@ -268,11 +332,13 @@ class LoginView(APIView):
             return response
 
         if auth_result.status is not AuthenticationStatus.AUTHENTICATED:
+            record_login_failure(request, email, auth_status=auth_result.status)
             response = _auth_error_response(auth_result.status, request=request)
             clear_auth_cookies(response)
             return response
 
         user = auth_result.user
+        clear_login_failures(request, email, user_id=getattr(user, "id", None))
         response = api_success(
             code="login_completed",
             message="Signed in successfully.",
@@ -289,6 +355,10 @@ class LoginView(APIView):
 
 class LoginTwoFactorView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [TwoFactorIPThrottle, TwoFactorTempTokenThrottle]
+
+    def throttled(self, request, wait):
+        raise TwoFactorRateLimited(wait=wait, request=request)
 
     def post(self, request):
         serializer = TwoFactorLoginSerializer(data=request.data)
@@ -300,18 +370,27 @@ class LoginTwoFactorView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
                 request=request,
             )
+        temp_token = serializer.validated_data["temp_token"]
+        if is_mfa_locked_out(request, temp_token):
+            return _rate_limited_response(
+                code="mfa_rate_limited",
+                message="Too many verification attempts. Please try again later.",
+                request=request,
+            )
         cmd = LoginTwoFactorCommand(
-            temp_token=serializer.validated_data["temp_token"],
+            temp_token=temp_token,
             token=serializer.validated_data["token"],
         )
         session = get_auth_session_facade()
         auth_result = session.login_two_factor(cmd)
         if auth_result.status is not AuthenticationStatus.AUTHENTICATED:
+            record_mfa_failure(request, temp_token, auth_status=auth_result.status)
             response = _auth_error_response(auth_result.status, request=request)
             clear_auth_cookies(response)
             return response
 
         user = auth_result.user
+        clear_mfa_failures(request, temp_token, user_id=getattr(user, "id", None))
         response = api_success(
             code="mfa_login_completed",
             message="Signed in successfully.",
