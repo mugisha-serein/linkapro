@@ -1,11 +1,13 @@
 from decimal import Decimal
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Count, Q, Sum
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from django_app.common.api_responses import api_error
 from django_app.common.permissions import IsPlanner
 from django_app.vendors.models import ServicePackage, VendorProfile
 
@@ -67,12 +69,21 @@ class EventWorkspaceView(PlannerWorkspaceView):
         if not event:
             return self.not_found()
         if event.event_type == Event.EventType.WEDDING and event.country.lower() == "rwanda":
-            generate_event_workspace(event)
+            try:
+                generate_event_workspace(event)
+            except ImproperlyConfigured as exc:
+                return api_error(
+                    code="rwanda_wedding_template_missing",
+                    message="We could not prepare your wedding workspace. Please try again or contact support.",
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    extra={"detail": str(exc)},
+                    request=request,
+                )
 
         stages = event.workspace_stages.annotate(
             tasks_count=Count("tasks"),
             completed_tasks_count=Count("tasks", filter=Q(tasks__status=EventTask.Status.COMPLETED)),
-        )
+        ).order_by("order", "id")
         budget = event.workspace_budget_items.aggregate(
             estimated=Sum("estimated_cost"), actual=Sum("actual_cost")
         )

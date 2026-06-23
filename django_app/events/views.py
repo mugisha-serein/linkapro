@@ -2,9 +2,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from django.core.exceptions import ImproperlyConfigured
+from django.db import transaction
+from django_app.common.api_responses import api_error
 from django_app.common.permissions import IsPlanner
 from django_app.vendors.models import VendorProfile
-from .models import Event, EventVendorAssignment, GuestEntry, TimelineBlock
+from .models import Event, EventActivityLog, EventVendorAssignment, GuestEntry, TimelineBlock
 
 from .serializers import (
     CreateEventSerializer, UpdateEventSerializer, CreateChecklistSerializer,
@@ -32,15 +35,33 @@ class EventListCreateView(APIView):
     def post(self, request):
         serializer = CreateEventSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        cmd = serializer.to_command(planner_id=request.user.id)
-        handlers = get_command_handlers()
-        event_dto = handlers.create_event(cmd)
-        event = Event.objects.get(id=event_dto.id)
-        event.country = serializer.validated_data.get("country", "Rwanda")
-        event.save(update_fields=["country", "updated_at"])
-        if event.event_type == Event.EventType.WEDDING and event.country.lower() == "rwanda":
-            generate_event_workspace(event)
-        return Response(self._serialize_event(event_dto), status=status.HTTP_201_CREATED)
+        try:
+            with transaction.atomic():
+                cmd = serializer.to_command(planner_id=request.user.id)
+                handlers = get_command_handlers()
+                event_dto = handlers.create_event(cmd)
+                event = Event.objects.select_for_update().get(id=event_dto.id)
+                event.country = serializer.validated_data.get("country", "Rwanda")
+                event.save(update_fields=["country", "updated_at"])
+                if event.event_type == Event.EventType.WEDDING and event.country.lower() == "rwanda":
+                    generate_event_workspace(event)
+                EventActivityLog.objects.create(
+                    event=event,
+                    actor=request.user,
+                    action="event_created",
+                    entity_type="event",
+                    entity_id=event.id,
+                    details={"event_type": event.event_type, "country": event.country},
+                )
+        except ImproperlyConfigured as exc:
+            return api_error(
+                code="rwanda_wedding_template_missing",
+                message="We could not prepare your wedding workspace. Please try again or contact support.",
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                extra={"detail": str(exc)},
+                request=request,
+            )
+        return Response(self._serialize_event(event), status=status.HTTP_201_CREATED)
 
     def _serialize_event(self, dto):
         return serialize_event_dto(dto)
