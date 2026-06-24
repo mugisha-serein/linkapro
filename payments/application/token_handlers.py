@@ -8,7 +8,7 @@ from django.core.cache import cache
 from django_app.identity.session_revocation import (
     AUTH_TOKEN_VERSION_CLAIM,
     is_token_revoked_for_user,
-    token_version_matches_user,
+    token_version_matches_active_user,
 )
 from payments.application.ports import ITokenBlacklist
 from payments.domain.step_up_policy import StepUpPolicy, StepUpPolicyResult
@@ -58,9 +58,9 @@ class TokenCommandHandlers:
         if is_token_revoked_for_user(user_id, issued_at):
             self.blacklist.blacklist_family(family)
             raise ValueError("Token has been revoked")
-        if not token_version_matches_user(user_id, token_version):
+        if not token_version_matches_active_user(user_id, token_version):
             self.blacklist.blacklist_family(family)
-            raise ValueError("Token session version mismatch")
+            raise ValueError("Token session is no longer valid")
 
         # Blacklist the used refresh token
         self.blacklist.blacklist(jti, ttl=self._remaining_ttl(token))

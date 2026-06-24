@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from django.conf import settings
@@ -10,6 +11,13 @@ from django.db.models import F
 logger = logging.getLogger(__name__)
 
 AUTH_TOKEN_VERSION_CLAIM = "auth_token_version"
+
+
+@dataclass(frozen=True)
+class UserTokenState:
+    user_id: str
+    auth_token_version: int
+    is_active: bool
 
 
 def revoke_user_sessions(user_id, *, reason: str) -> None:
@@ -45,18 +53,41 @@ def bump_user_auth_token_version(user_id) -> int | None:
 
 
 def get_user_auth_token_version(user_id) -> int | None:
+    state = get_user_token_state(user_id)
+    return state.auth_token_version if state else None
+
+
+def get_user_token_state(user_id) -> UserTokenState | None:
     if not user_id:
         return None
     from django_app.identity.models import User
 
-    return User.objects.filter(id=user_id).values_list("auth_token_version", flat=True).first()
+    row = (
+        User.objects.filter(id=user_id)
+        .values("id", "auth_token_version", "is_active")
+        .first()
+    )
+    if not row:
+        return None
+    return UserTokenState(
+        user_id=str(row["id"]),
+        auth_token_version=int(row["auth_token_version"]),
+        is_active=bool(row["is_active"]),
+    )
 
 
 def token_version_matches_user(user_id, token_version) -> bool:
-    current_version = get_user_auth_token_version(user_id)
-    if current_version is None:
+    state = get_user_token_state(user_id)
+    if state is None:
         return False
-    return _coerce_int(token_version) == int(current_version)
+    return _coerce_int(token_version) == state.auth_token_version
+
+
+def token_version_matches_active_user(user_id, token_version) -> bool:
+    state = get_user_token_state(user_id)
+    if state is None or not state.is_active:
+        return False
+    return _coerce_int(token_version) == state.auth_token_version
 
 
 def is_token_revoked_for_user(user_id, issued_at) -> bool:
