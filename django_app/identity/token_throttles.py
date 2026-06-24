@@ -166,8 +166,13 @@ class TokenRevokeFingerprintThrottle(TokenEndpointThrottle):
         return {"refresh_token_hash": _refresh_token_fingerprint(request)}
 
 
+def _refresh_token_cookie_name() -> str:
+    return str(getattr(settings, "REFRESH_TOKEN_COOKIE_NAME", "refresh_token") or "refresh_token").strip()
+
+
 def _refresh_token_fingerprint(request) -> str | None:
-    token = str(request.data.get("refresh") or request.COOKIES.get("refresh_token") or "").strip()
+    cookie_name = _refresh_token_cookie_name()
+    token = str(request.data.get("refresh") or request.COOKIES.get(cookie_name) or "").strip()
     if not token:
         return None
     key = str(getattr(settings, "RATE_LIMIT_HASH_KEY", "") or settings.SECRET_KEY).encode("utf-8")
