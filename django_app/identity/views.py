@@ -19,6 +19,14 @@ from application.identity.commands import (
     VerifyTwoFactorSetupCommand,
 )
 from application.identity.auth_policy import AuthenticationStatus
+from application.identity.oauth_state import (
+    ALLOWED_OAUTH_SIGNUP_ROLES,
+    OAUTH_STATE_COOKIE_NAME,
+    clear_oauth_state_cookie,
+    consume_oauth_state,
+    issue_oauth_state,
+    set_oauth_state_cookie,
+)
 from application.identity.queries import GetUserByIdQuery
 from django_app.common.api_responses import api_error, api_success
 
@@ -38,7 +46,6 @@ from .services import (
     get_google_oauth_adapter,
     get_auth_session_facade,
 )
-from application.identity.oauth_state import build_oauth_state, parse_oauth_state, ALLOWED_OAUTH_SIGNUP_ROLES
 from .cookies import clear_auth_cookies, set_refresh_cookie
 from .password_reset_email import GENERIC_FORGOT_PASSWORD_DETAIL, request_password_reset_email
 from .throttles import (
@@ -756,11 +763,13 @@ class GoogleLoginView(View):
 
         adapter = get_google_oauth_adapter()
         try:
-            state = build_oauth_state(signup_role)
-            auth_url = adapter.build_auth_url(state=state)
+            challenge = issue_oauth_state(signup_role)
+            auth_url = adapter.build_auth_url(state=challenge.state)
         except Exception:
             return _redirect_error("oauth_not_configured")
-        return redirect(auth_url)
+        response = redirect(auth_url)
+        set_oauth_state_cookie(response, challenge)
+        return response
 
 
 class GoogleCallbackView(View):
@@ -768,17 +777,27 @@ class GoogleCallbackView(View):
         oauth_error = request.GET.get("error")
         if oauth_error:
             response = _redirect_error(oauth_error)
+            clear_oauth_state_cookie(response)
             clear_auth_cookies(response)
             return response
 
         code = request.GET.get("code")
         if not code:
             response = _redirect_error("missing_code")
+            clear_oauth_state_cookie(response)
             clear_auth_cookies(response)
             return response
         frontend_url = _frontend_url()
 
-        signup_role = parse_oauth_state(request.GET.get("state"))
+        state_result = consume_oauth_state(
+            request.GET.get("state"),
+            request.COOKIES.get(OAUTH_STATE_COOKIE_NAME),
+        )
+        if not state_result:
+            response = _redirect_error("oauth_failed")
+            clear_oauth_state_cookie(response)
+            clear_auth_cookies(response)
+            return response
 
         adapter = get_google_oauth_adapter()
         try:
@@ -787,20 +806,23 @@ class GoogleCallbackView(View):
             result = get_auth_session_facade().oauth_login(
                 user_data,
                 token_data,
-                signup_role=signup_role,
+                signup_role=state_result.role,
             )
         except Exception:
             response = _redirect_error("oauth_failed")
+            clear_oauth_state_cookie(response)
             clear_auth_cookies(response)
             return response
 
         if result.requires_2fa:
             params = urlencode({"temp_token": result.temp_token or ""})
             response = _no_store_redirect(f"{frontend_url}/auth/2fa?{params}")
+            clear_oauth_state_cookie(response)
             clear_auth_cookies(response)
             return response
 
         response = _no_store_redirect(f"{frontend_url}/auth/success")
+        clear_oauth_state_cookie(response)
         if result.refresh:
             set_refresh_cookie(response, result.refresh)
         return response
