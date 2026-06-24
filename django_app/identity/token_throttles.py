@@ -11,6 +11,7 @@ from rest_framework.exceptions import APIException
 from rest_framework.throttling import SimpleRateThrottle
 
 from django_app.common.api_responses import api_error_payload
+from django_app.identity.cookies import extract_refresh_token
 from django_app.identity.throttles import get_client_ip, rate_limit_hash
 
 logger = logging.getLogger(__name__)
@@ -166,13 +167,8 @@ class TokenRevokeFingerprintThrottle(TokenEndpointThrottle):
         return {"refresh_token_hash": _refresh_token_fingerprint(request)}
 
 
-def _refresh_token_cookie_name() -> str:
-    return str(getattr(settings, "REFRESH_TOKEN_COOKIE_NAME", "refresh_token") or "refresh_token").strip()
-
-
 def _refresh_token_fingerprint(request) -> str | None:
-    cookie_name = _refresh_token_cookie_name()
-    token = str(request.data.get("refresh") or request.COOKIES.get(cookie_name) or "").strip()
+    token = extract_refresh_token(request)
     if not token:
         return None
     key = str(getattr(settings, "RATE_LIMIT_HASH_KEY", "") or settings.SECRET_KEY).encode("utf-8")
