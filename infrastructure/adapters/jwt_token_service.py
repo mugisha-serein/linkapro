@@ -15,6 +15,8 @@ from rest_framework_simplejwt.tokens import (
 
 logger = logging.getLogger(__name__)
 
+AUTH_TOKEN_VERSION_CLAIM = "auth_token_version"
+
 
 class JWTTokenService:
     """
@@ -37,12 +39,20 @@ class JWTTokenService:
         for key, value in bootstrap_claims.items():
             token[key] = value
 
+    @staticmethod
+    def _apply_auth_token_version(token, auth_token_version: int | None, bootstrap_claims: dict | None) -> None:
+        if bootstrap_claims and bootstrap_claims.get(AUTH_TOKEN_VERSION_CLAIM) is not None:
+            token[AUTH_TOKEN_VERSION_CLAIM] = int(bootstrap_claims[AUTH_TOKEN_VERSION_CLAIM])
+            return
+        token[AUTH_TOKEN_VERSION_CLAIM] = int(auth_token_version or 0)
+
     def create_access_token(
         self,
         user_id: str,
         role: str,
         family_id: str | None = None,
         bootstrap_claims: dict | None = None,
+        auth_token_version: int | None = None,
     ) -> str:
         token = SimpleAccessToken()
         token["user_id"] = user_id
@@ -51,6 +61,7 @@ class JWTTokenService:
         if family_id:
             token["family"] = family_id
         self._apply_bootstrap_claims(token, bootstrap_claims)
+        self._apply_auth_token_version(token, auth_token_version, bootstrap_claims)
         return str(token)
 
     def create_refresh_token(
@@ -58,6 +69,7 @@ class JWTTokenService:
         user_id: str,
         family_id: str | None = None,
         bootstrap_claims: dict | None = None,
+        auth_token_version: int | None = None,
     ) -> str:
         token = RefreshToken()
         token["user_id"] = user_id
@@ -65,6 +77,7 @@ class JWTTokenService:
         if family_id:
             token["family"] = family_id
         self._apply_bootstrap_claims(token, bootstrap_claims)
+        self._apply_auth_token_version(token, auth_token_version, bootstrap_claims)
         return str(token)
 
     def create_session_tokens(
@@ -72,6 +85,7 @@ class JWTTokenService:
         user_id: str,
         role: str,
         bootstrap_claims: dict | None = None,
+        auth_token_version: int | None = None,
     ) -> tuple[str, str]:
         family_id = str(uuid.uuid4())
         access = self.create_access_token(
@@ -79,11 +93,13 @@ class JWTTokenService:
             role,
             family_id=family_id,
             bootstrap_claims=bootstrap_claims,
+            auth_token_version=auth_token_version,
         )
         refresh = self.create_refresh_token(
             user_id,
             family_id=family_id,
             bootstrap_claims=bootstrap_claims,
+            auth_token_version=auth_token_version,
         )
         return access, refresh
 
@@ -258,10 +274,10 @@ def accepted_identity_token_env(token_env: str | None, context: str) -> Optional
         return expected_env
 
     legacy_env = getattr(settings, "PAYMENT_ENV", None)
-    accept_legacy = bool(getattr(settings, "ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", True))
-    if accept_legacy and legacy_env and token_env == legacy_env:
+    allow_legacy_payment_env = bool(getattr(settings, "ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", True))
+    if allow_legacy_payment_env and legacy_env and token_env == legacy_env:
         logger.warning(
-            "legacy_identity_token_env_accepted",
+            "legacy_payment_env_token_accepted_for_identity",
             extra={"context": context, "token_env": token_env, "expected_env": expected_env},
         )
         return expected_env
@@ -273,19 +289,19 @@ def accepted_identity_token_env(token_env: str | None, context: str) -> Optional
     return None
 
 
-def password_reset_token_hash(token_str: str) -> str:
-    key = str(getattr(settings, "RESET_TOKEN_HASH_KEY", "") or settings.SECRET_KEY).encode("utf-8")
-    return hmac.new(key, token_str.encode("utf-8"), hashlib.sha256).hexdigest()
-
-
-def password_reset_value_hash(value: str | None) -> str | None:
-    if not value:
+def _timestamp_to_datetime(timestamp_value) -> Optional[datetime]:
+    if timestamp_value is None:
         return None
-    key = str(getattr(settings, "RESET_TOKEN_HASH_KEY", "") or settings.SECRET_KEY).encode("utf-8")
+    try:
+        return datetime.fromtimestamp(int(timestamp_value), tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def password_reset_value_hash(value: str) -> str:
+    key = str(getattr(settings, "PASSWORD_RESET_HASH_KEY", "") or settings.SECRET_KEY).encode("utf-8")
     return hmac.new(key, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def _timestamp_to_datetime(value) -> datetime:
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    return datetime.fromtimestamp(int(value), tz=timezone.utc)
+def password_reset_token_hash(token: str) -> str:
+    return password_reset_value_hash(token)
