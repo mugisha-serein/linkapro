@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 from django.conf import settings
 from django.core.cache import cache
 
+from django_app.identity.session_revocation import is_token_revoked_for_user
 from payments.application.ports import ITokenBlacklist
 from payments.domain.step_up_policy import StepUpPolicy, StepUpPolicyResult
 from infrastructure.adapters.jwt_token_service import accepted_identity_token_env, identity_token_env
@@ -30,6 +31,8 @@ class TokenCommandHandlers:
         jti = token.get("jti")
         family = token.get("family")
         token_env = token.get("env")
+        user_id = token.get("user_id")
+        issued_at = token.get("iat")
         expected_env = self._token_env()
 
         if not jti:
@@ -47,6 +50,9 @@ class TokenCommandHandlers:
         if self.blacklist.is_family_blacklisted(family):
             self.blacklist.blacklist(jti, ttl=self._remaining_ttl(token))
             raise ValueError("Token family has been revoked")
+        if is_token_revoked_for_user(user_id, issued_at):
+            self.blacklist.blacklist_family(family)
+            raise ValueError("Token has been revoked")
 
         # Blacklist the used refresh token
         self.blacklist.blacklist(jti, ttl=self._remaining_ttl(token))
