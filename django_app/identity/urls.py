@@ -10,9 +10,11 @@ from .views import (
     ProfileView,
     GoogleLoginView,
     GoogleCallbackView,
-    SetupPasswordView,
     ForgotPasswordView,
-    ResetPasswordView,
+)
+from .secure_password_views import (
+    SessionRevokingResetPasswordView,
+    SessionRevokingSetupPasswordView,
 )
 
 urlpatterns = [
@@ -20,9 +22,9 @@ urlpatterns = [
     path("login/", LoginView.as_view(), name="login"),
     path("profile/", ProfileView.as_view(), name="profile"),
     path("users/me/", ProfileView.as_view(), name="users-me"),
-    path("setup-password/", SetupPasswordView.as_view(), name="setup-password"),
+    path("setup-password/", SessionRevokingSetupPasswordView.as_view(), name="setup-password"),
     path("forgot-password/", ForgotPasswordView.as_view(), name="forgot-password"),
-    path("reset-password/", ResetPasswordView.as_view(), name="reset-password"),
+    path("reset-password/", SessionRevokingResetPasswordView.as_view(), name="reset-password"),
     path("token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
     path("token/revoke/", TokenRevokeView.as_view(), name="token-revoke"),
     
