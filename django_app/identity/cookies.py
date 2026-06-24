@@ -6,11 +6,16 @@ DEFAULT_REFRESH_COOKIE_NAME = "refresh_token"
 LEGACY_REFRESH_COOKIE_NAMES = ("access_token",)
 
 
-def _refresh_cookie_name() -> str:
+def get_refresh_cookie_name() -> str:
     cookie_name = str(getattr(settings, "REFRESH_TOKEN_COOKIE_NAME", DEFAULT_REFRESH_COOKIE_NAME) or "").strip()
     if not cookie_name:
         raise ImproperlyConfigured("REFRESH_TOKEN_COOKIE_NAME must not be empty")
     return cookie_name
+
+
+def extract_refresh_token(request) -> str | None:
+    token = request.data.get("refresh") or request.COOKIES.get(get_refresh_cookie_name())
+    return str(token).strip() if token else None
 
 
 def _refresh_cookie_domain() -> str | None:
@@ -44,7 +49,7 @@ def _refresh_cookie_max_age() -> int:
 
 def set_refresh_cookie(response, refresh_token: str) -> None:
     response.set_cookie(
-        _refresh_cookie_name(),
+        get_refresh_cookie_name(),
         refresh_token,
         max_age=_refresh_cookie_max_age(),
         httponly=True,
@@ -60,7 +65,7 @@ def clear_auth_cookies(response) -> None:
     cookie_secure = _refresh_cookie_secure()
     cookie_samesite = _refresh_cookie_samesite()
 
-    for cookie_name in (*LEGACY_REFRESH_COOKIE_NAMES, _refresh_cookie_name()):
+    for cookie_name in (*LEGACY_REFRESH_COOKIE_NAMES, get_refresh_cookie_name()):
         response.set_cookie(
             cookie_name,
             "",
