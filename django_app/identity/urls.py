@@ -14,6 +14,29 @@ from .views import (
     ForgotPasswordView,
     ResetPasswordView,
 )
+from .token_throttles import (
+    TokenRefreshFingerprintThrottle,
+    TokenRefreshIPThrottle,
+    TokenRefreshRateLimited,
+    TokenRevokeFingerprintThrottle,
+    TokenRevokeIPThrottle,
+    TokenRevokeRateLimited,
+)
+
+
+class ThrottledTokenRefreshView(TokenRefreshView):
+    throttle_classes = [TokenRefreshIPThrottle, TokenRefreshFingerprintThrottle]
+
+    def throttled(self, request, wait):
+        raise TokenRefreshRateLimited(wait=wait, request=request)
+
+
+class ThrottledTokenRevokeView(TokenRevokeView):
+    throttle_classes = [TokenRevokeIPThrottle, TokenRevokeFingerprintThrottle]
+
+    def throttled(self, request, wait):
+        raise TokenRevokeRateLimited(wait=wait, request=request)
+
 
 urlpatterns = [
     path("register/", RegisterView.as_view(), name="register"),
@@ -23,8 +46,8 @@ urlpatterns = [
     path("setup-password/", SetupPasswordView.as_view(), name="setup-password"),
     path("forgot-password/", ForgotPasswordView.as_view(), name="forgot-password"),
     path("reset-password/", ResetPasswordView.as_view(), name="reset-password"),
-    path("token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
-    path("token/revoke/", TokenRevokeView.as_view(), name="token-revoke"),
+    path("token/refresh/", ThrottledTokenRefreshView.as_view(), name="token-refresh"),
+    path("token/revoke/", ThrottledTokenRevokeView.as_view(), name="token-revoke"),
     
     path("2fa/enable/", EnableTwoFactorView.as_view(), name="2fa-enable"),
     path("2fa/verify-setup/", VerifyTwoFactorSetupView.as_view(), name="2fa-verify-setup"),
