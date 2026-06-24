@@ -1,5 +1,6 @@
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken
+from django_app.identity.session_revocation import is_token_revoked_for_user
 from infrastructure.adapters.jwt_token_service import accepted_identity_token_env
 from payments.infrastructure.redis_blacklist import RedisTokenBlacklist
 
@@ -18,6 +19,8 @@ class HardenedJWTAuthentication(JWTAuthentication):
         jti = validated_token.get("jti")
         family = validated_token.get("family")
         token_env = validated_token.get("env")
+        user_id = validated_token.get("user_id")
+        issued_at = validated_token.get("iat")
 
         if not jti:
             raise InvalidToken("Malformed token")
@@ -27,6 +30,9 @@ class HardenedJWTAuthentication(JWTAuthentication):
 
         if family and blacklist.is_family_blacklisted(family):
             raise InvalidToken("Token family has been revoked")
+
+        if is_token_revoked_for_user(user_id, issued_at):
+            raise InvalidToken("Token has been revoked")
 
         if accepted_identity_token_env(token_env, context="access_token_authentication") is None:
             raise InvalidToken("Token environment mismatch")
