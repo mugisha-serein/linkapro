@@ -174,7 +174,7 @@ class GoogleLoginUseCase:
             return UserRole.VENDOR
         if normalized == UserRole.PLANNER.value:
             return UserRole.PLANNER
-        return UserRole.PLANNER
+        raise ValueError("OAuth signup role is required")
 
     @staticmethod
     def _split_name(user_data: dict) -> tuple[str, str]:
