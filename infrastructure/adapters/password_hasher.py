@@ -6,5 +6,6 @@ class DjangoPasswordHasher:
     def hash(self, plain: PlainPassword) -> str:
         return make_password(plain.value)
 
-    def verify(self, plain: PlainPassword, hashed: PasswordHash) -> bool:
-        return check_password(plain.value, hashed.value)
+    def verify(self, plain: PlainPassword | str, hashed: PasswordHash) -> bool:
+        candidate = plain.value if hasattr(plain, "value") else str(plain)
+        return check_password(candidate, hashed.value)
