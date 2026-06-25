@@ -4,12 +4,11 @@ from .views import (
     LoginView,
     EnableTwoFactorView,
     VerifyTwoFactorSetupView,
-    LoginTwoFactorView,
     ProfileView,
-    GoogleLoginView,
-    GoogleCallbackView,
     ForgotPasswordView,
 )
+from .google_mfa_views import GoogleCallbackView, GoogleLoginView
+from .mfa_views import LoginTwoFactorView
 from .secure_password_views import (
     SessionRevokingResetPasswordView,
     SessionRevokingSetupPasswordView,
