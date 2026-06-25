@@ -77,9 +77,9 @@ class TokenCommandHandlers:
         # Blacklist the used refresh token
         self.blacklist.blacklist(jti, ttl=self._remaining_ttl(token))
 
-        bootstrap_claims = self._bootstrap_claims(token)
+        bootstrap_claims = self._fresh_bootstrap_claims(user_id, session_id)
 
-        # Generate new tokens with same claims (but new jti)
+        # Generate new tokens with same security claims (but fresh user bootstrap claims and new jti)
         new_refresh = RefreshToken()
         new_refresh["user_id"] = token["user_id"]
         new_refresh["scope"] = token.get("scope", "")
@@ -161,6 +161,39 @@ class TokenCommandHandlers:
         expires_at = datetime.fromtimestamp(int(token["exp"]), tz=timezone.utc)
         ttl = int((expires_at - datetime.now(timezone.utc)).total_seconds())
         return max(ttl, 1)
+
+    @staticmethod
+    def _fresh_bootstrap_claims(user_id, session_id: str | None = None) -> dict:
+        from django_app.identity.models import User
+
+        user = User.objects.filter(id=user_id, is_active=True).first()
+        if not user:
+            raise ValueError("User is no longer active")
+
+        has_password = bool(user.password)
+        display_name = f"{user.first_name} {user.last_name}".strip() or user.email
+        claims = {
+            "id": str(user.id),
+            "email": user.email,
+            "role": user.role,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "display_name": display_name,
+            "avatar": None,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "last_login": user.last_login.isoformat() if user.last_login else None,
+            "is_active": user.is_active,
+            "is_verified": user.is_verified,
+            "has_password": has_password,
+            "requires_password_setup": not has_password,
+            "two_factor_enabled": user.two_factor_enabled,
+            AUTH_TOKEN_VERSION_CLAIM: user.auth_token_version,
+            "is_authenticated": True,
+            "onboarding_complete": bool(user.is_verified and has_password),
+        }
+        if session_id:
+            claims[SESSION_ID_CLAIM] = str(session_id)
+        return claims
 
     @staticmethod
     def _bootstrap_claims(token) -> dict:
