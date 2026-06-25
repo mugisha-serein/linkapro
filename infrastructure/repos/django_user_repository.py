@@ -1,5 +1,6 @@
 import uuid
 from typing import Optional
+from django.contrib.auth.hashers import is_password_usable
 from django.core.exceptions import ObjectDoesNotExist
 
 from domain.identity.entities import User as DomainUser, UserRole as DomainRole
@@ -31,10 +32,9 @@ class DjangoUserRepository(IUserRepository):
 
         django_user.email = str(domain_user.email)
         if domain_user.password_hash:
-            # The application layer already hashed the password.
             django_user.password = str(domain_user.password_hash)
-        else:
-            django_user.password = None  # OAuth users have no password
+        elif not django_user.password:
+            django_user.set_unusable_password()
         django_user.first_name = domain_user.first_name
         django_user.last_name = domain_user.last_name
         django_user.role = domain_user.role.value
@@ -52,7 +52,7 @@ class DjangoUserRepository(IUserRepository):
         return DomainUser(
             id=model.id,
             email=Email(model.email),
-            password_hash=PasswordHash(model.password) if model.password else None,
+            password_hash=PasswordHash(model.password) if model.password and is_password_usable(model.password) else None,
             first_name=model.first_name,
             last_name=model.last_name,
             role=DomainRole(model.role),
