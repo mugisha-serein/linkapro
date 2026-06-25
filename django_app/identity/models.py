@@ -99,6 +99,28 @@ class OAuthToken(models.Model):
         return f"{self.user.email} - {self.provider}"
 
 
+class IdentitySession(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="identity_sessions")
+    token_family = models.CharField(max_length=36, unique=True, db_index=True)
+    device_label = models.CharField(max_length=255, blank=True, default="Unknown device")
+    user_agent_hash = models.CharField(max_length=64, blank=True, null=True)
+    ip_hash = models.CharField(max_length=64, blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    last_seen_at = models.DateTimeField(default=timezone.now, db_index=True)
+    revoked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    revoked_reason = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "revoked_at", "last_seen_at"]),
+            models.Index(fields=["user", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} session {self.id}"
+
+
 class PasswordResetEmailDelivery(models.Model):
     class Status(models.TextChoices):
         QUEUED = "queued", "Queued"
