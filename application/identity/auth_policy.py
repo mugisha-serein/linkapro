@@ -1,8 +1,10 @@
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
 from application.identity.dtos import SessionBootstrapDTO
+from django_app.identity.session_tracking import SESSION_ID_CLAIM, create_identity_session
 
 
 class AuthenticationStatus(str, Enum):
@@ -70,9 +72,20 @@ class IdentityAuthenticationPolicy:
         return self._issue_authenticated_tokens(user)
 
     def _issue_authenticated_tokens(self, user) -> AuthenticationDecision:
+        token_family = str(uuid.uuid4())
+        session_id = create_identity_session(user_id=str(user.id), token_family=token_family)
         bootstrap_user = SessionBootstrapDTO.from_user(user).to_dict()
-        access_token, refresh_token = self.token_service.create_session_tokens(
-            str(user.id), user.role.value, bootstrap_claims=bootstrap_user
+        bootstrap_user[SESSION_ID_CLAIM] = session_id
+        access_token = self.token_service.create_access_token(
+            str(user.id),
+            user.role.value,
+            family_id=token_family,
+            bootstrap_claims=bootstrap_user,
+        )
+        refresh_token = self.token_service.create_refresh_token(
+            str(user.id),
+            family_id=token_family,
+            bootstrap_claims=bootstrap_user,
         )
         return AuthenticationDecision(
             status=AuthenticationStatus.AUTHENTICATED,

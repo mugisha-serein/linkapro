@@ -5,6 +5,7 @@ from django_app.identity.session_revocation import (
     is_token_revoked_for_user,
     token_version_matches_user,
 )
+from django_app.identity.session_tracking import SESSION_ID_CLAIM, identity_session_is_active
 from infrastructure.adapters.jwt_token_service import accepted_identity_token_env
 from payments.infrastructure.redis_blacklist import RedisTokenBlacklist
 
@@ -22,6 +23,7 @@ class HardenedJWTAuthentication(JWTAuthentication):
         blacklist = RedisTokenBlacklist()
         jti = validated_token.get("jti")
         family = validated_token.get("family")
+        session_id = validated_token.get(SESSION_ID_CLAIM)
         token_env = validated_token.get("env")
         user_id = validated_token.get("user_id")
         issued_at = validated_token.get("iat")
@@ -41,6 +43,9 @@ class HardenedJWTAuthentication(JWTAuthentication):
 
         if not token_version_matches_user(user_id, token_version):
             raise InvalidToken("Token session version mismatch")
+
+        if not identity_session_is_active(session_id, family):
+            raise InvalidToken("Identity session has been revoked")
 
         if accepted_identity_token_env(token_env, context="access_token_authentication") is None:
             raise InvalidToken("Token environment mismatch")
