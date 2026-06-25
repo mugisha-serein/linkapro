@@ -2,8 +2,6 @@ from django.urls import path
 from .views import (
     RegisterView,
     LoginView,
-    TokenRefreshView,
-    TokenRevokeView,
     EnableTwoFactorView,
     VerifyTwoFactorSetupView,
     LoginTwoFactorView,
@@ -16,6 +14,7 @@ from .secure_password_views import (
     SessionRevokingResetPasswordView,
     SessionRevokingSetupPasswordView,
 )
+from .session_views import TokenRefreshView, TokenRevokeView
 from .token_throttles import (
     TokenRefreshFingerprintThrottle,
     TokenRefreshIPThrottle,
