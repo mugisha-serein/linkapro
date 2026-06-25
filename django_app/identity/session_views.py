@@ -6,7 +6,17 @@ from rest_framework.views import APIView
 
 from django_app.common.api_responses import api_error, api_success
 from django_app.identity.cookies import clear_auth_cookies, extract_refresh_token, set_refresh_cookie
+from django_app.identity.csrf_protection import cookie_session_request_is_allowed
 from django_app.identity.services import get_auth_session_facade
+
+
+def _cookie_session_forbidden(request):
+    return api_error(
+        code="cookie_session_forbidden",
+        message="Session request blocked by origin protection.",
+        status=status.HTTP_403_FORBIDDEN,
+        request=request,
+    )
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -14,6 +24,9 @@ class TokenRefreshView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        if not cookie_session_request_is_allowed(request):
+            return _cookie_session_forbidden(request)
+
         session_token = extract_refresh_token(request)
         if not session_token:
             response = api_error(
@@ -57,6 +70,9 @@ class TokenRevokeView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        if not cookie_session_request_is_allowed(request):
+            return _cookie_session_forbidden(request)
+
         session_token = extract_refresh_token(request)
         if not session_token:
             response = api_success(
