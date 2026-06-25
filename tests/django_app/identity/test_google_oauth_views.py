@@ -11,6 +11,7 @@ class _UseCaseResult:
     requires_2fa: bool
     temp_token: str | None = None
     access: str | None = None
+    refresh_token: str | None = None
     refresh: str | None = None
     bootstrap_user: dict | None = None
 
@@ -122,7 +123,7 @@ class TestGoogleOAuthViews:
                 _UseCaseResult(
                     requires_2fa=False,
                     access="access-token",
-                    refresh="refresh-token",
+                    refresh_token="refresh-token",
                     bootstrap_user={
                         "id": "user-123",
                         "email": "oauth@example.com",

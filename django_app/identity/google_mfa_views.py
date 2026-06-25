@@ -17,6 +17,10 @@ from django_app.identity.services import get_auth_session_facade, get_google_oau
 from django_app.identity.views import _frontend_url, _no_store_redirect, _redirect_error
 
 
+def _result_refresh_token(result) -> str | None:
+    return getattr(result, "refresh_token", None) or getattr(result, "refresh", None)
+
+
 class GoogleLoginView(View):
     def get(self, request):
         from application.identity.oauth_state import ALLOWED_OAUTH_SIGNUP_ROLES
@@ -93,6 +97,7 @@ class GoogleCallbackView(View):
         response = _no_store_redirect(f"{frontend_url}/auth/success")
         clear_oauth_state_cookie(response)
         clear_mfa_temp_cookie(response)
-        if result.refresh:
-            set_refresh_cookie(response, result.refresh)
+        refresh_token = _result_refresh_token(result)
+        if refresh_token:
+            set_refresh_cookie(response, refresh_token)
         return response
