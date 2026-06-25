@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 from django.urls import reverse
@@ -48,10 +49,10 @@ class TestGoogleOAuthViews:
         self.client = APIClient()
 
     def test_google_login_redirects_to_google_auth(self, monkeypatch):
-        from django_app.identity import views
+        from django_app.identity import google_mfa_views
 
         monkeypatch.setattr(
-            views,
+            google_mfa_views,
             "get_google_oauth_adapter",
             lambda: _AdapterStub(auth_url="https://accounts.google.com/fake-auth"),
         )
@@ -78,36 +79,44 @@ class TestGoogleOAuthViews:
         assert response.cookies["refresh_token"].value == ""
 
     def test_google_callback_redirects_to_2fa_when_required(self, monkeypatch, settings):
-        from django_app.identity import views
+        from django_app.identity import google_mfa_views
 
         settings.DEBUG = True
         settings.FRONTEND_URL = "http://localhost:3000"
-        monkeypatch.setattr(views, "get_google_oauth_adapter", lambda: _AdapterStub())
+        monkeypatch.setattr(google_mfa_views, "get_google_oauth_adapter", lambda: _AdapterStub())
         monkeypatch.setattr(
-            views,
+            google_mfa_views,
             "get_auth_session_facade",
             lambda: _AuthSessionFacadeStub(
                 _UseCaseResult(requires_2fa=True, temp_token="temp-abc")
             ),
         )
+        monkeypatch.setattr(
+            google_mfa_views,
+            "consume_oauth_state",
+            lambda state, nonce: SimpleNamespace(role="planner"),
+        )
 
-        response = self.client.get(reverse("google-callback"), {"code": "oauth-code"})
+        response = self.client.get(reverse("google-callback"), {"code": "oauth-code", "state": "state"})
         assert response.status_code == 302
-        assert response.url == "http://localhost:3000/auth/2fa?temp_token=temp-abc"
+        assert response.url == "http://localhost:3000/auth/2fa"
+        assert "temp_token" not in response.url
         assert "access=" not in response.url
         assert "user=" not in response.url
+        assert response.cookies["mfa_temp_token"].value == "temp-abc"
+        assert response.cookies["mfa_temp_token"]["httponly"] is True
         assert response.cookies["refresh_token"].value == ""
         assert response["Cache-Control"] == "no-store"
         assert response["Pragma"] == "no-cache"
 
     def test_google_callback_redirects_success_with_refresh_cookie_only(self, monkeypatch, settings):
-        from django_app.identity import views
+        from django_app.identity import google_mfa_views
 
         settings.DEBUG = True
         settings.FRONTEND_URL = "http://localhost:3000"
-        monkeypatch.setattr(views, "get_google_oauth_adapter", lambda: _AdapterStub())
+        monkeypatch.setattr(google_mfa_views, "get_google_oauth_adapter", lambda: _AdapterStub())
         monkeypatch.setattr(
-            views,
+            google_mfa_views,
             "get_auth_session_facade",
             lambda: _AuthSessionFacadeStub(
                 _UseCaseResult(
@@ -135,8 +144,13 @@ class TestGoogleOAuthViews:
                 )
             ),
         )
+        monkeypatch.setattr(
+            google_mfa_views,
+            "consume_oauth_state",
+            lambda state, nonce: SimpleNamespace(role="planner"),
+        )
 
-        response = self.client.get(reverse("google-callback"), {"code": "oauth-code"})
+        response = self.client.get(reverse("google-callback"), {"code": "oauth-code", "state": "state"})
         assert response.status_code == 302
         assert response.url == "http://localhost:3000/auth/success"
         assert "access" not in response.url
