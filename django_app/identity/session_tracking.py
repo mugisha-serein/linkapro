@@ -45,6 +45,17 @@ def touch_identity_session(session_id: str | None, token_family: str | None = No
     IdentitySession.objects.filter(**filters).update(last_seen_at=timezone.now())
 
 
+def identity_session_is_active(session_id: str | None, token_family: str | None = None) -> bool:
+    if not session_id:
+        return True
+    from django_app.identity.models import IdentitySession
+
+    filters = {"id": session_id, "revoked_at__isnull": True}
+    if token_family:
+        filters["token_family"] = token_family
+    return IdentitySession.objects.filter(**filters).exists()
+
+
 def revoke_identity_session(
     *,
     session_id: str | None = None,
