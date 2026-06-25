@@ -10,6 +10,11 @@ from django_app.identity.session_revocation import (
     is_token_revoked_for_user,
     token_version_matches_active_user,
 )
+from django_app.identity.session_tracking import (
+    SESSION_ID_CLAIM,
+    revoke_identity_session,
+    touch_identity_session,
+)
 from payments.application.ports import ITokenBlacklist
 from payments.domain.step_up_policy import StepUpPolicy, StepUpPolicyResult
 from infrastructure.adapters.jwt_token_service import accepted_identity_token_env, identity_token_env
@@ -34,6 +39,7 @@ class TokenCommandHandlers:
 
         jti = token.get("jti")
         family = token.get("family")
+        session_id = token.get(SESSION_ID_CLAIM)
         token_env = token.get("env")
         user_id = token.get("user_id")
         issued_at = token.get("iat")
@@ -51,16 +57,22 @@ class TokenCommandHandlers:
         if self.blacklist.is_blacklisted(jti):
             # Token reuse = possible theft → blacklist whole family
             self.blacklist.blacklist_family(family)
+            revoke_identity_session(session_id=session_id, token_family=family, reason="refresh_reuse_detected")
             raise ValueError("Token has been revoked")
         if self.blacklist.is_family_blacklisted(family):
             self.blacklist.blacklist(jti, ttl=self._remaining_ttl(token))
+            revoke_identity_session(session_id=session_id, token_family=family, reason="token_family_revoked")
             raise ValueError("Token family has been revoked")
         if is_token_revoked_for_user(user_id, issued_at):
             self.blacklist.blacklist_family(family)
+            revoke_identity_session(session_id=session_id, token_family=family, reason="user_sessions_revoked")
             raise ValueError("Token has been revoked")
         if not token_version_matches_active_user(user_id, token_version):
             self.blacklist.blacklist_family(family)
+            revoke_identity_session(session_id=session_id, token_family=family, reason="session_version_mismatch")
             raise ValueError("Token session is no longer valid")
+
+        touch_identity_session(session_id, family)
 
         # Blacklist the used refresh token
         self.blacklist.blacklist(jti, ttl=self._remaining_ttl(token))
@@ -74,6 +86,8 @@ class TokenCommandHandlers:
         new_refresh["env"] = expected_env
         new_refresh["step_up"] = token.get("step_up", False)
         new_refresh["family"] = family
+        if session_id:
+            new_refresh[SESSION_ID_CLAIM] = str(session_id)
         new_refresh["jti"] = str(uuid.uuid4())
         self._apply_bootstrap_claims(new_refresh, bootstrap_claims)
 
@@ -83,6 +97,8 @@ class TokenCommandHandlers:
         new_access["env"] = expected_env
         new_access["step_up"] = token.get("step_up", False)
         new_access["family"] = family
+        if session_id:
+            new_access[SESSION_ID_CLAIM] = str(session_id)
         new_access["jti"] = str(uuid.uuid4())
         self._apply_bootstrap_claims(new_access, bootstrap_claims)
 
@@ -99,6 +115,7 @@ class TokenCommandHandlers:
 
         jti = token.get("jti")
         family = token.get("family")
+        session_id = token.get(SESSION_ID_CLAIM)
         token_env = token.get("env")
         expected_env = self._token_env()
 
@@ -112,6 +129,7 @@ class TokenCommandHandlers:
         ttl = self._remaining_ttl(token)
         self.blacklist.blacklist(jti, ttl=ttl)
         self.blacklist.blacklist_family(family)
+        revoke_identity_session(session_id=session_id, token_family=family, reason="user_signed_out")
 
     def issue_step_up_token(self, user_id: str, original_token: dict) -> str:
         """Issue a short‑lived (5 min) access token with step_up=True."""
@@ -123,12 +141,15 @@ class TokenCommandHandlers:
         token_env = original_token.get("env")
         expected_env = self._token_env()
         family = original_token.get("family")
+        session_id = original_token.get(SESSION_ID_CLAIM)
         if accepted_identity_token_env(token_env, context="step_up_token_issue") is None:
             raise ValueError("Token environment mismatch")
         if not family:
             raise ValueError("Malformed token family")
         token["env"] = expected_env
         token["family"] = family
+        if session_id:
+            token[SESSION_ID_CLAIM] = str(session_id)
         token["step_up"] = True
         token["jti"] = str(uuid.uuid4())
         self._apply_bootstrap_claims(token, self._bootstrap_claims(original_token))
@@ -158,6 +179,7 @@ class TokenCommandHandlers:
             "requires_password_setup",
             "two_factor_enabled",
             AUTH_TOKEN_VERSION_CLAIM,
+            SESSION_ID_CLAIM,
             "is_authenticated",
             "onboarding_complete",
         )
