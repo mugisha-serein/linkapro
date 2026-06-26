@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, List
 import uuid
 
@@ -56,7 +57,7 @@ class ServicePackageDTO:
     vendor_id: uuid.UUID
     name: str
     description: str
-    price: float
+    price: Decimal
     currency: str
     package_tier: str
     approval_status: str
