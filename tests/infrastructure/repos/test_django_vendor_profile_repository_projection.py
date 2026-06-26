@@ -49,11 +49,12 @@ def test_save_schedules_marketplace_projection_sync(monkeypatch):
 
 def test_delete_removes_marketplace_projection(monkeypatch):
     delete_mock = Mock(return_value={"status": "deleted"})
+    repo = DjangoVendorProfileRepository()
+    monkeypatch.setattr(repo, "_sync_marketplace_projection", Mock())
     monkeypatch.setattr(
         "infrastructure.repos.django_vendor_profile_repository.delete_vendor_from_marketplace",
         delete_mock,
     )
-    repo = DjangoVendorProfileRepository()
     saved = repo.save(_profile_for(_create_vendor_user(), status=VendorStatus.APPROVED))
 
     repo.delete(saved.id)
