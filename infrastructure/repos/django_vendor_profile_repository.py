@@ -1,6 +1,9 @@
+import logging
 import uuid
 from typing import Optional, List
+
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
 
 from domain.vendors.entities import VendorProfile as DomainProfile, VendorStatus, ServiceCategory
 from domain.vendors.interfaces import IVendorProfileRepository
@@ -10,6 +13,8 @@ from infrastructure.adapters.marketplace_projection import (
     delete_vendor_from_marketplace,
     sync_or_delete_vendor_projection,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DjangoVendorProfileRepository(IVendorProfileRepository):
@@ -52,11 +57,24 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         obj.rejected_at = domain.rejected_at
         obj.rejection_reason = domain.rejection_reason
         obj.save()
-        return self._to_domain(obj)
+        saved = self._to_domain(obj)
+        transaction.on_commit(lambda vendor_id=obj.id: self._sync_marketplace_projection(vendor_id))
+        return saved
 
     def delete(self, vendor_id: uuid.UUID) -> None:
         DjangoProfile.objects.filter(id=vendor_id).delete()
         delete_vendor_from_marketplace(vendor_id)
+
+    def _sync_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
+        try:
+            vendor = DjangoProfile.objects.get(id=vendor_id)
+        except DjangoProfile.DoesNotExist:
+            delete_vendor_from_marketplace(vendor_id)
+            return
+        try:
+            sync_or_delete_vendor_projection(vendor)
+        except Exception:
+            logger.exception("Vendor marketplace projection sync failed.", extra={"vendor_id": str(vendor_id)})
 
     def _to_domain(self, model: DjangoProfile) -> DomainProfile:
         return DomainProfile(
