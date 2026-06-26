@@ -59,6 +59,7 @@ class AddPortfolioImageCommand:
 class DeletePortfolioImageCommand:
     image_id: uuid.UUID
     deleted_by_id: Optional[uuid.UUID] = None
+    vendor_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class ReorderPortfolioImagesCommand:
@@ -82,15 +83,18 @@ class UpdateServicePackageCommand:
     price: Optional[float] = None
     currency: Optional[str] = None
     package_tier: Optional[str] = None
+    vendor_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class DeactivateServicePackageCommand:
     package_id: uuid.UUID
     deleted_by_id: Optional[uuid.UUID] = None
+    vendor_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class ActivateServicePackageCommand:
     package_id: uuid.UUID
+    vendor_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class SendInquiryCommand:
