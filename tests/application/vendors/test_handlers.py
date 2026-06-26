@@ -1,16 +1,18 @@
 import uuid
 import pytest
 from unittest.mock import Mock
-from datetime import datetime
 
 from application.vendors.commands import (
     CreateVendorProfileCommand,
     SubmitVendorForReviewCommand,
     ApproveVendorCommand,
     RejectVendorCommand,
-    SuspendVendorCommand,
     AddPortfolioImageCommand,
+    DeletePortfolioImageCommand,
     CreateServicePackageCommand,
+    UpdateServicePackageCommand,
+    DeactivateServicePackageCommand,
+    ActivateServicePackageCommand,
 )
 from application.vendors.handlers import VendorCommandHandlers
 from domain.vendors.entities import (
@@ -168,6 +170,24 @@ class TestPortfolioCommands:
         assert result.order == 0
         mock_repos["image_repo"].save.assert_called_once()
 
+    def test_delete_portfolio_image_rejects_wrong_vendor(self, handlers, mock_repos):
+        image = PortfolioImage(
+            id=uuid.uuid4(),
+            vendor_id=uuid.uuid4(),
+            public_id="public123",
+            secure_url="https://...",
+        )
+        mock_repos["image_repo"].get_by_id.return_value = image
+
+        cmd = DeletePortfolioImageCommand(
+            image_id=image.id,
+            vendor_id=uuid.uuid4(),
+        )
+
+        with pytest.raises(ValueError, match="Image not found"):
+            handlers.delete_portfolio_image(cmd)
+        mock_repos["image_repo"].delete.assert_not_called()
+
 
 class TestServicePackageCommands:
     def test_create_service_package(self, handlers, mock_repos):
@@ -186,3 +206,61 @@ class TestServicePackageCommands:
         assert result.price == 5000.0
         assert result.is_active is False
         mock_repos["package_repo"].save.assert_called_once()
+
+    def test_update_service_package_rejects_wrong_vendor(self, handlers, mock_repos):
+        package = ServicePackage(
+            id=uuid.uuid4(),
+            vendor_id=uuid.uuid4(),
+            name="Deluxe",
+            description="All inclusive",
+            price=5000.0,
+        )
+        mock_repos["package_repo"].get_by_id.return_value = package
+
+        cmd = UpdateServicePackageCommand(
+            package_id=package.id,
+            vendor_id=uuid.uuid4(),
+            name="Changed",
+        )
+
+        with pytest.raises(ValueError, match="Package not found"):
+            handlers.update_service_package(cmd)
+        mock_repos["package_repo"].save.assert_not_called()
+
+    def test_deactivate_service_package_rejects_wrong_vendor(self, handlers, mock_repos):
+        package = ServicePackage(
+            id=uuid.uuid4(),
+            vendor_id=uuid.uuid4(),
+            name="Deluxe",
+            description="All inclusive",
+            price=5000.0,
+        )
+        mock_repos["package_repo"].get_by_id.return_value = package
+
+        cmd = DeactivateServicePackageCommand(
+            package_id=package.id,
+            vendor_id=uuid.uuid4(),
+        )
+
+        with pytest.raises(ValueError, match="Package not found"):
+            handlers.deactivate_package(cmd)
+        mock_repos["package_repo"].delete.assert_not_called()
+
+    def test_activate_service_package_rejects_wrong_vendor(self, handlers, mock_repos):
+        package = ServicePackage(
+            id=uuid.uuid4(),
+            vendor_id=uuid.uuid4(),
+            name="Deluxe",
+            description="All inclusive",
+            price=5000.0,
+        )
+        mock_repos["package_repo"].get_by_id.return_value = package
+
+        cmd = ActivateServicePackageCommand(
+            package_id=package.id,
+            vendor_id=uuid.uuid4(),
+        )
+
+        with pytest.raises(ValueError, match="Package not found"):
+            handlers.activate_package(cmd)
+        mock_repos["package_repo"].save.assert_not_called()
