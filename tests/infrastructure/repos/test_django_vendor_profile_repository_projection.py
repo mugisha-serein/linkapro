@@ -47,16 +47,15 @@ def test_save_schedules_marketplace_projection_sync(monkeypatch):
     sync_mock.assert_called_once_with(saved.id)
 
 
-def test_delete_removes_marketplace_projection(monkeypatch):
-    delete_mock = Mock(return_value={"status": "deleted"})
+def test_delete_schedules_marketplace_projection_delete(monkeypatch):
     repo = DjangoVendorProfileRepository()
-    monkeypatch.setattr(repo, "_sync_marketplace_projection", Mock())
-    monkeypatch.setattr(
-        "infrastructure.repos.django_vendor_profile_repository.delete_vendor_from_marketplace",
-        delete_mock,
-    )
+    sync_mock = Mock()
+    delete_mock = Mock()
+    monkeypatch.setattr(repo, "_sync_marketplace_projection", sync_mock)
+    monkeypatch.setattr(repo, "_delete_marketplace_projection", delete_mock)
     saved = repo.save(_profile_for(_create_vendor_user(), status=VendorStatus.APPROVED))
 
     repo.delete(saved.id)
 
+    sync_mock.assert_called_once_with(saved.id)
     delete_mock.assert_called_once_with(saved.id)
