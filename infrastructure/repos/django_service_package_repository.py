@@ -1,6 +1,7 @@
 import uuid
 from typing import Optional, List
 from django.core.exceptions import ObjectDoesNotExist
+from django.utils import timezone
 
 from domain.vendors.entities import ServicePackage as DomainPackage
 from domain.vendors.interfaces import IServicePackageRepository
@@ -46,8 +47,10 @@ class DjangoServicePackageRepository(IServicePackageRepository):
             return None
 
         obj.is_active = False
-        obj.soft_delete(user_id=deleted_by_id)
-        obj.save(update_fields=["is_active", "updated_at"])
+        obj.is_deleted = True
+        obj.deleted_at = timezone.now()
+        obj.deleted_by_id = deleted_by_id
+        obj.save(update_fields=["is_active", "is_deleted", "deleted_at", "deleted_by", "updated_at"])
         return self._to_domain(obj)
 
     def _to_domain(self, model: DjangoPackage) -> DomainPackage:
