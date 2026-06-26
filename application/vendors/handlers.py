@@ -321,48 +321,50 @@ class VendorQueryHandlers:
         return [VendorCommandHandlers._to_inquiry_dto(i) for i in inquiries]
 
     def get_dashboard_summary(self, vendor_id: uuid.UUID) -> dict:
-        profile = self.vendor_repo.get_by_id(vendor_id)
-        inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
-        packages = self.package_repo.list_by_vendor(vendor_id)
-        images = self.image_repo.list_by_vendor(vendor_id)
-
-        unread = sum(1 for inquiry in inquiries if not inquiry.is_read)
-        active_packages = sum(1 for package in packages if package.is_active and package.approval_status == "approved")
-
+        metrics = self._vendor_metrics(vendor_id)
         return {
-            "profile_score": self._profile_completion_score(profile, images, packages),
+            "profile_score": metrics["profile_completion"],
             "total_views": 0,
-            "planner_requests": len(inquiries),
-            "unread_inquiries": unread,
-            "active_packages": active_packages,
-            "portfolio_count": len(images),
-            "account_status": profile.status.value if profile else "draft",
+            "planner_requests": metrics["total_inquiries"],
+            "unread_inquiries": metrics["unread_inquiries"],
+            "active_packages": metrics["active_packages"],
+            "portfolio_count": metrics["portfolio_count"],
+            "account_status": metrics["account_status"],
+            "total_packages": metrics["total_packages"],
+            "pending_packages": metrics["pending_packages"],
         }
 
     def get_analytics(self, vendor_id: uuid.UUID) -> dict:
-        inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
-        packages = self.package_repo.list_by_vendor(vendor_id)
-        images = self.image_repo.list_by_vendor(vendor_id)
-        profile = self.vendor_repo.get_by_id(vendor_id)
-
-        unread = sum(1 for inquiry in inquiries if not inquiry.is_read)
-        active_packages = sum(1 for package in packages if package.is_active and package.approval_status == "approved")
-
+        metrics = self._vendor_metrics(vendor_id)
         return {
             "total_views": 0,
             "views_trend": 0,
-            "total_inquiries": len(inquiries),
-            "inquiries_mtd": len(inquiries),
-            "unresponded_inquiries": unread,
-            "avg_response_time_hours": 0,
-            "conversion_rate": 0,
+            "total_inquiries": metrics["total_inquiries"],
+            "inquiries_mtd": metrics["inquiries_mtd"],
+            "unresponded_inquiries": metrics["unread_inquiries"],
+            "avg_response_time_hours": None,
+            "conversion_rate": None,
             "earnings_mtd": "0",
             "pending_payments": "0",
-            "profile_completion": self._profile_completion_score(profile, images, packages),
-            "active_packages": active_packages,
-            "portfolio_count": len(images),
-            "account_status": profile.status.value if profile else "draft",
-            "service_area": profile.service_area if profile else "",
+            "profile_completion": metrics["profile_completion"],
+            "active_packages": metrics["active_packages"],
+            "portfolio_count": metrics["portfolio_count"],
+            "account_status": metrics["account_status"],
+            "service_area": metrics["service_area"],
+            "total_packages": metrics["total_packages"],
+            "pending_packages": metrics["pending_packages"],
+            "approved_packages": metrics["approved_packages"],
+            "rejected_packages": metrics["rejected_packages"],
+            "read_inquiries": metrics["read_inquiries"],
+            "response_rate": metrics["response_rate"],
+            "unavailable_metrics": [
+                "total_views",
+                "views_trend",
+                "avg_response_time_hours",
+                "conversion_rate",
+                "earnings_mtd",
+                "pending_payments",
+            ],
         }
 
     def get_recent_activity(self, vendor_id: uuid.UUID, limit: int = 10) -> List[dict]:
@@ -385,6 +387,46 @@ class VendorQueryHandlers:
                 }
             )
         return activity
+
+    def _vendor_metrics(self, vendor_id: uuid.UUID) -> dict:
+        profile = self.vendor_repo.get_by_id(vendor_id)
+        inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
+        packages = self.package_repo.list_by_vendor(vendor_id)
+        images = self.image_repo.list_by_vendor(vendor_id)
+        now = utc_now()
+
+        total_inquiries = len(inquiries)
+        unread_inquiries = sum(1 for inquiry in inquiries if not inquiry.is_read)
+        read_inquiries = total_inquiries - unread_inquiries
+        inquiries_mtd = sum(
+            1
+            for inquiry in inquiries
+            if inquiry.created_at and inquiry.created_at.year == now.year and inquiry.created_at.month == now.month
+        )
+        active_packages = sum(
+            1 for package in packages if package.is_active and package.approval_status == "approved"
+        )
+        approved_packages = sum(1 for package in packages if package.approval_status == "approved")
+        pending_packages = sum(1 for package in packages if package.approval_status == "waiting_approval")
+        rejected_packages = sum(1 for package in packages if package.approval_status == "rejected")
+        response_rate = round((read_inquiries / total_inquiries) * 100) if total_inquiries else 0
+
+        return {
+            "profile_completion": self._profile_completion_score(profile, images, packages),
+            "total_inquiries": total_inquiries,
+            "inquiries_mtd": inquiries_mtd,
+            "unread_inquiries": unread_inquiries,
+            "read_inquiries": read_inquiries,
+            "response_rate": response_rate,
+            "total_packages": len(packages),
+            "active_packages": active_packages,
+            "approved_packages": approved_packages,
+            "pending_packages": pending_packages,
+            "rejected_packages": rejected_packages,
+            "portfolio_count": len(images),
+            "account_status": profile.status.value if profile else "draft",
+            "service_area": profile.service_area if profile else "",
+        }
 
     @staticmethod
     def _profile_completion_score(profile, images, packages) -> int:
