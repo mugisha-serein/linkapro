@@ -185,18 +185,19 @@ class ServicePackage:
                        package_tier: Optional[str] = None) -> None:
         was_approved = self.approval_status == "approved"
         public_fields_changed = False
-        if name: self.name = name
-        if name: public_fields_changed = True
-        if description:
+        if name is not None:
+            self.name = name
+            public_fields_changed = True
+        if description is not None:
             self.description = description
             public_fields_changed = True
         if price is not None:
             self.price = coerce_package_price(price)
             public_fields_changed = True
-        if currency:
+        if currency is not None:
             self.currency = currency
             public_fields_changed = True
-        if package_tier:
+        if package_tier is not None:
             self.package_tier = package_tier
             public_fields_changed = True
         if was_approved and public_fields_changed:

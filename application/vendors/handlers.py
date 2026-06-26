@@ -58,12 +58,13 @@ class VendorCommandHandlers:
         profile = self.vendor_repo.get_by_id(cmd.vendor_id)
         if not profile:
             raise ValueError("Vendor not found")
-        if cmd.business_name: profile.business_name = cmd.business_name
-        if cmd.category: profile.category = ServiceCategory(cmd.category)
-        if cmd.description: profile.description = cmd.description
-        if cmd.service_area: profile.service_area = cmd.service_area
-        if cmd.contact_email: profile.contact_email = cmd.contact_email
-        if cmd.contact_phone: profile.contact_phone = cmd.contact_phone
+        self._reject_blank_required_profile_updates(cmd)
+        if cmd.business_name is not None: profile.business_name = cmd.business_name
+        if cmd.category is not None: profile.category = ServiceCategory(cmd.category)
+        if cmd.description is not None: profile.description = cmd.description
+        if cmd.service_area is not None: profile.service_area = cmd.service_area
+        if cmd.contact_email is not None: profile.contact_email = cmd.contact_email
+        if cmd.contact_phone is not None: profile.contact_phone = cmd.contact_phone
         if cmd.custom_category is not None: profile.custom_category = cmd.custom_category
         if cmd.website is not None: profile.website = cmd.website
         saved = self.vendor_repo.save(profile)
@@ -216,6 +217,24 @@ class VendorCommandHandlers:
             InquiryReceived(inquiry_id=saved.id, vendor_id=saved.vendor_id, occurred_at=utc_now())
         )
         return self._to_inquiry_dto(saved)
+
+    @staticmethod
+    def _reject_blank_required_profile_updates(cmd: UpdateVendorProfileCommand) -> None:
+        required_fields = (
+            "business_name",
+            "category",
+            "description",
+            "service_area",
+            "contact_email",
+            "contact_phone",
+        )
+        blank_fields = [
+            field_name
+            for field_name in required_fields
+            if getattr(cmd, field_name) is not None and not str(getattr(cmd, field_name)).strip()
+        ]
+        if blank_fields:
+            raise ValueError(f"Required vendor profile fields cannot be blank: {', '.join(blank_fields)}")
 
     @staticmethod
     def _validate_portfolio_reorder_ids(requested_ids: List[uuid.UUID], image_map: dict[uuid.UUID, PortfolioImage]) -> None:
