@@ -39,14 +39,16 @@ class DjangoServicePackageRepository(IServicePackageRepository):
         obj.save()
         return self._to_domain(obj)
 
-    def delete(self, package_id: uuid.UUID, deleted_by_id: Optional[uuid.UUID] = None) -> None:
+    def delete(self, package_id: uuid.UUID, deleted_by_id: Optional[uuid.UUID] = None) -> Optional[DomainPackage]:
         try:
             obj = DjangoPackage.all_objects.get(id=package_id)
         except DjangoPackage.DoesNotExist:
-            return
+            return None
+
         obj.is_active = False
-        obj.save(update_fields=["is_active", "updated_at"])
         obj.soft_delete(user_id=deleted_by_id)
+        obj.save(update_fields=["is_active", "updated_at"])
+        return self._to_domain(obj)
 
     def _to_domain(self, model: DjangoPackage) -> DomainPackage:
         return DomainPackage(
