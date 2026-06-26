@@ -138,13 +138,15 @@ class VendorCommandHandlers:
     def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> List[PortfolioImageDTO]:
         images = self.image_repo.list_by_vendor(cmd.vendor_id)
         image_map = {img.id: img for img in images}
+        requested_ids = list(cmd.image_ids_in_order)
+        self._validate_portfolio_reorder_ids(requested_ids, image_map)
+
         reordered = []
-        for idx, img_id in enumerate(cmd.image_ids_in_order):
-            if img_id in image_map:
-                img = image_map[img_id]
-                img.reorder(idx)
-                saved = self.image_repo.save(img)
-                reordered.append(self._to_image_dto(saved))
+        for idx, img_id in enumerate(requested_ids):
+            img = image_map[img_id]
+            img.reorder(idx)
+            saved = self.image_repo.save(img)
+            reordered.append(self._to_image_dto(saved))
         return reordered
 
     def create_service_package(self, cmd: CreateServicePackageCommand) -> ServicePackageDTO:
@@ -211,6 +213,15 @@ class VendorCommandHandlers:
             InquiryReceived(inquiry_id=saved.id, vendor_id=saved.vendor_id, occurred_at=utc_now())
         )
         return self._to_inquiry_dto(saved)
+
+    @staticmethod
+    def _validate_portfolio_reorder_ids(requested_ids: List[uuid.UUID], image_map: dict[uuid.UUID, PortfolioImage]) -> None:
+        if not requested_ids:
+            raise ValueError("Portfolio image order is required")
+        if len(requested_ids) != len(set(requested_ids)):
+            raise ValueError("Portfolio image order contains duplicate images")
+        if set(requested_ids) != set(image_map.keys()):
+            raise ValueError("Portfolio image order must include every image belonging to this vendor")
 
     @staticmethod
     def _assert_package_owned(package: ServicePackage | None, vendor_id: uuid.UUID | None) -> None:
