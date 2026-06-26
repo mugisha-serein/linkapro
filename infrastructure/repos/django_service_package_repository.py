@@ -54,7 +54,9 @@ class DjangoServicePackageRepository(IServicePackageRepository):
             vendor_id=model.vendor_id,
             name=model.name,
             description=model.description,
-            price=float(model.price),
+            # Preserve Django DecimalField values exactly. The domain layer owns money as Decimal;
+            # turning this into float would reintroduce rounding drift after persistence.
+            price=model.price,
             currency=model.currency,
             package_tier=model.package_tier,
             approval_status=model.approval_status,
