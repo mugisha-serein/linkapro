@@ -6,6 +6,7 @@ from domain.vendors.entities import (
     VendorProfile, PortfolioImage, ServicePackage, Inquiry,
     VendorStatus, ServiceCategory
 )
+from domain.vendors.inquiry_policy import ensure_vendor_can_receive_inquiry
 from domain.vendors.package_rules import validate_service_package_rules
 from domain.vendors.interfaces import (
     IVendorProfileRepository, IPortfolioImageRepository,
@@ -199,6 +200,8 @@ class VendorCommandHandlers:
         return self._to_package_dto(saved)
 
     def send_inquiry(self, cmd: SendInquiryCommand) -> InquiryDTO:
+        profile = self.vendor_repo.get_by_id(cmd.vendor_id)
+        ensure_vendor_can_receive_inquiry(profile)
         inquiry = Inquiry(
             id=uuid.uuid4(),
             vendor_id=cmd.vendor_id,
