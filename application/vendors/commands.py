@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, List
 import uuid
 
@@ -71,7 +72,7 @@ class CreateServicePackageCommand:
     vendor_id: uuid.UUID
     name: str
     description: str
-    price: float
+    price: Decimal
     currency: str = "RWF"
     package_tier: str = "standard"
 
@@ -80,7 +81,7 @@ class UpdateServicePackageCommand:
     package_id: uuid.UUID
     name: Optional[str] = None
     description: Optional[str] = None
-    price: Optional[float] = None
+    price: Optional[Decimal] = None
     currency: Optional[str] = None
     package_tier: Optional[str] = None
     vendor_id: Optional[uuid.UUID] = None
