@@ -60,6 +60,13 @@ def validate_service_package_rules(*, name: str, description: str, price, packag
         raise PackageValidationError(errors)
 
 
+def coerce_package_price(value) -> Decimal:
+    price = _to_decimal(value)
+    if price is None:
+        raise ValueError("Package price must be a valid decimal amount.")
+    return price
+
+
 def _to_decimal(value) -> Decimal | None:
     try:
         return Decimal(str(value))

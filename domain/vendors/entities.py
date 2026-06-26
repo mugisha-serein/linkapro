@@ -1,10 +1,12 @@
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Optional, List
 
 from domain.shared.utils import utc_now
+from domain.vendors.package_rules import coerce_package_price
 
 
 class VendorStatus(str, Enum):
@@ -162,7 +164,9 @@ class ServicePackage:
     vendor_id: uuid.UUID
     name: str
     description: str
-    price: float               # in local currency
+    # Money must remain Decimal after serializer/database validation. Converting to float can introduce
+    # binary rounding drift and make package prices unsafe for approval, display, and future payment flows.
+    price: Decimal
     currency: str = "RWF"      # Rwandan Franc
     package_tier: str = "standard"
     approval_status: str = "waiting_approval"
@@ -173,8 +177,11 @@ class ServicePackage:
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
+    def __post_init__(self) -> None:
+        self.price = coerce_package_price(self.price)
+
     def update_details(self, name: Optional[str] = None, description: Optional[str] = None,
-                       price: Optional[float] = None, currency: Optional[str] = None,
+                       price: Optional[Decimal] = None, currency: Optional[str] = None,
                        package_tier: Optional[str] = None) -> None:
         was_approved = self.approval_status == "approved"
         public_fields_changed = False
@@ -184,7 +191,7 @@ class ServicePackage:
             self.description = description
             public_fields_changed = True
         if price is not None:
-            self.price = price
+            self.price = coerce_package_price(price)
             public_fields_changed = True
         if currency:
             self.currency = currency
