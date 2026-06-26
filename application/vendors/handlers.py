@@ -131,6 +131,8 @@ class VendorCommandHandlers:
         return self._to_image_dto(saved)
 
     def delete_portfolio_image(self, cmd: DeletePortfolioImageCommand) -> None:
+        image = self.image_repo.get_by_id(cmd.image_id)
+        self._assert_image_owned(image, cmd.vendor_id)
         self.image_repo.delete(cmd.image_id, deleted_by_id=cmd.deleted_by_id)
 
     def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> List[PortfolioImageDTO]:
@@ -168,8 +170,7 @@ class VendorCommandHandlers:
 
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
-        if not package:
-            raise ValueError("Package not found")
+        self._assert_package_owned(package, cmd.vendor_id)
         package.update_details(cmd.name, cmd.description, cmd.price, cmd.currency, cmd.package_tier)
         validate_service_package_rules(
             name=package.name,
@@ -182,8 +183,7 @@ class VendorCommandHandlers:
 
     def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
-        if not package:
-            raise ValueError("Package not found")
+        self._assert_package_owned(package, cmd.vendor_id)
         package.deactivate()
         self.package_repo.save(package)
         self.package_repo.delete(cmd.package_id, deleted_by_id=cmd.deleted_by_id)
@@ -191,8 +191,7 @@ class VendorCommandHandlers:
 
     def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
-        if not package:
-            raise ValueError("Package not found")
+        self._assert_package_owned(package, cmd.vendor_id)
         package.activate()
         saved = self.package_repo.save(package)
         return self._to_package_dto(saved)
@@ -212,6 +211,16 @@ class VendorCommandHandlers:
             InquiryReceived(inquiry_id=saved.id, vendor_id=saved.vendor_id, occurred_at=utc_now())
         )
         return self._to_inquiry_dto(saved)
+
+    @staticmethod
+    def _assert_package_owned(package: ServicePackage | None, vendor_id: uuid.UUID | None) -> None:
+        if not package or (vendor_id is not None and package.vendor_id != vendor_id):
+            raise ValueError("Package not found")
+
+    @staticmethod
+    def _assert_image_owned(image: PortfolioImage | None, vendor_id: uuid.UUID | None) -> None:
+        if not image or (vendor_id is not None and image.vendor_id != vendor_id):
+            raise ValueError("Image not found")
 
     # DTO conversion static methods
     @staticmethod
