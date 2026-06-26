@@ -9,6 +9,7 @@ from application.vendors.commands import (
     RejectVendorCommand,
     AddPortfolioImageCommand,
     DeletePortfolioImageCommand,
+    ReorderPortfolioImagesCommand,
     CreateServicePackageCommand,
     UpdateServicePackageCommand,
     DeactivateServicePackageCommand,
@@ -40,6 +41,16 @@ def handlers(mock_repos):
         package_repo=mock_repos["package_repo"],
         inquiry_repo=mock_repos["inquiry_repo"],
         event_dispatcher=mock_repos["event_dispatcher"],
+    )
+
+
+def _portfolio_image(vendor_id, *, order=0):
+    return PortfolioImage(
+        id=uuid.uuid4(),
+        vendor_id=vendor_id,
+        public_id=f"public-{order}",
+        secure_url="https://example.com/image.jpg",
+        order=order,
     )
 
 
@@ -187,6 +198,57 @@ class TestPortfolioCommands:
         with pytest.raises(ValueError, match="Image not found"):
             handlers.delete_portfolio_image(cmd)
         mock_repos["image_repo"].delete.assert_not_called()
+
+    def test_reorder_portfolio_images_reorders_exact_vendor_set(self, handlers, mock_repos):
+        vendor_id = uuid.uuid4()
+        first = _portfolio_image(vendor_id, order=0)
+        second = _portfolio_image(vendor_id, order=1)
+        mock_repos["image_repo"].list_by_vendor.return_value = [first, second]
+        mock_repos["image_repo"].save.side_effect = lambda img: img
+
+        result = handlers.reorder_portfolio_images(
+            ReorderPortfolioImagesCommand(vendor_id=vendor_id, image_ids_in_order=[second.id, first.id])
+        )
+
+        assert [item.id for item in result] == [second.id, first.id]
+        assert second.order == 0
+        assert first.order == 1
+        assert mock_repos["image_repo"].save.call_count == 2
+
+    def test_reorder_portfolio_images_rejects_duplicate_ids(self, handlers, mock_repos):
+        vendor_id = uuid.uuid4()
+        first = _portfolio_image(vendor_id, order=0)
+        second = _portfolio_image(vendor_id, order=1)
+        mock_repos["image_repo"].list_by_vendor.return_value = [first, second]
+
+        with pytest.raises(ValueError, match="duplicate"):
+            handlers.reorder_portfolio_images(
+                ReorderPortfolioImagesCommand(vendor_id=vendor_id, image_ids_in_order=[first.id, first.id])
+            )
+        mock_repos["image_repo"].save.assert_not_called()
+
+    def test_reorder_portfolio_images_rejects_missing_vendor_image(self, handlers, mock_repos):
+        vendor_id = uuid.uuid4()
+        first = _portfolio_image(vendor_id, order=0)
+        second = _portfolio_image(vendor_id, order=1)
+        mock_repos["image_repo"].list_by_vendor.return_value = [first, second]
+
+        with pytest.raises(ValueError, match="every image"):
+            handlers.reorder_portfolio_images(
+                ReorderPortfolioImagesCommand(vendor_id=vendor_id, image_ids_in_order=[first.id])
+            )
+        mock_repos["image_repo"].save.assert_not_called()
+
+    def test_reorder_portfolio_images_rejects_foreign_image_id(self, handlers, mock_repos):
+        vendor_id = uuid.uuid4()
+        first = _portfolio_image(vendor_id, order=0)
+        mock_repos["image_repo"].list_by_vendor.return_value = [first]
+
+        with pytest.raises(ValueError, match="every image"):
+            handlers.reorder_portfolio_images(
+                ReorderPortfolioImagesCommand(vendor_id=vendor_id, image_ids_in_order=[first.id, uuid.uuid4()])
+            )
+        mock_repos["image_repo"].save.assert_not_called()
 
 
 class TestServicePackageCommands:
