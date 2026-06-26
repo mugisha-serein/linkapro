@@ -63,18 +63,24 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
 
     def delete(self, vendor_id: uuid.UUID) -> None:
         DjangoProfile.objects.filter(id=vendor_id).delete()
-        delete_vendor_from_marketplace(vendor_id)
+        transaction.on_commit(lambda: self._delete_marketplace_projection(vendor_id))
 
     def _sync_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
         try:
             vendor = DjangoProfile.objects.get(id=vendor_id)
         except DjangoProfile.DoesNotExist:
-            delete_vendor_from_marketplace(vendor_id)
+            self._delete_marketplace_projection(vendor_id)
             return
         try:
             sync_or_delete_vendor_projection(vendor)
         except Exception:
             logger.exception("Vendor marketplace projection sync failed.", extra={"vendor_id": str(vendor_id)})
+
+    def _delete_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
+        try:
+            delete_vendor_from_marketplace(vendor_id)
+        except Exception:
+            logger.exception("Vendor marketplace projection delete failed.", extra={"vendor_id": str(vendor_id)})
 
     def _to_domain(self, model: DjangoProfile) -> DomainProfile:
         return DomainProfile(
