@@ -57,6 +57,7 @@ class AddPortfolioImageCommand:
 
 @dataclass(frozen=True)
 class DeletePortfolioImageCommand:
+    vendor_id: uuid.UUID
     image_id: uuid.UUID
     deleted_by_id: Optional[uuid.UUID] = None
 
@@ -76,6 +77,7 @@ class CreateServicePackageCommand:
 
 @dataclass(frozen=True)
 class UpdateServicePackageCommand:
+    vendor_id: uuid.UUID
     package_id: uuid.UUID
     name: Optional[str] = None
     description: Optional[str] = None
@@ -85,11 +87,13 @@ class UpdateServicePackageCommand:
 
 @dataclass(frozen=True)
 class DeactivateServicePackageCommand:
+    vendor_id: uuid.UUID
     package_id: uuid.UUID
     deleted_by_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class ActivateServicePackageCommand:
+    vendor_id: uuid.UUID
     package_id: uuid.UUID
 
 @dataclass(frozen=True)
