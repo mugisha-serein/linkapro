@@ -213,13 +213,13 @@ class VendorCommandHandlers:
         return self._to_inquiry_dto(saved)
 
     @staticmethod
-    def _assert_package_owned(package: ServicePackage | None, vendor_id: uuid.UUID) -> None:
-        if not package or package.vendor_id != vendor_id:
+    def _assert_package_owned(package: ServicePackage | None, vendor_id: uuid.UUID | None) -> None:
+        if not package or (vendor_id is not None and package.vendor_id != vendor_id):
             raise ValueError("Package not found")
 
     @staticmethod
-    def _assert_image_owned(image: PortfolioImage | None, vendor_id: uuid.UUID) -> None:
-        if not image or image.vendor_id != vendor_id:
+    def _assert_image_owned(image: PortfolioImage | None, vendor_id: uuid.UUID | None) -> None:
+        if not image or (vendor_id is not None and image.vendor_id != vendor_id):
             raise ValueError("Image not found")
 
     # DTO conversion static methods
