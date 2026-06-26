@@ -209,10 +209,10 @@ class VendorCommandHandlers:
     def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
         self._assert_package_owned(package, cmd.vendor_id)
-        package.deactivate()
-        self.package_repo.save(package)
-        self.package_repo.delete(cmd.package_id, deleted_by_id=cmd.deleted_by_id)
-        return self._to_package_dto(package)
+        deleted = self.package_repo.delete(cmd.package_id, deleted_by_id=cmd.deleted_by_id)
+        if not deleted:
+            raise ValueError("Package not found")
+        return self._to_package_dto(deleted)
 
     def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
