@@ -1,4 +1,5 @@
 from django.urls import path
+from .vendor_approval_views import AdminVendorApproveView
 from .views import (
     FlagContentCreateView,
     AdminEmailHealthView,
@@ -7,7 +8,6 @@ from .views import (
     AdminUserBanView,
     AdminUserReinstateView,
     AdminVendorListView,
-    AdminVendorApproveView,
     AdminVendorRejectView,
     AdminVendorSuspendView,
     AdminVendorReinstateView,
