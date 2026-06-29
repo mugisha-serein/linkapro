@@ -1,6 +1,6 @@
 from django.urls import path
+from .csrf_views import VendorProfileView
 from .views import (
-    VendorProfileView,
     VendorProfileStatusView,
     VendorSubmitForReviewView,
     PortfolioImageView,
