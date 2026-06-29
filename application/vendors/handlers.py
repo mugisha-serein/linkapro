@@ -6,6 +6,7 @@ from domain.vendors.entities import (
     VendorProfile, PortfolioImage, ServicePackage, Inquiry,
     VendorStatus, ServiceCategory
 )
+from domain.vendors.inquiry_policy import ensure_vendor_can_receive_inquiry
 from domain.vendors.package_rules import validate_service_package_rules
 from domain.vendors.interfaces import (
     IVendorProfileRepository, IPortfolioImageRepository,
@@ -15,8 +16,29 @@ from domain.vendors.events import (
     VendorSubmittedForReview, VendorApproved, VendorRejected,
     VendorSuspended, InquiryReceived
 )
-from .commands import *
-from .dtos import *
+from .commands import (
+    ActivateServicePackageCommand,
+    AddPortfolioImageCommand,
+    ApproveVendorCommand,
+    CreateServicePackageCommand,
+    CreateVendorProfileCommand,
+    DeactivateServicePackageCommand,
+    DeletePortfolioImageCommand,
+    ReinstateVendorCommand,
+    RejectVendorCommand,
+    ReorderPortfolioImagesCommand,
+    SendInquiryCommand,
+    SubmitVendorForReviewCommand,
+    SuspendVendorCommand,
+    UpdateServicePackageCommand,
+    UpdateVendorProfileCommand,
+)
+from .dtos import (
+    InquiryDTO,
+    PortfolioImageDTO,
+    ServicePackageDTO,
+    VendorProfileDTO,
+)
 
 
 class VendorCommandHandlers:
@@ -57,12 +79,13 @@ class VendorCommandHandlers:
         profile = self.vendor_repo.get_by_id(cmd.vendor_id)
         if not profile:
             raise ValueError("Vendor not found")
-        if cmd.business_name: profile.business_name = cmd.business_name
-        if cmd.category: profile.category = ServiceCategory(cmd.category)
-        if cmd.description: profile.description = cmd.description
-        if cmd.service_area: profile.service_area = cmd.service_area
-        if cmd.contact_email: profile.contact_email = cmd.contact_email
-        if cmd.contact_phone: profile.contact_phone = cmd.contact_phone
+        self._reject_blank_required_profile_updates(cmd)
+        if cmd.business_name is not None: profile.business_name = cmd.business_name
+        if cmd.category is not None: profile.category = ServiceCategory(cmd.category)
+        if cmd.description is not None: profile.description = cmd.description
+        if cmd.service_area is not None: profile.service_area = cmd.service_area
+        if cmd.contact_email is not None: profile.contact_email = cmd.contact_email
+        if cmd.contact_phone is not None: profile.contact_phone = cmd.contact_phone
         if cmd.custom_category is not None: profile.custom_category = cmd.custom_category
         if cmd.website is not None: profile.website = cmd.website
         saved = self.vendor_repo.save(profile)
@@ -138,13 +161,15 @@ class VendorCommandHandlers:
     def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> List[PortfolioImageDTO]:
         images = self.image_repo.list_by_vendor(cmd.vendor_id)
         image_map = {img.id: img for img in images}
+        requested_ids = list(cmd.image_ids_in_order)
+        self._validate_portfolio_reorder_ids(requested_ids, image_map)
+
         reordered = []
-        for idx, img_id in enumerate(cmd.image_ids_in_order):
-            if img_id in image_map:
-                img = image_map[img_id]
-                img.reorder(idx)
-                saved = self.image_repo.save(img)
-                reordered.append(self._to_image_dto(saved))
+        for idx, img_id in enumerate(requested_ids):
+            img = image_map[img_id]
+            img.reorder(idx)
+            saved = self.image_repo.save(img)
+            reordered.append(self._to_image_dto(saved))
         return reordered
 
     def create_service_package(self, cmd: CreateServicePackageCommand) -> ServicePackageDTO:
@@ -184,10 +209,10 @@ class VendorCommandHandlers:
     def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
         self._assert_package_owned(package, cmd.vendor_id)
-        package.deactivate()
-        self.package_repo.save(package)
-        self.package_repo.delete(cmd.package_id, deleted_by_id=cmd.deleted_by_id)
-        return self._to_package_dto(package)
+        deleted = self.package_repo.delete(cmd.package_id, deleted_by_id=cmd.deleted_by_id)
+        if not deleted:
+            raise ValueError("Package not found")
+        return self._to_package_dto(deleted)
 
     def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
@@ -197,6 +222,8 @@ class VendorCommandHandlers:
         return self._to_package_dto(saved)
 
     def send_inquiry(self, cmd: SendInquiryCommand) -> InquiryDTO:
+        profile = self.vendor_repo.get_by_id(cmd.vendor_id)
+        ensure_vendor_can_receive_inquiry(profile)
         inquiry = Inquiry(
             id=uuid.uuid4(),
             vendor_id=cmd.vendor_id,
@@ -211,6 +238,33 @@ class VendorCommandHandlers:
             InquiryReceived(inquiry_id=saved.id, vendor_id=saved.vendor_id, occurred_at=utc_now())
         )
         return self._to_inquiry_dto(saved)
+
+    @staticmethod
+    def _reject_blank_required_profile_updates(cmd: UpdateVendorProfileCommand) -> None:
+        required_fields = (
+            "business_name",
+            "category",
+            "description",
+            "service_area",
+            "contact_email",
+            "contact_phone",
+        )
+        blank_fields = [
+            field_name
+            for field_name in required_fields
+            if getattr(cmd, field_name) is not None and not str(getattr(cmd, field_name)).strip()
+        ]
+        if blank_fields:
+            raise ValueError(f"Required vendor profile fields cannot be blank: {', '.join(blank_fields)}")
+
+    @staticmethod
+    def _validate_portfolio_reorder_ids(requested_ids: List[uuid.UUID], image_map: dict[uuid.UUID, PortfolioImage]) -> None:
+        if not requested_ids:
+            raise ValueError("Portfolio image order is required")
+        if len(requested_ids) != len(set(requested_ids)):
+            raise ValueError("Portfolio image order contains duplicate images")
+        if set(requested_ids) != set(image_map.keys()):
+            raise ValueError("Portfolio image order must include every image belonging to this vendor")
 
     @staticmethod
     def _assert_package_owned(package: ServicePackage | None, vendor_id: uuid.UUID | None) -> None:
@@ -310,48 +364,50 @@ class VendorQueryHandlers:
         return [VendorCommandHandlers._to_inquiry_dto(i) for i in inquiries]
 
     def get_dashboard_summary(self, vendor_id: uuid.UUID) -> dict:
-        profile = self.vendor_repo.get_by_id(vendor_id)
-        inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
-        packages = self.package_repo.list_by_vendor(vendor_id)
-        images = self.image_repo.list_by_vendor(vendor_id)
-
-        unread = sum(1 for inquiry in inquiries if not inquiry.is_read)
-        active_packages = sum(1 for package in packages if package.is_active and package.approval_status == "approved")
-
+        metrics = self._vendor_metrics(vendor_id)
         return {
-            "profile_score": self._profile_completion_score(profile, images, packages),
+            "profile_score": metrics["profile_completion"],
             "total_views": 0,
-            "planner_requests": len(inquiries),
-            "unread_inquiries": unread,
-            "active_packages": active_packages,
-            "portfolio_count": len(images),
-            "account_status": profile.status.value if profile else "draft",
+            "planner_requests": metrics["total_inquiries"],
+            "unread_inquiries": metrics["unread_inquiries"],
+            "active_packages": metrics["active_packages"],
+            "portfolio_count": metrics["portfolio_count"],
+            "account_status": metrics["account_status"],
+            "total_packages": metrics["total_packages"],
+            "pending_packages": metrics["pending_packages"],
         }
 
     def get_analytics(self, vendor_id: uuid.UUID) -> dict:
-        inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
-        packages = self.package_repo.list_by_vendor(vendor_id)
-        images = self.image_repo.list_by_vendor(vendor_id)
-        profile = self.vendor_repo.get_by_id(vendor_id)
-
-        unread = sum(1 for inquiry in inquiries if not inquiry.is_read)
-        active_packages = sum(1 for package in packages if package.is_active and package.approval_status == "approved")
-
+        metrics = self._vendor_metrics(vendor_id)
         return {
             "total_views": 0,
             "views_trend": 0,
-            "total_inquiries": len(inquiries),
-            "inquiries_mtd": len(inquiries),
-            "unresponded_inquiries": unread,
-            "avg_response_time_hours": 0,
-            "conversion_rate": 0,
+            "total_inquiries": metrics["total_inquiries"],
+            "inquiries_mtd": metrics["inquiries_mtd"],
+            "unresponded_inquiries": metrics["unread_inquiries"],
+            "avg_response_time_hours": None,
+            "conversion_rate": None,
             "earnings_mtd": "0",
             "pending_payments": "0",
-            "profile_completion": self._profile_completion_score(profile, images, packages),
-            "active_packages": active_packages,
-            "portfolio_count": len(images),
-            "account_status": profile.status.value if profile else "draft",
-            "service_area": profile.service_area if profile else "",
+            "profile_completion": metrics["profile_completion"],
+            "active_packages": metrics["active_packages"],
+            "portfolio_count": metrics["portfolio_count"],
+            "account_status": metrics["account_status"],
+            "service_area": metrics["service_area"],
+            "total_packages": metrics["total_packages"],
+            "pending_packages": metrics["pending_packages"],
+            "approved_packages": metrics["approved_packages"],
+            "rejected_packages": metrics["rejected_packages"],
+            "read_inquiries": metrics["read_inquiries"],
+            "response_rate": metrics["response_rate"],
+            "unavailable_metrics": [
+                "total_views",
+                "views_trend",
+                "avg_response_time_hours",
+                "conversion_rate",
+                "earnings_mtd",
+                "pending_payments",
+            ],
         }
 
     def get_recent_activity(self, vendor_id: uuid.UUID, limit: int = 10) -> List[dict]:
@@ -374,6 +430,46 @@ class VendorQueryHandlers:
                 }
             )
         return activity
+
+    def _vendor_metrics(self, vendor_id: uuid.UUID) -> dict:
+        profile = self.vendor_repo.get_by_id(vendor_id)
+        inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
+        packages = self.package_repo.list_by_vendor(vendor_id)
+        images = self.image_repo.list_by_vendor(vendor_id)
+        now = utc_now()
+
+        total_inquiries = len(inquiries)
+        unread_inquiries = sum(1 for inquiry in inquiries if not inquiry.is_read)
+        read_inquiries = total_inquiries - unread_inquiries
+        inquiries_mtd = sum(
+            1
+            for inquiry in inquiries
+            if inquiry.created_at and inquiry.created_at.year == now.year and inquiry.created_at.month == now.month
+        )
+        active_packages = sum(
+            1 for package in packages if package.is_active and package.approval_status == "approved"
+        )
+        approved_packages = sum(1 for package in packages if package.approval_status == "approved")
+        pending_packages = sum(1 for package in packages if package.approval_status == "waiting_approval")
+        rejected_packages = sum(1 for package in packages if package.approval_status == "rejected")
+        response_rate = round((read_inquiries / total_inquiries) * 100) if total_inquiries else 0
+
+        return {
+            "profile_completion": self._profile_completion_score(profile, images, packages),
+            "total_inquiries": total_inquiries,
+            "inquiries_mtd": inquiries_mtd,
+            "unread_inquiries": unread_inquiries,
+            "read_inquiries": read_inquiries,
+            "response_rate": response_rate,
+            "total_packages": len(packages),
+            "active_packages": active_packages,
+            "approved_packages": approved_packages,
+            "pending_packages": pending_packages,
+            "rejected_packages": rejected_packages,
+            "portfolio_count": len(images),
+            "account_status": profile.status.value if profile else "draft",
+            "service_area": profile.service_area if profile else "",
+        }
 
     @staticmethod
     def _profile_completion_score(profile, images, packages) -> int:

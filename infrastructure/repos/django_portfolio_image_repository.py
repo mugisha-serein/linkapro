@@ -1,10 +1,12 @@
 import uuid
 from typing import Optional, List
 from django.core.exceptions import ObjectDoesNotExist
+from django.utils import timezone
 
 from domain.vendors.entities import PortfolioImage as DomainImage
 from domain.vendors.interfaces import IPortfolioImageRepository
 from django_app.vendors.models import PortfolioImage as DjangoImage, VendorProfile as DjangoVendor
+from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 
 class DjangoPortfolioImageRepository(IPortfolioImageRepository):
@@ -21,11 +23,11 @@ class DjangoPortfolioImageRepository(IPortfolioImageRepository):
 
     def save(self, domain: DomainImage) -> DomainImage:
         try:
-            obj = DjangoImage.objects.get(id=domain.id)
+            obj = DjangoImage.all_objects.get(id=domain.id)
         except DjangoImage.DoesNotExist:
             obj = DjangoImage(id=domain.id)
 
-        obj.vendor = DjangoVendor.objects.get(id=domain.vendor_id)
+        obj.vendor = self._get_vendor(domain.vendor_id)
         obj.public_id = domain.public_id
         obj.secure_url = domain.secure_url
         obj.media_type = domain.media_type
@@ -59,9 +61,18 @@ class DjangoPortfolioImageRepository(IPortfolioImageRepository):
             obj = DjangoImage.all_objects.get(id=image_id)
         except DjangoImage.DoesNotExist:
             return
+
         obj.is_active = False
-        obj.save(update_fields=["is_active", "updated_at"])
-        obj.soft_delete(user_id=deleted_by_id)
+        obj.is_deleted = True
+        obj.deleted_at = timezone.now()
+        obj.deleted_by_id = deleted_by_id
+        obj.save(update_fields=["is_active", "is_deleted", "deleted_at", "deleted_by", "updated_at"])
+
+    def _get_vendor(self, vendor_id: uuid.UUID):
+        try:
+            return DjangoVendor.objects.get(id=vendor_id)
+        except DjangoVendor.DoesNotExist as exc:
+            raise RepositoryNotFoundError("Vendor not found") from exc
 
     def _to_domain(self, model: DjangoImage) -> DomainImage:
         return DomainImage(

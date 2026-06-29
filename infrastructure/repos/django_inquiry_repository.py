@@ -5,6 +5,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from domain.vendors.entities import Inquiry as DomainInquiry
 from domain.vendors.interfaces import IInquiryRepository
 from django_app.vendors.models import Inquiry as DjangoInquiry, VendorProfile as DjangoVendor
+from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 
 class DjangoInquiryRepository(IInquiryRepository):
@@ -25,7 +26,7 @@ class DjangoInquiryRepository(IInquiryRepository):
         except DjangoInquiry.DoesNotExist:
             obj = DjangoInquiry(id=domain.id)
 
-        obj.vendor = DjangoVendor.objects.get(id=domain.vendor_id)
+        obj.vendor = self._get_vendor(domain.vendor_id)
         obj.client_name = domain.client_name
         obj.client_email = domain.client_email
         obj.client_phone = domain.client_phone
@@ -37,6 +38,12 @@ class DjangoInquiryRepository(IInquiryRepository):
 
     def delete(self, inquiry_id: uuid.UUID) -> None:
         DjangoInquiry.objects.filter(id=inquiry_id).delete()
+
+    def _get_vendor(self, vendor_id: uuid.UUID):
+        try:
+            return DjangoVendor.objects.get(id=vendor_id)
+        except DjangoVendor.DoesNotExist as exc:
+            raise RepositoryNotFoundError("Vendor not found") from exc
 
     def _to_domain(self, model: DjangoInquiry) -> DomainInquiry:
         return DomainInquiry(
