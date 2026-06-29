@@ -174,6 +174,9 @@ class ServicePackage:
     is_active: bool = True
     is_deleted: bool = False
     deleted_at: Optional[datetime] = None
+    last_approved_at: Optional[datetime] = None
+    last_vendor_public_edit_at: Optional[datetime] = None
+    next_vendor_edit_allowed_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
@@ -183,26 +186,16 @@ class ServicePackage:
     def update_details(self, name: Optional[str] = None, description: Optional[str] = None,
                        price: Optional[Decimal] = None, currency: Optional[str] = None,
                        package_tier: Optional[str] = None) -> None:
-        was_approved = self.approval_status == "approved"
-        public_fields_changed = False
         if name is not None:
             self.name = name
-            public_fields_changed = True
         if description is not None:
             self.description = description
-            public_fields_changed = True
         if price is not None:
             self.price = coerce_package_price(price)
-            public_fields_changed = True
         if currency is not None:
             self.currency = currency
-            public_fields_changed = True
         if package_tier is not None:
             self.package_tier = package_tier
-            public_fields_changed = True
-        if was_approved and public_fields_changed:
-            self.approval_status = "waiting_approval"
-            self.rejection_reason = None
         self.updated_at = utc_now()
 
     def deactivate(self) -> None:
