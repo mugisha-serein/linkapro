@@ -81,6 +81,68 @@ def test_approved_public_profile_only_exposes_public_media_and_packages(client):
     assert "vendor_portfolio_uploads/private.jpg" not in serialized
 
 
+def test_public_profile_filters_private_portfolio_urls_even_when_media_is_approved(client):
+    vendor = create_vendor_profile(status="approved")
+    safe_cloudinary_image = create_portfolio_image(
+        vendor=vendor,
+        order=0,
+        secure_url="https://app.example.com/media/vendor_portfolio_uploads/raw-private.jpg",
+        cloudinary_secure_url="https://cdn.example.com/public-cloudinary.jpg",
+        upload_status=PortfolioImage.UploadStatus.UPLOADED,
+        quality_status=PortfolioImage.QualityStatus.PASSED,
+        visibility_status=PortfolioImage.VisibilityStatus.APPROVED,
+        is_active=True,
+    )
+    safe_legacy_image = create_portfolio_image(
+        vendor=vendor,
+        order=1,
+        secure_url="https://cdn.example.com/legacy-public.jpg",
+        cloudinary_secure_url=None,
+        upload_status=PortfolioImage.UploadStatus.UPLOADED,
+        quality_status=PortfolioImage.QualityStatus.PASSED,
+        visibility_status=PortfolioImage.VisibilityStatus.APPROVED,
+        is_active=True,
+    )
+    create_portfolio_image(
+        vendor=vendor,
+        order=2,
+        secure_url="/media/vendor_portfolio_uploads/private-local.jpg",
+        cloudinary_secure_url=None,
+        upload_status=PortfolioImage.UploadStatus.UPLOADED,
+        quality_status=PortfolioImage.QualityStatus.PASSED,
+        visibility_status=PortfolioImage.VisibilityStatus.APPROVED,
+        is_active=True,
+    )
+    create_portfolio_image(
+        vendor=vendor,
+        order=3,
+        secure_url="https://app.example.com/vendor_portfolio_uploads/private-temp.jpg",
+        cloudinary_secure_url=None,
+        upload_status=PortfolioImage.UploadStatus.UPLOADED,
+        quality_status=PortfolioImage.QualityStatus.PASSED,
+        visibility_status=PortfolioImage.VisibilityStatus.APPROVED,
+        is_active=True,
+    )
+
+    response = client.get(reverse("public-vendor-profile", args=[vendor.id]))
+
+    assert response.status_code == 200
+    profile = response.data["data"]
+    assert profile["cover_image_url"] == "https://cdn.example.com/public-cloudinary.jpg"
+    assert [item["id"] for item in profile["portfolio"]] == [
+        str(safe_cloudinary_image.id),
+        str(safe_legacy_image.id),
+    ]
+    assert [item["display_url"] for item in profile["portfolio"]] == [
+        "https://cdn.example.com/public-cloudinary.jpg",
+        "https://cdn.example.com/legacy-public.jpg",
+    ]
+    serialized = str(response.data)
+    assert "private-local.jpg" not in serialized
+    assert "private-temp.jpg" not in serialized
+    assert "vendor_portfolio_uploads" not in serialized
+
+
 def test_public_inquiry_requires_approved_vendor(client):
     vendor = create_vendor_profile(status="pending_review")
 
