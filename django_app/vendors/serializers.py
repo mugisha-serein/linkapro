@@ -2,6 +2,30 @@ from rest_framework import serializers
 
 from .models import PortfolioImage, ServicePackage, VendorProfile
 
+PRIVATE_PORTFOLIO_URL_MARKERS = ("vendor_portfolio_uploads",)
+PRIVATE_PORTFOLIO_URL_PREFIXES = ("/media/",)
+
+
+def is_safe_public_portfolio_url(url: str | None) -> bool:
+    if not url:
+        return False
+    value = str(url).strip()
+    if not value:
+        return False
+    if value.startswith(PRIVATE_PORTFOLIO_URL_PREFIXES):
+        return False
+    if any(marker in value for marker in PRIVATE_PORTFOLIO_URL_MARKERS):
+        return False
+    return True
+
+
+def public_portfolio_display_url(obj: PortfolioImage) -> str | None:
+    for url in (obj.cloudinary_secure_url, obj.secure_url):
+        if is_safe_public_portfolio_url(url):
+            return str(url).strip()
+    return None
+
+
 class VendorProfileSerializer(serializers.Serializer):
     business_name = serializers.CharField(max_length=200)
     category = serializers.ChoiceField(choices=[
@@ -61,7 +85,7 @@ class VendorPublicPortfolioItemSerializer(serializers.ModelSerializer):
         fields = ("id", "media_type", "display_url", "caption", "width", "height", "duration_seconds")
 
     def get_display_url(self, obj):
-        return obj.cloudinary_secure_url or obj.secure_url
+        return public_portfolio_display_url(obj)
 
 
 class VendorPublicPackageSerializer(serializers.ModelSerializer):
@@ -98,8 +122,11 @@ class VendorPublicProfileSerializer(serializers.ModelSerializer):
         return obj.custom_category if obj.category == VendorProfile.Category.OTHER else None
 
     def get_cover_image_url(self, obj):
-        portfolio = getattr(obj, "public_portfolio", [])
-        return (portfolio[0].cloudinary_secure_url or portfolio[0].secure_url) if portfolio else None
+        for item in getattr(obj, "public_portfolio", []):
+            display_url = public_portfolio_display_url(item)
+            if display_url:
+                return display_url
+        return None
 
     def get_is_verified(self, obj):
         return obj.status == VendorProfile.Status.APPROVED
@@ -111,7 +138,12 @@ class VendorPublicProfileSerializer(serializers.ModelSerializer):
         return int(self.context.get("total_reviews", 0))
 
     def get_portfolio(self, obj):
-        return VendorPublicPortfolioItemSerializer(getattr(obj, "public_portfolio", []), many=True).data
+        portfolio = [
+            item
+            for item in getattr(obj, "public_portfolio", [])
+            if public_portfolio_display_url(item)
+        ]
+        return VendorPublicPortfolioItemSerializer(portfolio, many=True).data
 
     def get_packages(self, obj):
         return VendorPublicPackageSerializer(getattr(obj, "public_packages", []), many=True).data
