@@ -4,15 +4,16 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from application.vendors.commands import (
-    ApproveVendorCommand,
     RejectVendorCommand,
     ReinstateVendorCommand,
     SuspendVendorCommand,
 )
 from django_app.common.api_responses import api_success
 from django_app.common.permissions import IsAdmin
+from django_app.vendors.approval_workflow import approve_pending_vendor_submission
 from django_app.vendors.services import get_command_handlers
 from django_app.vendors.views import _serialize_profile
+from infrastructure.adapters.marketplace_projection import sync_vendor_to_marketplace
 
 
 class VendorRejectionSerializer(serializers.Serializer):
@@ -31,14 +32,17 @@ class AdminVendorApproveView(APIView):
 
     def post(self, request, vendor_id):
         try:
-            profile = get_command_handlers().approve_vendor(ApproveVendorCommand(vendor_id=vendor_id))
+            approval = approve_pending_vendor_submission(vendor_id)
         except ValueError as exc:
             return _bad_request("vendor_approve_failed", exc)
         message = "Vendor approved successfully."
+        sync_vendor_to_marketplace(approval.vendor)
+        data = _serialize_profile(approval.vendor, message=message)
+        data["approval_summary"] = approval.summary()
         return api_success(
             code="vendor_approve_completed",
             message=message,
-            data=_serialize_profile(profile, message=message),
+            data=data,
             request=request,
         )
 
