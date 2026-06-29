@@ -4,10 +4,11 @@ from infrastructure.repos.django_platform_metric_repository import DjangoPlatfor
 from infrastructure.repos.django_vendor_profile_repository import DjangoVendorProfileRepository
 from infrastructure.repos.django_user_repository import DjangoUserRepository
 from infrastructure.adapters.django_event_dispatcher import DjangoEventDispatcher
-from application.governance.handlers import GovernanceCommandHandlers, GovernanceQueryHandlers
+from application.governance.handlers import GovernanceQueryHandlers
+from django_app.governance.vendor_command_handlers import DjangoGovernanceCommandHandlers
 
 def get_command_handlers():
-    return GovernanceCommandHandlers(
+    return DjangoGovernanceCommandHandlers(
         audit_repo=DjangoAuditLogRepository(),
         flag_repo=DjangoContentFlagRepository(),
         metric_repo=DjangoPlatformMetricRepository(),
