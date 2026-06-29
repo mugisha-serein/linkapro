@@ -4,13 +4,13 @@ from .contract_views import (
     PortfolioImageView,
     ServicePackageActivateView,
     ServicePackageDetailView,
+    ServicePackageListView,
     VendorProfileStatusView,
     VendorVerificationDocumentView,
 )
 from .views import (
     VendorSubmitForReviewView,
     PortfolioImageReorderView,
-    ServicePackageListView,
     InquiryListView,
     PublicInquiryView,
     VendorDashboardSummaryView,
