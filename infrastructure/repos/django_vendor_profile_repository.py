@@ -13,6 +13,7 @@ from infrastructure.adapters.marketplace_projection import (
     delete_vendor_from_marketplace,
     sync_or_delete_vendor_projection,
 )
+from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         except DjangoProfile.DoesNotExist:
             obj = DjangoProfile(id=domain.id)
 
-        obj.user = User.objects.get(id=domain.user_id)
+        obj.user = self._get_user(domain.user_id)
         obj.business_name = domain.business_name
         obj.category = domain.category.value
         obj.description = domain.description
@@ -64,6 +65,12 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
     def delete(self, vendor_id: uuid.UUID) -> None:
         DjangoProfile.objects.filter(id=vendor_id).delete()
         transaction.on_commit(lambda: self._delete_marketplace_projection(vendor_id))
+
+    def _get_user(self, user_id: uuid.UUID):
+        try:
+            return User.objects.get(id=user_id)
+        except User.DoesNotExist as exc:
+            raise RepositoryNotFoundError("User not found") from exc
 
     def _sync_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
         try:
