@@ -1,8 +1,12 @@
+from datetime import timedelta
 import uuid
 from django.db import models
 from django.utils import timezone
 from django_app.common.models import SoftDeleteModel
 from django_app.identity.models import User
+
+VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS = 15
+
 
 class VendorProfile(models.Model):
     class Status(models.TextChoices):
@@ -168,21 +172,42 @@ class ServicePackage(SoftDeleteModel):
     )
     rejection_reason = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
+    last_approved_at = models.DateTimeField(null=True, blank=True)
+    last_vendor_public_edit_at = models.DateTimeField(null=True, blank=True)
+    next_vendor_edit_allowed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.name} - {self.vendor.business_name}"
 
+    @staticmethod
+    def vendor_edit_cooldown_delta() -> timedelta:
+        return timedelta(days=VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS)
+
     def approve(self):
+        approved_at = timezone.now()
         self.approval_status = self.ApprovalStatus.APPROVED
         self.rejection_reason = None
-        self.save(update_fields=["approval_status", "rejection_reason", "updated_at"])
+        self.is_active = True
+        self.last_approved_at = approved_at
+        self.next_vendor_edit_allowed_at = approved_at + self.vendor_edit_cooldown_delta()
+        self.save(
+            update_fields=[
+                "approval_status",
+                "rejection_reason",
+                "is_active",
+                "last_approved_at",
+                "next_vendor_edit_allowed_at",
+                "updated_at",
+            ]
+        )
 
     def reject(self, reason: str):
         self.approval_status = self.ApprovalStatus.REJECTED
         self.rejection_reason = reason
-        self.save(update_fields=["approval_status", "rejection_reason", "updated_at"])
+        self.is_active = False
+        self.save(update_fields=["approval_status", "rejection_reason", "is_active", "updated_at"])
 
 
 class Inquiry(models.Model):

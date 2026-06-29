@@ -58,6 +58,8 @@ def approve_pending_vendor_submission(vendor_id: UUID) -> VendorApprovalResult:
                 approval_status=ServicePackage.ApprovalStatus.APPROVED,
                 rejection_reason=None,
                 is_active=True,
+                last_approved_at=now,
+                next_vendor_edit_allowed_at=now + ServicePackage.vendor_edit_cooldown_delta(),
                 updated_at=now,
             )
 

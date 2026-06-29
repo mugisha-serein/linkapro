@@ -1,11 +1,20 @@
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 
+from domain.vendors.package_edit_policy import (
+    PackageEditCooldownError,
+    VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS,
+    effective_next_edit_allowed_at,
+)
+
 from .document_upload_views import VendorVerificationDocumentView as BaseVendorVerificationDocumentView
+from .models import ServicePackage as ServicePackageModel
 from .views import (
     PortfolioImageView as BasePortfolioImageView,
     ServicePackageActivateView as BaseServicePackageActivateView,
     ServicePackageDetailView as BaseServicePackageDetailView,
+    ServicePackageListView as BaseServicePackageListView,
     VendorProfileStatusView as BaseVendorProfileStatusView,
 )
 
@@ -56,6 +65,44 @@ def _normalize_response_contract(
     return _add_success_contract(response, code=success_code, message=success_message)
 
 
+def _serialize_dt(value):
+    return value.isoformat() if value else None
+
+
+def _package_cooldown_contract(package: ServicePackageModel) -> dict:
+    next_allowed = effective_next_edit_allowed_at(package)
+    now = timezone.now()
+    return {
+        "last_approved_at": _serialize_dt(package.last_approved_at),
+        "last_vendor_public_edit_at": _serialize_dt(package.last_vendor_public_edit_at),
+        "next_vendor_edit_allowed_at": _serialize_dt(next_allowed),
+        "can_edit_now": next_allowed is None or now >= next_allowed,
+        "package_edit_cooldown_days": VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS,
+    }
+
+
+def _augment_package_payload(payload):
+    if not isinstance(payload, dict) or not payload.get("id"):
+        return payload
+    try:
+        package = ServicePackageModel.all_objects.get(id=payload["id"])
+    except ServicePackageModel.DoesNotExist:
+        return payload
+    payload.update(_package_cooldown_contract(package))
+    return payload
+
+
+def _augment_package_response(response: Response) -> Response:
+    if isinstance(response.data, list):
+        for payload in response.data:
+            _augment_package_payload(payload)
+    elif isinstance(response.data, dict):
+        _augment_package_payload(response.data)
+        if isinstance(response.data.get("package"), dict):
+            _augment_package_payload(response.data["package"])
+    return response
+
+
 class VendorProfileStatusView(BaseVendorProfileStatusView):
     def get(self, request):
         response = super().get(request)
@@ -78,9 +125,21 @@ class PortfolioImageView(BasePortfolioImageView):
         )
 
 
+class ServicePackageListView(BaseServicePackageListView):
+    def get(self, request):
+        return _augment_package_response(super().get(request))
+
+    def post(self, request):
+        return _augment_package_response(super().post(request))
+
+
 class ServicePackageDetailView(BaseServicePackageDetailView):
     def patch(self, request, package_id):
-        response = super().patch(request, package_id)
+        try:
+            response = super().patch(request, package_id)
+        except PackageEditCooldownError as exc:
+            response = Response(exc.as_response_data(), status=status.HTTP_429_TOO_MANY_REQUESTS)
+        response = _augment_package_response(response)
         return _normalize_response_contract(
             response,
             success_code="vendor_package_updated",
@@ -91,6 +150,7 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
 
     def delete(self, request, package_id):
         response = super().delete(request, package_id)
+        response = _augment_package_response(response)
         return _normalize_response_contract(
             response,
             success_code="vendor_package_removed",

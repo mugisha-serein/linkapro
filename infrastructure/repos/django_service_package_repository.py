@@ -38,6 +38,9 @@ class DjangoServicePackageRepository(IServicePackageRepository):
         obj.is_active = domain.is_active
         obj.is_deleted = domain.is_deleted
         obj.deleted_at = domain.deleted_at
+        obj.last_approved_at = domain.last_approved_at
+        obj.last_vendor_public_edit_at = domain.last_vendor_public_edit_at
+        obj.next_vendor_edit_allowed_at = domain.next_vendor_edit_allowed_at
         obj.save()
         return self._to_domain(obj)
 
@@ -76,6 +79,9 @@ class DjangoServicePackageRepository(IServicePackageRepository):
             is_active=model.is_active,
             is_deleted=model.is_deleted,
             deleted_at=model.deleted_at,
+            last_approved_at=model.last_approved_at,
+            last_vendor_public_edit_at=model.last_vendor_public_edit_at,
+            next_vendor_edit_allowed_at=model.next_vendor_edit_allowed_at,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
