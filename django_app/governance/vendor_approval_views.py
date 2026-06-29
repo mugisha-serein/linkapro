@@ -5,10 +5,9 @@ from rest_framework.views import APIView
 
 from django_app.common.permissions import IsAdmin
 from django_app.vendors.approval_workflow import approve_pending_vendor_submission
-from infrastructure.adapters.marketplace_projection import sync_vendor_to_marketplace
 
 from .models import AuditLog
-from .views import _audit, _serialize_vendor
+from .views import _audit, _serialize_vendor, _sync_approved_vendor
 
 
 class AdminVendorApproveView(APIView):
@@ -20,7 +19,7 @@ class AdminVendorApproveView(APIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        sync_vendor_to_marketplace(approval.vendor)
+        _sync_approved_vendor(approval.vendor)
         _audit(
             request.user,
             AuditLog.ActionType.APPROVE_VENDOR,
