@@ -1,14 +1,16 @@
 from django.urls import path
 from .csrf_views import VendorProfileView
-from .document_upload_views import VendorVerificationDocumentView
-from .views import (
-    VendorProfileStatusView,
-    VendorSubmitForReviewView,
+from .contract_views import (
     PortfolioImageView,
+    ServicePackageActivateView,
+    ServicePackageDetailView,
+    VendorProfileStatusView,
+    VendorVerificationDocumentView,
+)
+from .views import (
+    VendorSubmitForReviewView,
     PortfolioImageReorderView,
     ServicePackageListView,
-    ServicePackageDetailView,
-    ServicePackageActivateView,
     InquiryListView,
     PublicInquiryView,
     VendorDashboardSummaryView,
