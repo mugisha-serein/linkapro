@@ -29,7 +29,10 @@ def approve_pending_vendor_submission(vendor_id: UUID) -> VendorApprovalResult:
     """Approve a pending vendor and all eligible submitted vendor content together."""
 
     with transaction.atomic():
-        vendor = VendorProfile.objects.select_for_update().get(id=vendor_id)
+        try:
+            vendor = VendorProfile.objects.select_for_update().get(id=vendor_id)
+        except VendorProfile.DoesNotExist as exc:
+            raise ValueError("Vendor not found.") from exc
         if vendor.status != VendorProfile.Status.PENDING_REVIEW:
             raise ValueError("Vendor must be submitted for review before approval.")
 
