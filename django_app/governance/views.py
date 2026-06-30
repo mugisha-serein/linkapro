@@ -11,7 +11,7 @@ from django_app.common.permissions import IsAdmin
 from django_app.identity.models import PasswordResetEmailDelivery, User
 from django_app.events.models import Event
 from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile
-from .marketplace_outbox import enqueue_vendor_projection
+from .marketplace_outbox import enqueue_vendor_projection, enqueue_vendor_projection_by_id
 from .models import AuditLog, ContentFlag
 from .serializers import FlagContentSerializer
 from .services import get_command_handlers, get_query_handlers
@@ -266,12 +266,20 @@ def _audit(admin, action_type: str, target_type: str, target_id, details: dict |
     )
 
 
+def sync_vendor_to_marketplace(vendor: VendorProfile):
+    return enqueue_vendor_projection(vendor, reason="vendor_approved")
+
+
+def delete_vendor_from_marketplace(vendor_id):
+    return enqueue_vendor_projection_by_id(vendor_id, reason="vendor_removed_from_marketplace")
+
+
 def _sync_approved_vendor(vendor: VendorProfile) -> None:
-    enqueue_vendor_projection(vendor, reason="vendor_approved")
+    sync_vendor_to_marketplace(vendor)
 
 
 def _delete_vendor_listing(vendor: VendorProfile) -> None:
-    enqueue_vendor_projection(vendor, reason="vendor_removed_from_marketplace")
+    delete_vendor_from_marketplace(vendor.id)
 
 
 class AdminUserListView(APIView):
