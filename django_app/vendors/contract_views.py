@@ -1,16 +1,22 @@
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 
+from application.vendors.commands import DeactivateServicePackageCommand, UpdateServicePackageCommand
 from domain.vendors.package_edit_policy import (
     PackageEditCooldownError,
     VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS,
     effective_next_edit_allowed_at,
 )
+from domain.vendors.package_rules import PackageValidationError
 
 from .document_upload_views import VendorVerificationDocumentView as BaseVendorVerificationDocumentView
 from .models import ServicePackage as ServicePackageModel
+from .serializers import ServicePackageSerializer
+from .services import get_command_handlers
 from .views import (
+    _get_current_vendor_profile,
     PortfolioImageView as BasePortfolioImageView,
     ServicePackageActivateView as BaseServicePackageActivateView,
     ServicePackageDetailView as BaseServicePackageDetailView,
@@ -135,10 +141,32 @@ class ServicePackageListView(BaseServicePackageListView):
 
 class ServicePackageDetailView(BaseServicePackageDetailView):
     def patch(self, request, package_id):
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
+
+        serializer = ServicePackageSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        cmd = UpdateServicePackageCommand(
+            package_id=package_id,
+            vendor_id=profile.id,
+            name=data.get("name"),
+            description=data.get("description"),
+            price=data.get("price"),
+            currency=data.get("currency"),
+            package_tier=data.get("package_tier"),
+        )
+
         try:
-            response = super().patch(request, package_id)
+            updated = get_command_handlers().update_service_package(cmd)
+            response = Response(BaseServicePackageListView._serialize_package(None, updated))
         except PackageEditCooldownError as exc:
             response = Response(exc.as_response_data(), status=status.HTTP_429_TOO_MANY_REQUESTS)
+        except PackageValidationError as exc:
+            raise DRFValidationError(exc.errors)
+        except ValueError as exc:
+            response = Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         response = _augment_package_response(response)
         return _normalize_response_contract(
             response,
@@ -149,7 +177,26 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
         )
 
     def delete(self, request, package_id):
-        response = super().delete(request, package_id)
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
+
+        cmd = DeactivateServicePackageCommand(
+            package_id=package_id,
+            vendor_id=profile.id,
+            deleted_by_id=request.user.id,
+        )
+        try:
+            package = get_command_handlers().deactivate_package(cmd)
+            response = Response(
+                {
+                    "message": "Package removed from active listings.",
+                    "package": BaseServicePackageListView._serialize_package(None, package),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except ValueError as exc:
+            response = Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         response = _augment_package_response(response)
         return _normalize_response_contract(
             response,
