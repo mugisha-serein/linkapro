@@ -93,6 +93,10 @@ async def _upsert_listing_payload(payload: InternalListingUpsertRequest, session
         "is_verified": payload.is_verified,
         "approval_status": "approved",
         "search_rank_score": payload.search_rank_score,
+        "starting_price": payload.starting_price,
+        "min_package_price": payload.min_package_price,
+        "max_package_price": payload.max_package_price,
+        "currency": payload.currency,
     }
     if external_id is not None:
         listing_data["external_id"] = external_id

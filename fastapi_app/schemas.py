@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, List
 import re
 import uuid
@@ -15,6 +16,10 @@ class VendorListingResponse(BaseModel):
     average_rating: float
     total_reviews: int
     is_verified: bool
+    starting_price: Optional[Decimal] = None
+    min_package_price: Optional[Decimal] = None
+    max_package_price: Optional[Decimal] = None
+    currency: Optional[str] = None
 
     @classmethod
     def from_dto(cls, dto):
@@ -72,8 +77,8 @@ class MarketplaceSearchRequest(BaseModel):
     location: Optional[str] = Field(default=None, max_length=128)
     min_rating: Optional[float] = Field(default=None, ge=0, le=5)
     rating: Optional[float] = Field(default=None, ge=0, le=5)
-    min_price: Optional[float] = Field(default=None, ge=0)
-    max_price: Optional[float] = Field(default=None, ge=0)
+    min_price: Optional[Decimal] = Field(default=None, ge=0)
+    max_price: Optional[Decimal] = Field(default=None, ge=0)
     page: int = Field(default=1, ge=1, le=1000)
     page_size: int = Field(default=20, ge=1, le=50)
 
@@ -117,6 +122,10 @@ class InternalListingUpsertRequest(BaseModel):
     status: Optional[str] = Field(default=None, max_length=30)
     is_approved: bool = False
     search_rank_score: float = 0.0
+    starting_price: Optional[Decimal] = Field(default=None, ge=0)
+    min_package_price: Optional[Decimal] = Field(default=None, ge=0)
+    max_package_price: Optional[Decimal] = Field(default=None, ge=0)
+    currency: Optional[str] = Field(default=None, max_length=10)
 
     @field_validator("category", "approval_status", "status")
     @classmethod
@@ -126,6 +135,18 @@ class InternalListingUpsertRequest(BaseModel):
         normalized = value.strip().lower()
         if not normalized:
             raise ValueError("Value cannot be blank.")
+        return normalized
+
+    @field_validator("currency")
+    @classmethod
+    def _normalize_currency(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if not normalized:
+            return None
+        if not re.fullmatch(r"[A-Z]{3,10}", normalized):
+            raise ValueError("currency must use uppercase alphabetic code text.")
         return normalized
 
     @field_validator("cover_image_url")
@@ -161,4 +182,8 @@ class InternalListingUpsertRequest(BaseModel):
             raise ValueError("approval_status is invalid.")
         if self.is_approved and normalized_status != "approved":
             raise ValueError("is_approved can be true only when approval_status is approved.")
+        if self.min_package_price is not None and self.max_package_price is not None and self.min_package_price > self.max_package_price:
+            raise ValueError("min_package_price cannot be greater than max_package_price.")
+        if self.starting_price is not None and self.min_package_price is not None and self.starting_price != self.min_package_price:
+            raise ValueError("starting_price must match min_package_price.")
         return self

@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
-import uuid
+from decimal import Decimal
+
 
 @dataclass(frozen=True)
 class VendorListingDTO:
@@ -14,6 +15,11 @@ class VendorListingDTO:
     average_rating: float
     total_reviews: int
     is_verified: bool
+    starting_price: Optional[Decimal] = None
+    min_package_price: Optional[Decimal] = None
+    max_package_price: Optional[Decimal] = None
+    currency: Optional[str] = None
+
 
 @dataclass(frozen=True)
 class ReviewDTO:
@@ -23,6 +29,7 @@ class ReviewDTO:
     rating: int
     comment: Optional[str]
     created_at: datetime
+
 
 @dataclass(frozen=True)
 class SearchResultDTO:

@@ -7,7 +7,7 @@ from uuid import UUID
 from django.db import transaction
 from django.utils import timezone
 
-from django_app.vendors.models import VendorProfile
+from django_app.vendors.models import ServicePackage, VendorProfile
 from infrastructure.adapters.marketplace_projection import (
     delete_vendor_from_marketplace,
     sync_vendor_payload_to_marketplace,
@@ -96,6 +96,10 @@ def _deliver_event(event: MarketplaceProjectionOutbox) -> dict:
             service_area=payload["service_area"],
             cover_image_url=payload.get("cover_image_url"),
             approval_status=payload.get("approval_status", VendorProfile.Status.APPROVED),
+            starting_price=payload.get("starting_price"),
+            min_package_price=payload.get("min_package_price"),
+            max_package_price=payload.get("max_package_price"),
+            currency=payload.get("currency"),
         )
     raise ValueError(f"Unsupported marketplace projection event type: {event.event_type}")
 
@@ -131,6 +135,7 @@ def _is_vendor_listable(vendor: VendorProfile) -> bool:
 
 
 def _vendor_payload(vendor: VendorProfile, *, reason: str | None = None) -> dict:
+    pricing = _approved_package_pricing(vendor)
     return {
         "vendor_id": str(vendor.id),
         "business_name": vendor.business_name,
@@ -144,6 +149,35 @@ def _vendor_payload(vendor: VendorProfile, *, reason: str | None = None) -> dict
         "is_verified": True,
         "reason": reason or "vendor_listable",
         "source_updated_at": vendor.updated_at.isoformat() if vendor.updated_at else None,
+        **pricing,
+    }
+
+
+def _approved_package_pricing(vendor: VendorProfile) -> dict:
+    packages = list(
+        ServicePackage.objects.filter(
+            vendor=vendor,
+            approval_status=ServicePackage.ApprovalStatus.APPROVED,
+            is_active=True,
+        ).order_by("price", "created_at")
+    )
+    if not packages:
+        return {
+            "starting_price": None,
+            "min_package_price": None,
+            "max_package_price": None,
+            "currency": None,
+        }
+    prices = [package.price for package in packages]
+    currencies = [package.currency for package in packages if package.currency]
+    currency = currencies[0] if currencies and all(value == currencies[0] for value in currencies) else None
+    min_price = min(prices)
+    max_price = max(prices)
+    return {
+        "starting_price": str(min_price),
+        "min_package_price": str(min_price),
+        "max_package_price": str(max_price),
+        "currency": currency,
     }
 
 

@@ -38,6 +38,10 @@ def sync_vendor_listing_to_fastapi(
     service_area: str,
     cover_image_url: str = None,
     approval_status: str = "approved",
+    starting_price: str | None = None,
+    min_package_price: str | None = None,
+    max_package_price: str | None = None,
+    currency: str | None = None,
 ):
     return sync_vendor_payload_to_marketplace(
         vendor_id=vendor_id,
@@ -47,6 +51,10 @@ def sync_vendor_listing_to_fastapi(
         service_area=service_area,
         cover_image_url=cover_image_url,
         approval_status=approval_status,
+        starting_price=starting_price,
+        min_package_price=min_package_price,
+        max_package_price=max_package_price,
+        currency=currency,
     )
 
 

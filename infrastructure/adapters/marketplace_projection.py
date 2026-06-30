@@ -74,6 +74,10 @@ def sync_vendor_payload_to_marketplace(
     service_area: str,
     cover_image_url: str | None = None,
     approval_status: str = "approved",
+    starting_price: str | None = None,
+    min_package_price: str | None = None,
+    max_package_price: str | None = None,
+    currency: str | None = None,
 ) -> dict:
     config = _get_marketplace_config()
     if config is None:
@@ -88,6 +92,10 @@ def sync_vendor_payload_to_marketplace(
         "cover_image_url": cover_image_url,
         "approval_status": approval_status,
         "is_approved": approval_status == VendorProfile.Status.APPROVED,
+        "starting_price": starting_price,
+        "min_package_price": min_package_price,
+        "max_package_price": max_package_price,
+        "currency": currency,
     }
     response = _send_signed_request(
         method="POST",
