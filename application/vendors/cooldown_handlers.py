@@ -1,4 +1,7 @@
+import uuid
+
 from domain.shared.utils import utc_now
+from domain.vendors.entities import ServicePackage
 from domain.vendors.package_edit_policy import (
     ensure_vendor_package_edit_allowed,
     mark_vendor_package_public_edit,
@@ -12,6 +15,11 @@ from .handlers import VendorCommandHandlers
 
 
 class VendorCooldownCommandHandlers(VendorCommandHandlers):
+    @staticmethod
+    def _assert_package_owned(package: ServicePackage | None, vendor_id: uuid.UUID | None) -> None:
+        if not vendor_id or not package or package.vendor_id != vendor_id:
+            raise ValueError("Package not found")
+
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
         self._assert_package_owned(package, cmd.vendor_id)
