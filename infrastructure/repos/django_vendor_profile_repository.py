@@ -9,10 +9,7 @@ from domain.vendors.entities import VendorProfile as DomainProfile, VendorStatus
 from domain.vendors.interfaces import IVendorProfileRepository
 from django_app.vendors.models import VendorProfile as DjangoProfile
 from django_app.identity.models import User
-from infrastructure.adapters.marketplace_projection import (
-    delete_vendor_from_marketplace,
-    sync_or_delete_vendor_projection,
-)
+from django_app.governance.marketplace_outbox import enqueue_vendor_projection, enqueue_vendor_projection_by_id
 from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -59,12 +56,12 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         obj.rejection_reason = domain.rejection_reason
         obj.save()
         saved = self._to_domain(obj)
-        transaction.on_commit(lambda vendor_id=obj.id: self._sync_marketplace_projection(vendor_id))
+        transaction.on_commit(lambda vendor_id=obj.id: self._enqueue_marketplace_projection(vendor_id))
         return saved
 
     def delete(self, vendor_id: uuid.UUID) -> None:
         DjangoProfile.objects.filter(id=vendor_id).delete()
-        transaction.on_commit(lambda: self._delete_marketplace_projection(vendor_id))
+        transaction.on_commit(lambda: self._enqueue_marketplace_delete(vendor_id))
 
     def _get_user(self, user_id: uuid.UUID):
         try:
@@ -72,22 +69,22 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         except User.DoesNotExist as exc:
             raise RepositoryNotFoundError("User not found") from exc
 
-    def _sync_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
+    def _enqueue_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
         try:
             vendor = DjangoProfile.objects.get(id=vendor_id)
         except DjangoProfile.DoesNotExist:
-            self._delete_marketplace_projection(vendor_id)
+            self._enqueue_marketplace_delete(vendor_id)
             return
         try:
-            sync_or_delete_vendor_projection(vendor)
+            enqueue_vendor_projection(vendor, reason="vendor_repository_saved")
         except Exception:
-            logger.exception("Vendor marketplace projection sync failed.", extra={"vendor_id": str(vendor_id)})
+            logger.exception("Vendor marketplace projection outbox enqueue failed.", extra={"vendor_id": str(vendor_id)})
 
-    def _delete_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
+    def _enqueue_marketplace_delete(self, vendor_id: uuid.UUID) -> None:
         try:
-            delete_vendor_from_marketplace(vendor_id)
+            enqueue_vendor_projection_by_id(vendor_id, reason="vendor_repository_deleted")
         except Exception:
-            logger.exception("Vendor marketplace projection delete failed.", extra={"vendor_id": str(vendor_id)})
+            logger.exception("Vendor marketplace projection delete outbox enqueue failed.", extra={"vendor_id": str(vendor_id)})
 
     def _to_domain(self, model: DjangoProfile) -> DomainProfile:
         return DomainProfile(
