@@ -9,7 +9,7 @@ from domain.vendors.entities import VendorProfile as DomainProfile, VendorStatus
 from domain.vendors.interfaces import IVendorProfileRepository
 from django_app.vendors.models import VendorProfile as DjangoProfile
 from django_app.identity.models import User
-from django_app.governance.marketplace_outbox import enqueue_vendor_projection, enqueue_vendor_projection_by_id
+from django_app.governance.marketplace_outbox import enqueue_vendor_delete_projection, enqueue_vendor_projection
 from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
 
     def _enqueue_marketplace_delete(self, vendor_id: uuid.UUID) -> None:
         try:
-            enqueue_vendor_projection_by_id(vendor_id, reason="vendor_repository_deleted")
+            enqueue_vendor_delete_projection(vendor_id, reason="vendor_repository_deleted")
         except Exception:
             logger.exception("Vendor marketplace projection delete outbox enqueue failed.", extra={"vendor_id": str(vendor_id)})
 
