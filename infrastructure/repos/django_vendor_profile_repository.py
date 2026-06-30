@@ -15,6 +15,14 @@ from infrastructure.repos.exceptions import RepositoryNotFoundError
 logger = logging.getLogger(__name__)
 
 
+def sync_or_delete_vendor_projection(vendor: DjangoProfile):
+    return enqueue_vendor_projection(vendor, reason="vendor_repository_saved")
+
+
+def delete_vendor_from_marketplace(vendor_id: uuid.UUID):
+    return enqueue_vendor_delete_projection(vendor_id, reason="vendor_repository_deleted")
+
+
 class DjangoVendorProfileRepository(IVendorProfileRepository):
     def get_by_id(self, vendor_id: uuid.UUID) -> Optional[DomainProfile]:
         try:
@@ -76,13 +84,13 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
             self._enqueue_marketplace_delete(vendor_id)
             return
         try:
-            enqueue_vendor_projection(vendor, reason="vendor_repository_saved")
+            sync_or_delete_vendor_projection(vendor)
         except Exception:
             logger.exception("Vendor marketplace projection outbox enqueue failed.", extra={"vendor_id": str(vendor_id)})
 
     def _enqueue_marketplace_delete(self, vendor_id: uuid.UUID) -> None:
         try:
-            enqueue_vendor_delete_projection(vendor_id, reason="vendor_repository_deleted")
+            delete_vendor_from_marketplace(vendor_id)
         except Exception:
             logger.exception("Vendor marketplace projection delete outbox enqueue failed.", extra={"vendor_id": str(vendor_id)})
 
