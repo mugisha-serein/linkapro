@@ -468,6 +468,7 @@ class AdminVendorPackageApproveView(APIView):
         package.rejection_reason = None
         package.is_active = True
         package.save(update_fields=["approval_status", "rejection_reason", "is_active", "updated_at"])
+        enqueue_vendor_projection(package.vendor, reason="package_approved")
         _audit(request.user, AuditLog.ActionType.APPROVE_PACKAGE, "service_package", package.id)
         return Response({"message": "Package approved.", "package": _serialize_package(package)})
 
@@ -486,6 +487,7 @@ class AdminVendorPackageRejectView(APIView):
         package.rejection_reason = reason
         package.is_active = False
         package.save(update_fields=["approval_status", "rejection_reason", "is_active", "updated_at"])
+        enqueue_vendor_projection(package.vendor, reason="package_rejected")
         _audit(request.user, AuditLog.ActionType.REJECT_PACKAGE, "service_package", package.id, {"reason": reason})
         return Response({"message": "Package rejected.", "package": _serialize_package(package)})
 
@@ -500,8 +502,10 @@ class AdminVendorPackageHardDeleteView(APIView):
             return Response({"detail": "Package not found."}, status=status.HTTP_404_NOT_FOUND)
 
         package_id_value = package.id
+        vendor = package.vendor
         _audit(request.user, AuditLog.ActionType.HARD_DELETE_PACKAGE, "service_package", package_id_value)
         package.hard_delete()
+        enqueue_vendor_projection(vendor, reason="package_hard_deleted")
         return Response({"message": "Package permanently deleted.", "package_id": str(package_id_value)})
 
 
