@@ -1,7 +1,8 @@
-import uuid
 import logging
+import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,42 +10,58 @@ from fastapi_app.config import require_env
 from fastapi_app.dependencies import get_marketplace_search_cache
 from fastapi_app.database import get_session
 from fastapi_app.marketplace.models import VendorListingModel
+from fastapi_app.schemas import InternalListingUpsertRequest
+from infrastructure.security.service_auth import ServiceAuthError, assert_service_request
 
 router = APIRouter(prefix="/internal")
 logger = logging.getLogger(__name__)
 INTERNAL_SHARED_SECRET = require_env("FASTAPI_INTERNAL_SHARED_SECRET")
 
 
-def _verify_internal_secret(x_internal_secret: str | None) -> None:
-    if not x_internal_secret or x_internal_secret != INTERNAL_SHARED_SECRET:
+async def _verified_body(
+    request: Request,
+    service_name: str | None,
+    request_timestamp: str | None,
+    request_id: str | None,
+    payload_sha256: str | None,
+    service_mac: str | None,
+) -> bytes:
+    body = await request.body()
+    try:
+        assert_service_request(
+            key=INTERNAL_SHARED_SECRET,
+            service=service_name,
+            method=request.method,
+            path=request.url.path,
+            timestamp=request_timestamp,
+            request_id=request_id,
+            payload_hash=payload_sha256,
+            supplied_mac=service_mac,
+            payload=body,
+        )
+    except ServiceAuthError:
+        logger.warning("internal_service_auth_failed", extra={"path": request.url.path, "request_id": request_id})
         raise HTTPException(status_code=401, detail="Unauthorized internal request.")
+    return body
 
 
-async def _upsert_listing_payload(payload: dict, session: AsyncSession) -> dict:
-    vendor_id_value = payload.get("vendor_id")
-    external_id_value = payload.get("external_id")
-    approval_status = str(payload.get("approval_status") or payload.get("status") or "").strip().lower()
-    is_approved = payload.get("is_approved") is True or approval_status == "approved"
+def _parse_listing_payload(body: bytes) -> InternalListingUpsertRequest:
+    try:
+        return InternalListingUpsertRequest.model_validate_json(body)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
-    if not vendor_id_value and not external_id_value:
-        raise HTTPException(
-            status_code=400,
-            detail="vendor_id or external_id is required for marketplace upsert.",
-        )
 
-    vendor_id = uuid.UUID(str(vendor_id_value)) if vendor_id_value else None
-    external_id = str(external_id_value).strip() if external_id_value else None
+async def _upsert_listing_payload(payload: InternalListingUpsertRequest, session: AsyncSession) -> dict:
+    vendor_id = payload.vendor_id
+    external_id = payload.external_id.strip() if payload.external_id else None
+    approval_status = str(payload.approval_status or payload.status or "").strip().lower()
+    is_approved = payload.is_approved is True or approval_status == "approved"
 
-    listing = None
-    if vendor_id is not None:
-        result = await session.execute(
-            select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_id)
-        )
-        listing = result.scalar_one_or_none()
+    result = await session.execute(select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_id))
+    listing = result.scalar_one_or_none()
     if listing is None and external_id:
-        result = await session.execute(
-            select(VendorListingModel).where(VendorListingModel.external_id == external_id)
-        )
+        result = await session.execute(select(VendorListingModel).where(VendorListingModel.external_id == external_id))
         listing = result.scalar_one_or_none()
 
     if not is_approved:
@@ -54,29 +71,21 @@ async def _upsert_listing_payload(payload: dict, session: AsyncSession) -> dict:
         return {"status": "ok", "listed": False}
 
     listing_data = {
-        "business_name": payload.get("business_name") or "",
-        "category": payload.get("category") or "other",
-        "description": payload.get("description") or "",
-        "service_area": payload.get("service_area") or "",
-        "tags": _normalize_tags(payload.get("tags")),
-        "cover_image_url": payload.get("cover_image_url"),
-        "average_rating": payload.get("average_rating", 0.0),
-        "total_reviews": payload.get("total_reviews", 0),
-        "is_verified": payload.get("is_verified", False),
+        "vendor_id": vendor_id,
+        "business_name": payload.business_name,
+        "category": payload.category,
+        "description": payload.description,
+        "service_area": payload.service_area,
+        "tags": _normalize_tags(payload.tags),
+        "cover_image_url": payload.cover_image_url,
+        "average_rating": payload.average_rating,
+        "total_reviews": payload.total_reviews,
+        "is_verified": payload.is_verified,
         "approval_status": "approved",
-        "search_rank_score": payload.get("search_rank_score", 0.0),
+        "search_rank_score": payload.search_rank_score,
     }
-
-    if vendor_id is not None:
-        listing_data["vendor_id"] = vendor_id
     if external_id is not None:
         listing_data["external_id"] = external_id
-
-    if listing is None and vendor_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail="vendor_id is required when creating a new marketplace listing.",
-        )
 
     if listing is None:
         listing = VendorListingModel(**listing_data)
@@ -86,50 +95,59 @@ async def _upsert_listing_payload(payload: dict, session: AsyncSession) -> dict:
             setattr(listing, field, value)
 
     await session.commit()
-    logger.info(
-        "Marketplace listing upserted",
-        extra={"vendor_id": str(vendor_id) if vendor_id else None, "external_id": external_id},
-    )
+    logger.info("Marketplace listing upserted", extra={"vendor_id": str(vendor_id), "external_id": external_id})
     return {"status": "ok"}
 
 
 @router.post("/listings")
 async def upsert_listing(
-    payload: dict,
-    x_internal_secret: str | None = Header(default=None, alias="X-Internal-Secret"),
+    request: Request,
+    x_service_name: str | None = Header(default=None, alias="X-Service-Name"),
+    x_request_timestamp: str | None = Header(default=None, alias="X-Request-Timestamp"),
+    x_request_id: str | None = Header(default=None, alias="X-Request-Id"),
+    x_payload_sha256: str | None = Header(default=None, alias="X-Payload-SHA256"),
+    x_service_mac: str | None = Header(default=None, alias="X-Service-MAC"),
     session: AsyncSession = Depends(get_session),
 ):
-    """
-    Ingest listing data from Django sync pipeline.
-    """
-    _verify_internal_secret(x_internal_secret)
-    result = await _upsert_listing_payload(payload, session)
+    body = await _verified_body(request, x_service_name, x_request_timestamp, x_request_id, x_payload_sha256, x_service_mac)
+    result = await _upsert_listing_payload(_parse_listing_payload(body), session)
     await _invalidate_marketplace_cache()
     return result
 
 
 @router.post("/listings/", include_in_schema=False)
 async def upsert_listing_with_trailing_slash(
-    payload: dict,
-    x_internal_secret: str | None = Header(default=None, alias="X-Internal-Secret"),
+    request: Request,
+    x_service_name: str | None = Header(default=None, alias="X-Service-Name"),
+    x_request_timestamp: str | None = Header(default=None, alias="X-Request-Timestamp"),
+    x_request_id: str | None = Header(default=None, alias="X-Request-Id"),
+    x_payload_sha256: str | None = Header(default=None, alias="X-Payload-SHA256"),
+    x_service_mac: str | None = Header(default=None, alias="X-Service-MAC"),
     session: AsyncSession = Depends(get_session),
 ):
-    _verify_internal_secret(x_internal_secret)
-    result = await _upsert_listing_payload(payload, session)
+    body = await _verified_body(request, x_service_name, x_request_timestamp, x_request_id, x_payload_sha256, x_service_mac)
+    result = await _upsert_listing_payload(_parse_listing_payload(body), session)
     await _invalidate_marketplace_cache()
     return result
 
 
 @router.delete("/listings/{vendor_id}")
 async def delete_listing(
+    request: Request,
     vendor_id: str,
-    x_internal_secret: str | None = Header(default=None, alias="X-Internal-Secret"),
+    x_service_name: str | None = Header(default=None, alias="X-Service-Name"),
+    x_request_timestamp: str | None = Header(default=None, alias="X-Request-Timestamp"),
+    x_request_id: str | None = Header(default=None, alias="X-Request-Id"),
+    x_payload_sha256: str | None = Header(default=None, alias="X-Payload-SHA256"),
+    x_service_mac: str | None = Header(default=None, alias="X-Service-MAC"),
     session: AsyncSession = Depends(get_session),
 ):
-    _verify_internal_secret(x_internal_secret)
-    result = await session.execute(
-        select(VendorListingModel).where(VendorListingModel.vendor_id == uuid.UUID(vendor_id))
-    )
+    await _verified_body(request, x_service_name, x_request_timestamp, x_request_id, x_payload_sha256, x_service_mac)
+    try:
+        vendor_uuid = uuid.UUID(vendor_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid vendor_id.")
+    result = await session.execute(select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_uuid))
     listing = result.scalar_one_or_none()
     if listing is None:
         return {"status": "ok", "deleted": False}
