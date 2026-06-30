@@ -1,4 +1,6 @@
+import json
 import logging
+import uuid
 from typing import Any
 from uuid import UUID
 
@@ -7,6 +9,7 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 from django_app.vendors.models import VendorProfile
+from infrastructure.security.service_auth import build_service_headers, utc_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +29,12 @@ def sync_vendor_to_marketplace(vendor: VendorProfile) -> dict:
         return {"status": "skipped", "reason": "marketplace_projection_not_configured"}
 
     payload = _vendor_payload(vendor)
-    response = httpx.post(
-        f"{config['base_url']}/internal/listings",
-        json=payload,
-        timeout=10,
-        headers={"X-Internal-Secret": config["shared_secret"]},
+    response = _send_signed_request(
+        method="POST",
+        url=f"{config['base_url']}/internal/listings",
+        path="/internal/listings",
+        payload=payload,
+        shared_secret=config["shared_secret"],
     )
     response.raise_for_status()
     logger.info("Marketplace projection synced.", extra={"vendor_id": str(vendor.id)})
@@ -42,10 +46,13 @@ def delete_vendor_from_marketplace(vendor_id: UUID | str) -> dict:
     if config is None:
         return {"status": "skipped", "reason": "marketplace_projection_not_configured"}
 
-    response = httpx.delete(
-        f"{config['base_url']}/internal/listings/{vendor_id}",
-        timeout=10,
-        headers={"X-Internal-Secret": config["shared_secret"]},
+    path = f"/internal/listings/{vendor_id}"
+    response = _send_signed_request(
+        method="DELETE",
+        url=f"{config['base_url']}{path}",
+        path=path,
+        payload={},
+        shared_secret=config["shared_secret"],
     )
     response.raise_for_status()
     logger.info("Marketplace projection deleted.", extra={"vendor_id": str(vendor_id)})
@@ -82,15 +89,32 @@ def sync_vendor_payload_to_marketplace(
         "approval_status": approval_status,
         "is_approved": approval_status == VendorProfile.Status.APPROVED,
     }
-    response = httpx.post(
-        f"{config['base_url']}/internal/listings",
-        json=payload,
-        timeout=10,
-        headers={"X-Internal-Secret": config["shared_secret"]},
+    response = _send_signed_request(
+        method="POST",
+        url=f"{config['base_url']}/internal/listings",
+        path="/internal/listings",
+        payload=payload,
+        shared_secret=config["shared_secret"],
     )
     response.raise_for_status()
     logger.info("Marketplace projection payload synced.", extra={"vendor_id": str(vendor_id)})
     return response.json()
+
+
+def _send_signed_request(*, method: str, url: str, path: str, payload: dict[str, Any], shared_secret: str) -> httpx.Response:
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        **build_service_headers(
+            key=shared_secret,
+            method=method,
+            path=path,
+            payload=body,
+            request_id=str(uuid.uuid4()),
+            timestamp=utc_timestamp(),
+        ),
+    }
+    return httpx.request(method, url, content=body, timeout=10, headers=headers)
 
 
 def _get_marketplace_config() -> dict[str, str] | None:
@@ -127,4 +151,5 @@ def _vendor_payload(vendor: VendorProfile) -> dict[str, Any]:
         "cover_image_url": None,
         "approval_status": VendorProfile.Status.APPROVED,
         "is_approved": True,
+        "is_verified": True,
     }
