@@ -26,15 +26,7 @@ def canonical_service_request(
     request_id: str,
     payload_hash: str,
 ) -> str:
-    parts = [
-        SERVICE_AUTH_VERSION,
-        service,
-        method.upper(),
-        path,
-        timestamp,
-        request_id,
-        payload_hash,
-    ]
+    parts = [SERVICE_AUTH_VERSION, service, method.upper(), path, timestamp, request_id, payload_hash]
     return "\n".join(parts)
 
 
@@ -67,3 +59,54 @@ def assert_fresh_timestamp(timestamp: datetime, *, now: datetime | None = None, 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if abs((current - timestamp).total_seconds()) > skew_seconds:
         raise ServiceAuthError("Service timestamp is outside the allowed window.")
+
+
+def assert_service_request(
+    *,
+    key: str,
+    service: str | None,
+    method: str,
+    path: str,
+    timestamp: str | None,
+    request_id: str | None,
+    payload_hash: str | None,
+    supplied_mac: str | None,
+    payload: bytes,
+) -> None:
+    if service != SERVICE_AUTH_DJANGO_SERVICE:
+        raise ServiceAuthError("Unauthorized service.")
+    if not request_id:
+        raise ServiceAuthError("Request id is required.")
+    parsed_timestamp = parse_timestamp(timestamp or "")
+    assert_fresh_timestamp(parsed_timestamp)
+    expected_payload_hash = payload_digest(payload)
+    if payload_hash != expected_payload_hash:
+        raise ServiceAuthError("Invalid payload digest.")
+    canonical = canonical_service_request(
+        service=service,
+        method=method,
+        path=path,
+        timestamp=timestamp or "",
+        request_id=request_id,
+        payload_hash=expected_payload_hash,
+    )
+    assert_matching_mac(supplied=supplied_mac or "", expected=service_mac(canonical, key))
+
+
+def build_service_headers(*, key: str, method: str, path: str, payload: bytes, request_id: str, timestamp: str) -> dict[str, str]:
+    payload_hash = payload_digest(payload)
+    canonical = canonical_service_request(
+        service=SERVICE_AUTH_DJANGO_SERVICE,
+        method=method,
+        path=path,
+        timestamp=timestamp,
+        request_id=request_id,
+        payload_hash=payload_hash,
+    )
+    return {
+        "X-Service-Name": SERVICE_AUTH_DJANGO_SERVICE,
+        "X-Request-Timestamp": timestamp,
+        "X-Request-Id": request_id,
+        "X-Payload-SHA256": payload_hash,
+        "X-Service-MAC": service_mac(canonical, key),
+    }
