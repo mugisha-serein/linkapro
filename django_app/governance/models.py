@@ -72,3 +72,37 @@ class PlatformMetric(models.Model):
 
     def __str__(self):
         return f"Metrics for {self.date}"
+
+
+class MarketplaceProjectionOutbox(models.Model):
+    class EventType(models.TextChoices):
+        UPSERT_VENDOR = "upsert_vendor", "Upsert Vendor"
+        DELETE_VENDOR = "delete_vendor", "Delete Vendor"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        DELIVERED = "delivered", "Delivered"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    event_type = models.CharField(max_length=40, choices=EventType.choices)
+    vendor_id = models.UUIDField(db_index=True)
+    payload = models.JSONField(default=dict)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now, db_index=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at"]),
+            models.Index(fields=["vendor_id", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} for {self.vendor_id} ({self.status})"
