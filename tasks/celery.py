@@ -57,6 +57,7 @@ app.conf.imports = tuple(set(app.conf.imports or ()) | {
     "tasks.document_tasks",
     "tasks.email_tasks",
     "tasks.image_tasks",
+    "tasks.marketplace_sync",
     "payments.tasks",
 })
 
