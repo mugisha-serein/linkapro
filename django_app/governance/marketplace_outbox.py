@@ -39,6 +39,20 @@ def enqueue_vendor_projection_by_id(vendor_id: UUID | str, *, reason: str | None
     return enqueue_vendor_projection(vendor, reason=reason)
 
 
+def enqueue_vendor_delete_projection(vendor_id: UUID | str, *, reason: str | None = None) -> MarketplaceProjectionOutbox:
+    event = MarketplaceProjectionOutbox.objects.create(
+        event_type=MarketplaceProjectionOutbox.EventType.DELETE_VENDOR,
+        vendor_id=vendor_id,
+        payload={"vendor_id": str(vendor_id), "reason": reason or "vendor_deleted"},
+    )
+    transaction.on_commit(lambda: _schedule_outbox_delivery(event.id))
+    logger.info(
+        "marketplace_projection_delete_outbox_enqueued",
+        extra={"event_id": str(event.id), "vendor_id": str(vendor_id)},
+    )
+    return event
+
+
 def deliver_marketplace_projection_outbox_event(event_id: UUID | str) -> bool:
     event = MarketplaceProjectionOutbox.objects.get(id=event_id)
     if event.status == MarketplaceProjectionOutbox.Status.DELIVERED:
