@@ -179,6 +179,39 @@ def _serialize_vendor(vendor: VendorProfile) -> dict:
     }
 
 
+def _serialize_admin_vendor_detail(vendor: VendorProfile) -> dict:
+    payload = _serialize_vendor(vendor)
+    user = getattr(vendor, "user", None)
+    documents = list(vendor.verification_documents.all())
+    user_name = " ".join(
+        part for part in [getattr(user, "first_name", ""), getattr(user, "last_name", "")] if part
+    ) if user else ""
+    payload.update(
+        {
+            "admin_review_context": {
+                "packages_count": vendor.packages.count(),
+                "portfolio_count": vendor.images.count(),
+                "verification_documents_count": len(documents),
+                "verification_document_statuses": [
+                    {
+                        "id": str(document.id),
+                        "document_type": document.document_type,
+                        "upload_status": document.upload_status,
+                        "verification_status": document.verification_status,
+                        "fraud_status": document.fraud_status,
+                        "created_at": document.created_at.isoformat(),
+                    }
+                    for document in documents
+                ],
+            },
+            "user": _serialize_user(user) if user else None,
+            "user_email": user.email if user else None,
+            "user_name": user_name,
+        }
+    )
+    return payload
+
+
 def _serialize_package(package: ServicePackage) -> dict:
     return {
         "id": str(package.id),
@@ -314,6 +347,22 @@ class AdminVendorListView(APIView):
             "count": vendors.count(),
             "status_counts": _vendor_status_counts(),
         })
+
+
+class AdminVendorDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request, vendor_id):
+        try:
+            vendor = (
+                VendorProfile.objects.select_related("user")
+                .prefetch_related("packages", "images", "verification_documents")
+                .get(id=vendor_id)
+            )
+        except VendorProfile.DoesNotExist:
+            return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(_serialize_admin_vendor_detail(vendor))
 
 
 class AdminUserBanView(APIView):

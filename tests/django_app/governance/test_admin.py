@@ -195,6 +195,90 @@ class TestVendorApprovalAdmin:
         assert response.data["results"][0]["status"] == "suspended"
         assert response.data["status_counts"]["approved"] == 1
 
+    @pytest.mark.parametrize("vendor_status", ["draft", "pending_review", "approved", "rejected", "suspended"])
+    def test_admin_api_vendor_detail_returns_all_vendor_statuses(self, vendor_status):
+        admin_user = User.objects.create_superuser(f"detail-admin-{vendor_status}@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(
+            email=f"detail-{vendor_status}@t.com",
+            password="p",
+            role="vendor",
+            first_name="Vendor",
+            last_name=vendor_status.title(),
+        )
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name=f"{vendor_status} vendor",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email=f"{vendor_status}@example.com",
+            contact_phone="1",
+            status=vendor_status,
+        )
+        ServicePackage.objects.create(
+            vendor=vendor,
+            name="Review Package",
+            description="A standard package with enough detail for review.",
+            price="25000.00",
+            currency="RWF",
+            package_tier="standard",
+        )
+        PortfolioImage.objects.create(vendor=vendor, media_type=PortfolioImage.MediaType.IMAGE)
+
+        response = api_client.get(reverse("admin-vendor-detail", args=[vendor.id]))
+
+        assert response.status_code == 200
+        assert response.data["id"] == str(vendor.id)
+        assert response.data["status"] == vendor_status
+        assert response.data["user_email"] == vendor_user.email
+        assert response.data["admin_review_context"]["packages_count"] == 1
+        assert response.data["admin_review_context"]["portfolio_count"] == 1
+
+    def test_admin_api_vendor_detail_requires_admin_role(self):
+        vendor_user = User.objects.create_user(email="detail-vendor@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Private detail",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="detail@example.com",
+            contact_phone="1",
+            status="pending_review",
+        )
+        api_client = APIClient()
+        api_client.force_authenticate(user=vendor_user)
+
+        response = api_client.get(reverse("admin-vendor-detail", args=[vendor.id]))
+
+        assert response.status_code == 403
+
+    def test_pending_vendor_public_profile_404_but_admin_detail_visible(self):
+        admin_user = User.objects.create_superuser("public-admin@t.com", "pass")
+        vendor_user = User.objects.create_user(email="public-pending@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Pending public",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="pending-public@example.com",
+            contact_phone="1",
+            status="pending_review",
+        )
+        public_client = APIClient()
+        admin_client = APIClient()
+        admin_client.force_authenticate(user=admin_user)
+
+        public_response = public_client.get(reverse("public-vendor-profile", args=[vendor.id]))
+        admin_response = admin_client.get(reverse("admin-vendor-detail", args=[vendor.id]))
+
+        assert public_response.status_code == 404
+        assert admin_response.status_code == 200
+        assert admin_response.data["status"] == "pending_review"
+
     def test_admin_api_suspend_and_reinstate_vendor_updates_marketplace(self, admin_client, monkeypatch):
         deleted = []
         synced = []
