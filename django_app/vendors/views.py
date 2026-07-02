@@ -8,10 +8,8 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.conf import settings
-from django.core.files.storage import default_storage
 from django.db.models import Max, Prefetch
 from django.utils.decorators import method_decorator
-from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django_app.common.permissions import IsVendor, IsAdmin
 from django_app.common.api_responses import api_error, api_success
@@ -56,6 +54,7 @@ from application.vendors.onboarding_policy import (
     vendor_field_errors,
 )
 from domain.vendors.package_rules import PackageValidationError
+from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
 
 
 VENDOR_PROFILE_INCOMPLETE_CODE = "vendor_profile_incomplete"
@@ -453,14 +452,14 @@ class PortfolioImageView(APIView):
         serializer = PortfolioImageSerializer(data={"caption": request.data.get("caption", "")})
         serializer.is_valid(raise_exception=True)
 
-        safe_filename = get_valid_filename(uploaded_media.name)
-        temp_path = default_storage.save(
-            f"vendor_portfolio_uploads/{profile.id}/{uuid.uuid4().hex}_{safe_filename}",
-            uploaded_media,
-        )
+        image_id = uuid.uuid4()
+        shared_upload = self._upload_portfolio_media(uploaded_media, media_type, str(image_id))
         max_order = PortfolioImageModel.objects.filter(vendor_id=profile.id).aggregate(Max("order"))["order__max"]
         image = PortfolioImageModel.objects.create(
+            id=image_id,
             vendor_id=profile.id,
+            public_id=shared_upload["public_id"],
+            secure_url=shared_upload["secure_url"],
             caption=serializer.validated_data.get("caption") or None,
             order=(max_order if max_order is not None else -1) + 1,
             media_type=media_type,
@@ -474,7 +473,9 @@ class PortfolioImageView(APIView):
             width=dimensions.get("width"),
             height=dimensions.get("height"),
             local_preview_url=None,
-            temp_upload_path=temp_path,
+            temp_upload_path=None,
+            cloudinary_public_id=shared_upload["public_id"],
+            cloudinary_secure_url=shared_upload["secure_url"],
         )
 
         from tasks.image_tasks import process_vendor_portfolio_media_task
@@ -552,6 +553,19 @@ class PortfolioImageView(APIView):
             "is_active": dto.is_active,
             "is_deleted": dto.is_deleted,
         }
+
+    def _upload_portfolio_media(self, uploaded_media, media_type: str, media_id: str) -> dict:
+        if hasattr(uploaded_media, "seek"):
+            uploaded_media.seek(0)
+        adapter = CloudinaryAdapter()
+        if media_type == PortfolioImageModel.MediaType.IMAGE:
+            return adapter.upload_image(uploaded_media, fallback_to_storage=False)
+        return adapter.upload_file(
+            uploaded_media,
+            folder="vendor_portfolio",
+            public_id=media_id,
+            resource_type="video",
+        )
 
     def _serialize_model_image(self, image: PortfolioImageModel) -> dict:
         return {
@@ -902,22 +916,30 @@ class VendorVerificationDocumentView(APIView):
         if validation_error:
             return Response(validation_error, status=status.HTTP_400_BAD_REQUEST)
 
-        safe_filename = get_valid_filename(uploaded_document.name)
-        temp_path = default_storage.save(
-            f"vendor_verification_uploads/{profile.id}/{uuid.uuid4().hex}_{safe_filename}",
+        document_id = uuid.uuid4()
+        if hasattr(uploaded_document, "seek"):
+            uploaded_document.seek(0)
+        upload_result = CloudinaryAdapter().upload_file(
             uploaded_document,
+            folder="vendor_verification_documents",
+            public_id=str(document_id),
+            resource_type="raw",
         )
         document = VerificationDocument.objects.create(
+            id=document_id,
             vendor_id=profile.id,
             document_type=serializer.validated_data["document_type"],
             original_filename=uploaded_document.name,
             mime_type=PDF_MIME_TYPE,
             file_size=uploaded_document.size,
+            secure_url=upload_result["secure_url"],
+            cloudinary_public_id=upload_result["public_id"],
+            cloudinary_secure_url=upload_result["secure_url"],
             upload_status=VerificationDocument.UploadStatus.QUEUED,
             verification_status=VerificationDocument.VerificationStatus.PENDING_REVIEW,
             fraud_status=VerificationDocument.FraudStatus.REVIEW_REQUIRED,
             fraud_reasons=["PDF preflight passed; awaiting admin review."],
-            temp_upload_path=temp_path,
+            temp_upload_path=None,
         )
 
         from tasks.document_tasks import process_vendor_verification_document_task

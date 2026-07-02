@@ -8,6 +8,7 @@ from openpyxl.styles import Font, PatternFill
 from io import BytesIO
 from django.conf import settings
 from django.core.files.storage import default_storage
+from django.db.models import Q
 
 from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
 from infrastructure.adapters.document_verification import DocumentVerificationAdapter
@@ -233,12 +234,12 @@ def retry_deferred_vendor_document_processing() -> dict:
             VerificationDocument.UploadStatus.QUEUED,
             VerificationDocument.UploadStatus.PROCESSING_DEFERRED,
         ],
-    ).exclude(temp_upload_path__isnull=True).exclude(temp_upload_path="")
-    document_ids = [
-        document.id
-        for document in documents
-        if not (document.cloudinary_secure_url or document.secure_url)
-    ]
+    ).filter(
+        Q(cloudinary_secure_url__isnull=False)
+        | Q(secure_url__isnull=False)
+        | Q(temp_upload_path__isnull=False)
+    ).exclude(cloudinary_secure_url="", secure_url="", temp_upload_path="")
+    document_ids = [document.id for document in documents]
     queued = 0
     failed = 0
     for document_id in document_ids:
