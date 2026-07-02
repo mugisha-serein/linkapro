@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 from sqlalchemy.orm import declarative_base
-from fastapi_app.config import normalize_database_url
+from fastapi_app.config import get_database_engine_options, normalize_database_url
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / ".env")
@@ -23,12 +23,9 @@ if not DATABASE_URL:
 
 DATABASE_URL = normalize_database_url(DATABASE_URL)
 
-# print("[FASTAPI DB]", DATABASE_URL)
-
 engine = create_async_engine(
     DATABASE_URL,
-    echo=False,
-    future=True,
+    **get_database_engine_options(DATABASE_URL),
 )
 
 AsyncSessionLocal = async_sessionmaker(

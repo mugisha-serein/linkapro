@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from functools import lru_cache
 
@@ -13,7 +14,14 @@ from application.marketplace.search_service import (
     MarketplaceSearchService,
 )
 from fastapi_app.database import get_session
-from fastapi_app.config import mask_redis_url_for_logs, normalize_redis_url, require_env, require_int
+from fastapi_app.config import (
+    get_bool,
+    is_production,
+    mask_redis_url_for_logs,
+    normalize_redis_url,
+    require_env,
+    require_int,
+)
 from fastapi_app.repositories import (
     AsyncVendorListingRepository,
     AsyncReviewRepository,
@@ -88,12 +96,35 @@ def get_marketplace_search_params(
 
 
 def get_marketplace_client_identifier(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+    source = _resolve_client_source(request)
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:32]
+    return f"client:{digest}"
+
+
+def _resolve_client_source(request: Request) -> str:
+    trust_proxy_headers = get_bool("FASTAPI_TRUST_PROXY_HEADERS", default=is_production())
+    if trust_proxy_headers:
+        forwarded_for = request.headers.get("x-forwarded-for")
+        forwarded_client = _first_forwarded_for_value(forwarded_for)
+        if forwarded_client:
+            return forwarded_client
+
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
+
+
+def _first_forwarded_for_value(forwarded_for: str | None) -> str | None:
+    if not forwarded_for:
+        return None
+    first = forwarded_for.split(",", 1)[0].strip()
+    if not first:
+        return None
+    if first.startswith("[") and "]" in first:
+        return first.split("]", 1)[0].lstrip("[")[:128]
+    if first.count(":") == 1 and "." in first:
+        return first.split(":", 1)[0][:128]
+    return first[:128]
 
 
 async def get_listing_repo(
