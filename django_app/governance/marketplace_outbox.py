@@ -4,7 +4,9 @@ import logging
 from datetime import timedelta
 from uuid import UUID
 
+from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from django_app.vendors.models import ServicePackage, VendorProfile
@@ -17,6 +19,7 @@ from .models import MarketplaceProjectionOutbox
 
 logger = logging.getLogger(__name__)
 MAX_DELIVERY_ATTEMPTS = 5
+DEFAULT_RETRY_BATCH_SIZE = 25
 
 
 def enqueue_vendor_projection(vendor: VendorProfile, *, reason: str | None = None) -> MarketplaceProjectionOutbox:
@@ -81,6 +84,45 @@ def deliver_marketplace_projection_outbox_event(event_id: UUID | str) -> bool:
         extra={"event_id": str(event.id), "vendor_id": str(event.vendor_id), "attempts": event.attempts},
     )
     return True
+
+
+def retry_due_marketplace_projection_outbox_events(*, batch_size: int | None = None) -> dict:
+    now = timezone.now()
+    limit = batch_size or int(
+        getattr(settings, "MARKETPLACE_PROJECTION_OUTBOX_RETRY_BATCH_SIZE", DEFAULT_RETRY_BATCH_SIZE)
+    )
+    event_ids = list(
+        MarketplaceProjectionOutbox.objects.filter(
+            status=MarketplaceProjectionOutbox.Status.PENDING,
+            attempts__lt=MAX_DELIVERY_ATTEMPTS,
+        )
+        .filter(Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now))
+        .order_by("next_attempt_at", "created_at")
+        .values_list("id", flat=True)[:limit]
+    )
+
+    delivered = 0
+    failed = 0
+    errors = 0
+    for event_id in event_ids:
+        try:
+            if deliver_marketplace_projection_outbox_event(event_id):
+                delivered += 1
+            else:
+                failed += 1
+        except Exception:
+            errors += 1
+            logger.warning(
+                "marketplace_projection_outbox_retry_failed",
+                extra={"event_id": str(event_id)},
+                exc_info=True,
+            )
+    return {
+        "processed": len(event_ids),
+        "delivered": delivered,
+        "failed": failed,
+        "errors": errors,
+    }
 
 
 def _deliver_event(event: MarketplaceProjectionOutbox) -> dict:

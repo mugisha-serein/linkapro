@@ -2,7 +2,10 @@ import logging
 
 from celery import shared_task
 
-from django_app.governance.marketplace_outbox import deliver_marketplace_projection_outbox_event
+from django_app.governance.marketplace_outbox import (
+    deliver_marketplace_projection_outbox_event,
+    retry_due_marketplace_projection_outbox_events,
+)
 from infrastructure.adapters.marketplace_projection import (
     delete_vendor_from_marketplace,
     sync_vendor_payload_to_marketplace,
@@ -28,6 +31,11 @@ def deliver_marketplace_projection_outbox_event_task(self, event_id: str) -> boo
             exc_info=True,
         )
         raise self.retry(exc=exc)
+
+
+@shared_task(name="tasks.marketplace_sync.retry_due_marketplace_projection_outbox_events_task")
+def retry_due_marketplace_projection_outbox_events_task(batch_size: int | None = None) -> dict:
+    return retry_due_marketplace_projection_outbox_events(batch_size=batch_size)
 
 
 def sync_vendor_listing_to_fastapi(
