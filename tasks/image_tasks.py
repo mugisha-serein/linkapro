@@ -29,7 +29,8 @@ def process_vendor_portfolio_media_task(self, image_id: str):
     ):
         return {"status": "completed", "image_id": str(image.id)}
 
-    if not image.temp_upload_path:
+    file_url = image.cloudinary_secure_url or image.secure_url
+    if not file_url and not image.temp_upload_path:
         _mark_failed(image, "Uploaded media is no longer available.")
         return {"status": "failed", "image_id": str(image.id)}
 
@@ -39,7 +40,11 @@ def process_vendor_portfolio_media_task(self, image_id: str):
         image.failure_reason = None
         image.save(update_fields=["upload_status", "upload_error", "failure_reason", "updated_at"])
 
-    quality_result = MediaQualityAnalyzer().analyze(storage_path=image.temp_upload_path, media_type=image.media_type)
+    quality_result = MediaQualityAnalyzer().analyze(
+        storage_path=image.temp_upload_path,
+        media_type=image.media_type,
+        file_url=file_url,
+    )
     image.quality_status = _quality_status_for_result(quality_result.status)
     image.analyzer_score = quality_result.score
     image.analyzer_summary = quality_result.summary
@@ -50,24 +55,29 @@ def process_vendor_portfolio_media_task(self, image_id: str):
     if quality_result.duration_seconds:
         image.duration_seconds = quality_result.duration_seconds
 
-    try:
-        with default_storage.open(image.temp_upload_path, "rb") as upload_file:
-            if image.media_type == PortfolioImage.MediaType.IMAGE:
-                result = CloudinaryAdapter().upload_image(upload_file, fallback_to_storage=False)
-            else:
-                result = CloudinaryAdapter().upload_file(
-                    upload_file,
-                    folder="vendor_portfolio",
-                    public_id=str(image.id),
-                    resource_type="video",
-                )
-    except Exception as exc:
-        safe_error = "Portfolio media upload failed. Please try again."
-        _mark_failed(image, safe_error)
-        logger.exception("Vendor portfolio media upload failed.", extra={"image_id": str(image.id)})
-        if self.request.retries < self.max_retries:
-            raise self.retry(exc=exc)
-        return {"status": "failed", "image_id": str(image.id)}
+    result = {
+        "public_id": image.cloudinary_public_id or image.public_id,
+        "secure_url": file_url,
+    }
+    if not file_url:
+        try:
+            with default_storage.open(image.temp_upload_path, "rb") as upload_file:
+                if image.media_type == PortfolioImage.MediaType.IMAGE:
+                    result = CloudinaryAdapter().upload_image(upload_file, fallback_to_storage=False)
+                else:
+                    result = CloudinaryAdapter().upload_file(
+                        upload_file,
+                        folder="vendor_portfolio",
+                        public_id=str(image.id),
+                        resource_type="video",
+                    )
+        except Exception as exc:
+            safe_error = "Portfolio media upload failed. Please try again."
+            _mark_failed(image, safe_error)
+            logger.exception("Vendor portfolio media upload failed.", extra={"image_id": str(image.id)})
+            if self.request.retries < self.max_retries:
+                raise self.retry(exc=exc)
+            return {"status": "failed", "image_id": str(image.id)}
 
     temp_upload_path = image.temp_upload_path
     image.public_id = result["public_id"]

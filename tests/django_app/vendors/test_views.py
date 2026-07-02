@@ -418,7 +418,7 @@ class TestVendorProfileViews:
 
 class TestPortfolioImageViews:
     @pytest.fixture(autouse=True)
-    def setup(self):
+    def setup(self, monkeypatch):
         self.client = APIClient()
         self.user = User.objects.create_user(
             email="vendor@example.com",
@@ -437,6 +437,20 @@ class TestPortfolioImageViews:
             contact_email="test@example.com",
             contact_phone="123",
             status="pending_review",
+        )
+        monkeypatch.setattr(
+            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_image",
+            lambda self, file, folder="vendor_portfolio", fallback_to_storage=False: {
+                "public_id": "vendor_portfolio/uploaded",
+                "secure_url": "https://res.cloudinary.com/demo/uploaded.jpg",
+            },
+        )
+        monkeypatch.setattr(
+            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_file",
+            lambda self, file_obj, folder="exports", public_id=None, resource_type="raw": {
+                "public_id": public_id or "vendor_portfolio/video",
+                "secure_url": "https://res.cloudinary.com/demo/uploaded-video.mp4",
+            },
         )
 
     def test_list_images_empty(self):
@@ -462,7 +476,7 @@ class TestPortfolioImageViews:
         assert response.data["job_id"]
         assert response.data["message"] == "Portfolio item received. Review will continue automatically."
         assert response.data["item"]["local_preview_url"] is None
-        assert response.data["item"]["display_url"] is None
+        assert response.data["item"]["display_url"] == "https://res.cloudinary.com/demo/uploaded.jpg"
         assert "temp_upload_path" not in response.data["item"]
         assert self.profile.images.count() == 1
         stored = self.profile.images.get()
@@ -472,7 +486,8 @@ class TestPortfolioImageViews:
         assert stored.visibility_status == PortfolioImage.VisibilityStatus.PRIVATE
         assert stored.original_filename == "portfolio.jpg"
         assert stored.local_preview_url is None
-        assert stored.temp_upload_path
+        assert stored.temp_upload_path is None
+        assert stored.cloudinary_secure_url == "https://res.cloudinary.com/demo/uploaded.jpg"
         assert queued == [str(stored.id)]
 
     @pytest.mark.parametrize(
@@ -701,6 +716,54 @@ class TestPortfolioImageViews:
         assert image.temp_upload_path is None
         assert not default_storage.exists(temp_path)
 
+    def test_celery_task_processes_existing_remote_media_without_local_temp(self, monkeypatch):
+        image = PortfolioImage.objects.create(
+            vendor=self.profile,
+            caption="Queued",
+            upload_status=PortfolioImage.UploadStatus.QUEUED,
+            quality_status=PortfolioImage.QualityStatus.PENDING_ANALYSIS,
+            visibility_status=PortfolioImage.VisibilityStatus.PRIVATE,
+            original_filename="portfolio.jpg",
+            media_type=PortfolioImage.MediaType.IMAGE,
+            public_id="vendor_portfolio/remote",
+            secure_url="https://res.cloudinary.com/demo/remote.jpg",
+            cloudinary_public_id="vendor_portfolio/remote",
+            cloudinary_secure_url="https://res.cloudinary.com/demo/remote.jpg",
+            temp_upload_path=None,
+        )
+
+        class Analyzer:
+            def analyze(self, *, storage_path, media_type, file_url=None):
+                assert storage_path is None
+                assert file_url == "https://res.cloudinary.com/demo/remote.jpg"
+                return type(
+                    "QualityResult",
+                    (),
+                    {
+                        "status": "passed",
+                        "score": 90,
+                        "summary": "Image quality preflight passed.",
+                        "width": 800,
+                        "height": 600,
+                        "duration_seconds": None,
+                    },
+                )()
+
+        monkeypatch.setattr("tasks.image_tasks.MediaQualityAnalyzer", Analyzer)
+        monkeypatch.setattr(
+            "tasks.image_tasks.CloudinaryAdapter.upload_image",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("remote media should not be re-uploaded")),
+        )
+
+        result = process_vendor_portfolio_media_task.run(str(image.id))
+
+        image.refresh_from_db()
+        assert result["status"] == "completed"
+        assert image.upload_status == PortfolioImage.UploadStatus.UPLOADED
+        assert image.quality_status == PortfolioImage.QualityStatus.PASSED
+        assert image.secure_url == "https://res.cloudinary.com/demo/remote.jpg"
+        assert image.temp_upload_path is None
+
     def test_celery_task_marks_image_failed_on_cloudinary_failure(self, monkeypatch):
         temp_path = default_storage.save("vendor_portfolio_uploads/test/failure.jpg", ContentFile(valid_image_bytes()))
         image = PortfolioImage.objects.create(
@@ -776,7 +839,7 @@ def valid_image_bytes(size=(800, 600), image_format="JPEG") -> bytes:
 
 class TestVerificationDocumentViews:
     @pytest.fixture(autouse=True)
-    def setup(self):
+    def setup(self, monkeypatch):
         self.client = APIClient()
         self.user = User.objects.create_user(
             email="vendor@example.com",
@@ -795,6 +858,13 @@ class TestVerificationDocumentViews:
             contact_email="test@example.com",
             contact_phone="123",
             status="draft",
+        )
+        monkeypatch.setattr(
+            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_file",
+            lambda self, file_obj, folder="exports", public_id=None, resource_type="raw": {
+                "public_id": public_id or "vendor_verification_documents/uploaded",
+                "secure_url": "https://res.cloudinary.com/demo/uploaded.pdf",
+            },
         )
 
     def test_pdf_verification_document_returns_202_and_queues_task(self, monkeypatch):
@@ -821,8 +891,9 @@ class TestVerificationDocumentViews:
         assert stored.upload_status == VerificationDocument.UploadStatus.QUEUED
         assert stored.verification_status == VerificationDocument.VerificationStatus.PENDING_REVIEW
         assert stored.mime_type == "application/pdf"
-        assert stored.secure_url == ""
-        assert stored.temp_upload_path
+        assert stored.secure_url == "https://res.cloudinary.com/demo/uploaded.pdf"
+        assert stored.cloudinary_secure_url == "https://res.cloudinary.com/demo/uploaded.pdf"
+        assert stored.temp_upload_path is None
         assert queued == [str(stored.id)]
 
     def test_pdf_verification_document_returns_202_when_task_dispatch_fails(self, monkeypatch):
@@ -848,7 +919,8 @@ class TestVerificationDocumentViews:
         assert response.data["onboarding"]["can_access_dashboard"] is False
         stored = VerificationDocument.objects.get()
         assert stored.upload_status == VerificationDocument.UploadStatus.PROCESSING_DEFERRED
-        assert stored.temp_upload_path
+        assert stored.secure_url == "https://res.cloudinary.com/demo/uploaded.pdf"
+        assert stored.temp_upload_path is None
 
     def test_non_pdf_verification_document_returns_400(self):
         document_file = SimpleUploadedFile("license.png", b"not-pdf", content_type="image/png")
@@ -921,6 +993,33 @@ class TestVerificationDocumentViews:
         assert document.odcr_status == "unavailable"
         assert document.temp_upload_path is None
         assert not default_storage.exists(temp_path)
+
+    def test_celery_document_task_processes_existing_remote_document_without_local_temp(self, monkeypatch):
+        document = VerificationDocument.objects.create(
+            vendor=self.profile,
+            document_type="trade_license",
+            original_filename="license.pdf",
+            mime_type="application/pdf",
+            file_size=len(valid_pdf_bytes()),
+            secure_url="https://res.cloudinary.com/demo/license.pdf",
+            cloudinary_public_id="vendor_verification_documents/license",
+            cloudinary_secure_url="https://res.cloudinary.com/demo/license.pdf",
+            temp_upload_path=None,
+            upload_status=VerificationDocument.UploadStatus.QUEUED,
+        )
+        monkeypatch.setattr(
+            "tasks.document_tasks.CloudinaryAdapter.upload_file",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("remote document should not be re-uploaded")),
+        )
+
+        result = process_vendor_verification_document_task.run(str(document.id))
+
+        document.refresh_from_db()
+        assert result["status"] == "completed"
+        assert document.upload_status == VerificationDocument.UploadStatus.COMPLETED
+        assert document.verification_status == VerificationDocument.VerificationStatus.NEEDS_MANUAL_REVIEW
+        assert document.cloudinary_secure_url == "https://res.cloudinary.com/demo/license.pdf"
+        assert document.temp_upload_path is None
 
     def test_celery_document_task_failure_marks_failed(self, monkeypatch):
         temp_path = default_storage.save("vendor_verification_uploads/test/fail.pdf", ContentFile(valid_pdf_bytes()))

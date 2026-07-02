@@ -1,4 +1,5 @@
 from django.core.management.base import BaseCommand, CommandError
+from django.db.models import Q
 
 from django_app.vendors.models import VerificationDocument
 from tasks.document_tasks import process_vendor_verification_document_task
@@ -16,14 +17,16 @@ class Command(BaseCommand):
                 VerificationDocument.UploadStatus.QUEUED,
                 VerificationDocument.UploadStatus.PROCESSING_DEFERRED,
             ],
-        ).exclude(temp_upload_path__isnull=True).exclude(temp_upload_path="")
+        ).filter(
+            Q(cloudinary_secure_url__isnull=False)
+            | Q(secure_url__isnull=False)
+            | Q(temp_upload_path__isnull=False)
+        ).exclude(cloudinary_secure_url="", secure_url="", temp_upload_path="")
 
         queued = 0
         processed = 0
         failed = 0
         for document in documents:
-            if document.cloudinary_secure_url or document.secure_url:
-                continue
             try:
                 if options["process_inline"]:
                     process_vendor_verification_document_task.run(str(document.id))
