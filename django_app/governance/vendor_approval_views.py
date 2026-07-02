@@ -7,7 +7,7 @@ from django_app.common.permissions import IsAdmin
 from django_app.vendors.approval_workflow import approve_pending_vendor_submission
 
 from .models import AuditLog
-from .views import _audit, _serialize_vendor, _sync_approved_vendor
+from .views import _admin_action_error, _admin_action_success, _audit, _serialize_vendor, _sync_approved_vendor
 
 
 class AdminVendorApproveView(APIView):
@@ -17,7 +17,7 @@ class AdminVendorApproveView(APIView):
         try:
             approval = approve_pending_vendor_submission(vendor_id)
         except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return _admin_action_error("vendor_approve_failed", str(exc), status.HTTP_400_BAD_REQUEST)
 
         _sync_approved_vendor(approval.vendor)
         _audit(
@@ -29,4 +29,10 @@ class AdminVendorApproveView(APIView):
         )
         payload = _serialize_vendor(approval.vendor)
         payload["approval_summary"] = approval.summary()
-        return Response(payload)
+        return Response(
+            _admin_action_success(
+                payload,
+                code="vendor_approve_completed",
+                message="Vendor approved successfully.",
+            )
+        )

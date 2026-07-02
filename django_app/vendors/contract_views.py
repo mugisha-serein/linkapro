@@ -25,6 +25,9 @@ from .views import (
 )
 
 
+PACKAGE_NOT_FOUND_MESSAGE = "Package not found or does not belong to this vendor."
+
+
 def _message_from_response(response: Response, fallback: str) -> str:
     data = response.data if isinstance(response.data, dict) else {}
     return str(data.get("message") or data.get("detail") or fallback)
@@ -165,15 +168,15 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
             response = Response(exc.as_response_data(), status=status.HTTP_429_TOO_MANY_REQUESTS)
         except PackageValidationError as exc:
             raise DRFValidationError(exc.errors)
-        except ValueError as exc:
-            response = Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError:
+            response = Response({"detail": PACKAGE_NOT_FOUND_MESSAGE}, status=status.HTTP_404_NOT_FOUND)
         response = _augment_package_response(response)
         return _normalize_response_contract(
             response,
             success_code="vendor_package_updated",
             success_message="Service package updated.",
             error_code="vendor_package_not_found",
-            error_message="Package not found or does not belong to this vendor.",
+            error_message=PACKAGE_NOT_FOUND_MESSAGE,
         )
 
     def delete(self, request, package_id):
@@ -195,15 +198,15 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
                 },
                 status=status.HTTP_200_OK,
             )
-        except ValueError as exc:
-            response = Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError:
+            response = Response({"detail": PACKAGE_NOT_FOUND_MESSAGE}, status=status.HTTP_404_NOT_FOUND)
         response = _augment_package_response(response)
         return _normalize_response_contract(
             response,
             success_code="vendor_package_removed",
             success_message="Package removed from active listings.",
             error_code="vendor_package_not_found",
-            error_message="Package not found or does not belong to this vendor.",
+            error_message=PACKAGE_NOT_FOUND_MESSAGE,
         )
 
 
