@@ -14,7 +14,7 @@ from django.utils.decorators import method_decorator
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django_app.common.permissions import IsVendor, IsAdmin
-from django_app.common.api_responses import api_success
+from django_app.common.api_responses import api_error, api_success
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .serializers import (
@@ -1113,8 +1113,29 @@ class VendorActivityView(APIView):
         if error_response:
             return error_response
         query_handlers = get_query_handlers()
-        limit = int(request.query_params.get("limit", 10))
+        limit, limit_error = self._activity_limit(request)
+        if limit_error:
+            return limit_error
         return Response(query_handlers.get_recent_activity(profile.id, limit=limit))
+
+    def _activity_limit(self, request) -> tuple[int | None, Response | None]:
+        raw_limit = request.query_params.get("limit", "10")
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            return None, self._invalid_limit_response(request)
+        if limit < 1 or limit > 100:
+            return None, self._invalid_limit_response(request)
+        return limit, None
+
+    def _invalid_limit_response(self, request) -> Response:
+        return api_error(
+            code="vendor_activity_limit_invalid",
+            message="Activity limit must be an integer from 1 to 100.",
+            field_errors={"limit": ["Enter an integer from 1 to 100."]},
+            status=status.HTTP_400_BAD_REQUEST,
+            request=request,
+        )
 
 
 class AdminPendingVendorListView(APIView):

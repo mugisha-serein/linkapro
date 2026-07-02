@@ -13,7 +13,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from django_app.identity.models import User
-from django_app.vendors.models import PortfolioImage, ServicePackage, VerificationDocument, VendorProfile as DjangoProfile
+from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VerificationDocument, VendorProfile as DjangoProfile
 from tasks.document_tasks import process_vendor_verification_document_task
 from tasks.image_tasks import process_vendor_portfolio_media_task, upload_vendor_portfolio_image_task
 
@@ -270,6 +270,68 @@ class TestVendorProfileViews:
 
         assert response.status_code == 200
         assert response.data["account_status"] == "pending_review"
+
+    def test_activity_without_limit_returns_200(self):
+        profile = DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="pending_review",
+        )
+        Inquiry.objects.create(vendor=profile, client_name="Client", client_email="client@example.com", message="Need help")
+
+        response = self.client.get(reverse("vendor-activity"))
+
+        assert response.status_code == 200
+        assert len(response.data) == 1
+
+    def test_activity_with_valid_limit_returns_200(self):
+        profile = DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="pending_review",
+        )
+        for index in range(3):
+            Inquiry.objects.create(
+                vendor=profile,
+                client_name=f"Client {index}",
+                client_email=f"client{index}@example.com",
+                message="Need help",
+            )
+
+        response = self.client.get(reverse("vendor-activity"), {"limit": "2"})
+
+        assert response.status_code == 200
+        assert len(response.data) == 2
+
+    @pytest.mark.parametrize("limit", ["abc", "0", "-1", "1000"])
+    def test_activity_invalid_limit_returns_structured_400(self, limit):
+        DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Test",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="area",
+            contact_email="test@example.com",
+            contact_phone="123",
+            status="pending_review",
+        )
+
+        response = self.client.get(reverse("vendor-activity"), {"limit": limit})
+
+        assert response.status_code == 400
+        assert response.data["success"] is False
+        assert response.data["code"] == "vendor_activity_limit_invalid"
+        assert response.data["field_errors"] == {"limit": ["Enter an integer from 1 to 100."]}
 
     def test_rejected_vendor_cannot_access_dashboard_summary_until_resubmitted(self):
         DjangoProfile.objects.create(

@@ -46,6 +46,10 @@ def engine(event_loop):
                     is_verified BOOLEAN,
                     approval_status VARCHAR(20),
                     search_rank_score FLOAT,
+                    starting_price NUMERIC(12, 2),
+                    min_package_price NUMERIC(12, 2),
+                    max_package_price NUMERIC(12, 2),
+                    currency VARCHAR(10),
                     search_vector TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME

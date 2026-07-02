@@ -52,7 +52,9 @@ async def _verified_body(
 def _allow_legacy_internal_secret(legacy_secret: str | None) -> bool:
     if not legacy_secret or legacy_secret != INTERNAL_SHARED_SECRET:
         return False
-    return os.getenv("FASTAPI_ENV", "development").strip().lower() != "production"
+    if os.getenv("FASTAPI_ENV", "development").strip().lower() == "production":
+        return False
+    return os.getenv("FASTAPI_ALLOW_LEGACY_INTERNAL_SECRET", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _parse_listing_payload(body: bytes) -> InternalListingUpsertRequest:

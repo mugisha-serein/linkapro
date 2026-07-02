@@ -418,6 +418,8 @@ async def test_internal_upsert_is_idempotent_and_non_approved_payload_deletes(se
     cache = FakeCache()
     monkeypatch.setattr("fastapi_app.routers.internal.INTERNAL_SHARED_SECRET", "test-secret")
     monkeypatch.setattr("fastapi_app.routers.internal.get_marketplace_search_cache", lambda: cache)
+    monkeypatch.setenv("FASTAPI_ENV", "development")
+    monkeypatch.setenv("FASTAPI_ALLOW_LEGACY_INTERNAL_SECRET", "true")
 
     async def override_session():
         yield session

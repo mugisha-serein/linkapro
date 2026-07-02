@@ -73,6 +73,92 @@ async def test_signed_internal_listing_request_is_accepted(session: AsyncSession
     assert listing.approval_status == "approved"
 
 
+async def test_legacy_internal_secret_rejected_by_default(session: AsyncSession, monkeypatch):
+    monkeypatch.setattr("fastapi_app.routers.internal.INTERNAL_SHARED_SECRET", "test-secret")
+    monkeypatch.setenv("FASTAPI_ENV", "development")
+    monkeypatch.delenv("FASTAPI_ALLOW_LEGACY_INTERNAL_SECRET", raising=False)
+    await install_session(session)
+
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/internal/listings",
+                headers={"X-Internal-Secret": "test-secret"},
+                json={
+                    "vendor_id": str(uuid.uuid4()),
+                    "business_name": "Legacy Vendor",
+                    "category": "photography",
+                    "description": "Public approved marketplace listing.",
+                    "service_area": "Kigali",
+                    "approval_status": "approved",
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+
+
+async def test_legacy_internal_secret_rejected_in_production_even_when_allowed(session: AsyncSession, monkeypatch):
+    monkeypatch.setattr("fastapi_app.routers.internal.INTERNAL_SHARED_SECRET", "test-secret")
+    monkeypatch.setenv("FASTAPI_ENV", "production")
+    monkeypatch.setenv("FASTAPI_ALLOW_LEGACY_INTERNAL_SECRET", "true")
+    await install_session(session)
+
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/internal/listings",
+                headers={"X-Internal-Secret": "test-secret"},
+                json={
+                    "vendor_id": str(uuid.uuid4()),
+                    "business_name": "Legacy Vendor",
+                    "category": "photography",
+                    "description": "Public approved marketplace listing.",
+                    "service_area": "Kigali",
+                    "approval_status": "approved",
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+
+
+async def test_legacy_internal_secret_allowed_only_with_non_production_opt_in(session: AsyncSession, monkeypatch):
+    await session.execute(delete(VendorListingModel))
+    await session.commit()
+    monkeypatch.setattr("fastapi_app.routers.internal.INTERNAL_SHARED_SECRET", "test-secret")
+    monkeypatch.setenv("FASTAPI_ENV", "development")
+    monkeypatch.setenv("FASTAPI_ALLOW_LEGACY_INTERNAL_SECRET", "true")
+    await install_session(session)
+
+    vendor_id = uuid.uuid4()
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/internal/listings",
+                headers={"X-Internal-Secret": "test-secret"},
+                json={
+                    "vendor_id": str(vendor_id),
+                    "business_name": "Legacy Vendor",
+                    "category": "photography",
+                    "description": "Public approved marketplace listing.",
+                    "service_area": "Kigali",
+                    "approval_status": "approved",
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    listing = await session.scalar(select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_id))
+    assert response.status_code == 200
+    assert listing.business_name == "Legacy Vendor"
+
+
 async def test_signed_internal_listing_request_validates_payload(session: AsyncSession, monkeypatch):
     monkeypatch.setattr("fastapi_app.routers.internal.INTERNAL_SHARED_SECRET", "test-secret")
     await install_session(session)

@@ -213,6 +213,9 @@ ACCEPT_LEGACY_PAYMENT_ENV_TOKENS = (
 REDIS_URL = get_redis_url()
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+MARKETPLACE_PROJECTION_OUTBOX_RETRY_BATCH_SIZE = int(
+    os.environ.get("MARKETPLACE_PROJECTION_OUTBOX_RETRY_BATCH_SIZE", "25")
+)
 if redis_uses_tls(REDIS_URL):
     CELERY_BROKER_USE_SSL = redis_ssl_options(REDIS_URL)
     CELERY_REDIS_BACKEND_USE_SSL = redis_ssl_options(REDIS_URL)
@@ -220,6 +223,10 @@ if redis_uses_tls(REDIS_URL):
 CELERY_BEAT_SCHEDULE = {
     "expire-stale-payments": {
         "task": "payments.tasks.expire_stale_payments_task",
+        "schedule": crontab(minute="*/5"),  # Every 5 minutes
+    },
+    "retry-marketplace-projection-outbox": {
+        "task": "tasks.marketplace_sync.retry_due_marketplace_projection_outbox_events_task",
         "schedule": crontab(minute="*/5"),  # Every 5 minutes
     },
 }
