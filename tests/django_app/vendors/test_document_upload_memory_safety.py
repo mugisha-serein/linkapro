@@ -1,6 +1,7 @@
 import pytest
 from django.urls import resolve, reverse
 
+from django_app.vendors.contract_views import VendorVerificationDocumentView as ContractVendorVerificationDocumentView
 from django_app.vendors.document_upload_views import VendorVerificationDocumentView
 
 
@@ -34,7 +35,8 @@ class ChunkOnlyUpload:
 def test_verification_document_route_uses_streaming_view():
     resolved = resolve(reverse("vendor-verification-documents"))
 
-    assert resolved.func.cls is VendorVerificationDocumentView
+    assert resolved.func.cls is ContractVendorVerificationDocumentView
+    assert issubclass(resolved.func.cls, VendorVerificationDocumentView)
 
 
 def test_pdf_validation_uses_chunks_without_full_file_read():

@@ -179,6 +179,29 @@ def _serialize_vendor(vendor: VendorProfile) -> dict:
     }
 
 
+def _admin_action_success(payload: dict, *, code: str, message: str) -> dict:
+    response_data = dict(payload)
+    data = dict(payload)
+    response_data.setdefault("success", True)
+    response_data.setdefault("code", code)
+    response_data.setdefault("message", message)
+    response_data.setdefault("data", data)
+    return response_data
+
+
+def _admin_action_error(code: str, message: str, response_status: int) -> Response:
+    return Response(
+        {
+            "success": False,
+            "code": code,
+            "message": message,
+            "detail": message,
+            "field_errors": {},
+        },
+        status=response_status,
+    )
+
+
 def _serialize_admin_vendor_detail(vendor: VendorProfile) -> dict:
     payload = _serialize_vendor(vendor)
     user = getattr(vendor, "user", None)
@@ -402,11 +425,12 @@ class AdminVendorApproveView(APIView):
         try:
             vendor = VendorProfile.objects.get(id=vendor_id)
         except VendorProfile.DoesNotExist:
-            return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+            return _admin_action_error("vendor_approve_failed", "Vendor not found.", status.HTTP_404_NOT_FOUND)
         if vendor.status != VendorProfile.Status.PENDING_REVIEW:
-            return Response(
-                {"detail": "Vendor must be submitted for review before approval."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _admin_action_error(
+                "vendor_approve_failed",
+                "Vendor must be submitted for review before approval.",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         from django.utils import timezone
@@ -418,7 +442,13 @@ class AdminVendorApproveView(APIView):
         vendor.save(update_fields=["status", "approved_at", "rejected_at", "rejection_reason", "updated_at"])
         _sync_approved_vendor(vendor)
         _audit(request.user, AuditLog.ActionType.APPROVE_VENDOR, "vendor_profile", vendor.id)
-        return Response(_serialize_vendor(vendor))
+        return Response(
+            _admin_action_success(
+                _serialize_vendor(vendor),
+                code="vendor_approve_completed",
+                message="Vendor approved successfully.",
+            )
+        )
 
 
 class AdminVendorRejectView(APIView):
@@ -429,11 +459,12 @@ class AdminVendorRejectView(APIView):
         try:
             vendor = VendorProfile.objects.get(id=vendor_id)
         except VendorProfile.DoesNotExist:
-            return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+            return _admin_action_error("vendor_reject_failed", "Vendor not found.", status.HTTP_404_NOT_FOUND)
         if vendor.status != VendorProfile.Status.PENDING_REVIEW:
-            return Response(
-                {"detail": "Only vendors waiting for review can be rejected."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _admin_action_error(
+                "vendor_reject_failed",
+                "Only vendors waiting for review can be rejected.",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         from django.utils import timezone
@@ -444,7 +475,13 @@ class AdminVendorRejectView(APIView):
         vendor.save(update_fields=["status", "rejected_at", "rejection_reason", "updated_at"])
         _delete_vendor_listing(vendor)
         _audit(request.user, AuditLog.ActionType.REJECT_VENDOR, "vendor_profile", vendor.id, {"reason": reason})
-        return Response(_serialize_vendor(vendor))
+        return Response(
+            _admin_action_success(
+                _serialize_vendor(vendor),
+                code="vendor_reject_completed",
+                message="Vendor rejected successfully.",
+            )
+        )
 
 
 class AdminVendorSuspendView(APIView):
@@ -454,18 +491,25 @@ class AdminVendorSuspendView(APIView):
         try:
             vendor = VendorProfile.objects.get(id=vendor_id)
         except VendorProfile.DoesNotExist:
-            return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+            return _admin_action_error("vendor_suspend_failed", "Vendor not found.", status.HTTP_404_NOT_FOUND)
         if vendor.status != VendorProfile.Status.APPROVED:
-            return Response(
-                {"detail": "Only approved vendors can be suspended."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _admin_action_error(
+                "vendor_suspend_failed",
+                "Only approved vendors can be suspended.",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         vendor.status = VendorProfile.Status.SUSPENDED
         vendor.save(update_fields=["status", "updated_at"])
         _delete_vendor_listing(vendor)
         _audit(request.user, AuditLog.ActionType.SUSPEND_VENDOR, "vendor_profile", vendor.id)
-        return Response(_serialize_vendor(vendor))
+        return Response(
+            _admin_action_success(
+                _serialize_vendor(vendor),
+                code="vendor_suspend_completed",
+                message="Vendor suspended successfully.",
+            )
+        )
 
 
 class AdminVendorReinstateView(APIView):
@@ -475,11 +519,12 @@ class AdminVendorReinstateView(APIView):
         try:
             vendor = VendorProfile.objects.get(id=vendor_id)
         except VendorProfile.DoesNotExist:
-            return Response({"detail": "Vendor not found."}, status=status.HTTP_404_NOT_FOUND)
+            return _admin_action_error("vendor_reinstate_failed", "Vendor not found.", status.HTTP_404_NOT_FOUND)
         if vendor.status != VendorProfile.Status.SUSPENDED:
-            return Response(
-                {"detail": "Only suspended vendors can be reinstated."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _admin_action_error(
+                "vendor_reinstate_failed",
+                "Only suspended vendors can be reinstated.",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         from django.utils import timezone
@@ -489,7 +534,13 @@ class AdminVendorReinstateView(APIView):
         vendor.save(update_fields=["status", "approved_at", "updated_at"])
         _sync_approved_vendor(vendor)
         _audit(request.user, AuditLog.ActionType.APPROVE_VENDOR, "vendor_profile", vendor.id, {"from": "suspended"})
-        return Response(_serialize_vendor(vendor))
+        return Response(
+            _admin_action_success(
+                _serialize_vendor(vendor),
+                code="vendor_reinstate_completed",
+                message="Vendor reinstated successfully.",
+            )
+        )
 
 
 class AdminVendorPackagePendingListView(APIView):
