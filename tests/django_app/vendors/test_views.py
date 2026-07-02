@@ -1,5 +1,6 @@
 import uuid
 import importlib
+from datetime import timedelta
 from io import BytesIO, StringIO
 
 import pytest
@@ -10,6 +11,7 @@ from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from django_app.identity.models import User
@@ -1058,7 +1060,9 @@ class TestServicePackageViews:
         assert "description" in response.data
         assert "price" in response.data
 
-    def test_editing_approved_package_resets_to_waiting_approval(self):
+    def test_editing_approved_package_before_cooldown_returns_contract_error(self):
+        approved_at = timezone.now() - timedelta(days=1)
+        next_allowed_at = approved_at + ServicePackage.vendor_edit_cooldown_delta()
         package = ServicePackage.objects.create(
             vendor=self.profile,
             name="Approved Premier Package",
@@ -1068,6 +1072,8 @@ class TestServicePackageViews:
             package_tier="premier",
             approval_status=ServicePackage.ApprovalStatus.APPROVED,
             is_active=True,
+            last_approved_at=approved_at,
+            next_vendor_edit_allowed_at=next_allowed_at,
         )
 
         response = self.client.patch(
@@ -1078,10 +1084,15 @@ class TestServicePackageViews:
             format="json",
         )
 
-        assert response.status_code == 200
         package.refresh_from_db()
-        assert package.approval_status == ServicePackage.ApprovalStatus.WAITING_APPROVAL
-        assert response.data["approval_status"] == "waiting_approval"
+        assert response.status_code == 429
+        assert response.data["success"] is False
+        assert response.data["code"] == "vendor_package_edit_cooldown_active"
+        assert response.data["cooldown_days"] == 15
+        assert response.data["next_allowed_at"] == package.next_vendor_edit_allowed_at.isoformat()
+        assert package.approval_status == ServicePackage.ApprovalStatus.APPROVED
+        assert package.is_active is True
+        assert package.description == "A premier package with enough detail for admin approval and planner clarity."
 
     def test_vendor_delete_soft_deletes_and_hides_package(self):
         package = ServicePackage.objects.create(

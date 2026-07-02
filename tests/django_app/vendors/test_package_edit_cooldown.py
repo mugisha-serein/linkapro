@@ -12,7 +12,7 @@ from django_app.vendors.models import ServicePackage, VendorProfile
 pytestmark = pytest.mark.django_db
 
 
-def create_vendor_with_approved_package(*, next_allowed_at=None):
+def create_vendor_with_approved_package(*, approved_at=None, next_allowed_at=None):
     client = APIClient()
     user = User.objects.create_user(
         email="cooldown-vendor@example.com",
@@ -31,7 +31,7 @@ def create_vendor_with_approved_package(*, next_allowed_at=None):
         status=VendorProfile.Status.APPROVED,
         approved_at=timezone.now() - timedelta(days=20),
     )
-    approved_at = timezone.now() - timedelta(days=1)
+    approved_at = approved_at or timezone.now() - timedelta(days=1)
     package = ServicePackage.objects.create(
         vendor=vendor,
         name="Approved Package",
@@ -68,8 +68,12 @@ def test_approved_package_update_is_blocked_until_cooldown_passes():
 
 
 def test_package_update_after_cooldown_moves_package_back_to_admin_review():
-    next_allowed_at = timezone.now() - timedelta(minutes=1)
-    client, package = create_vendor_with_approved_package(next_allowed_at=next_allowed_at)
+    approved_at = timezone.now() - ServicePackage.vendor_edit_cooldown_delta() - timedelta(minutes=1)
+    next_allowed_at = approved_at + ServicePackage.vendor_edit_cooldown_delta()
+    client, package = create_vendor_with_approved_package(
+        approved_at=approved_at,
+        next_allowed_at=next_allowed_at,
+    )
 
     response = client.patch(
         reverse("package-detail", args=[package.id]),
