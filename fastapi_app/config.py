@@ -24,6 +24,18 @@ REQUIRED_PRODUCTION_CORS_ORIGINS = [
     "https://linkapro.rw",
     "https://linkapro.vercel.app",
 ]
+DEFAULT_PRODUCTION_TRUSTED_HOSTS = [
+    "linkapro-fastapi.onrender.com",
+    "api.linkapro.rw",
+]
+
+
+def get_fastapi_env() -> str:
+    return os.getenv("FASTAPI_ENV", "development").strip().lower()
+
+
+def is_production() -> bool:
+    return get_fastapi_env() == "production"
 
 
 def require_env(name: str) -> str:
@@ -42,6 +54,18 @@ def require_bool(name: str) -> bool:
     raise RuntimeError(f"{name} must be a boolean value, got {raw!r}.")
 
 
+def get_bool(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be a boolean value, got {normalized!r}.")
+
+
 def require_int(name: str, *, minimum: int | None = None, maximum: int | None = None) -> int:
     raw = require_env(name)
     try:
@@ -55,13 +79,32 @@ def require_int(name: str, *, minimum: int | None = None, maximum: int | None = 
     return value
 
 
+def get_int(name: str, *, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        value = default
+    else:
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise RuntimeError(f"{name} must be an integer, got {raw!r}.") from exc
+    if minimum is not None and value < minimum:
+        raise RuntimeError(f"{name} must be >= {minimum}, got {value}.")
+    if maximum is not None and value > maximum:
+        raise RuntimeError(f"{name} must be <= {maximum}, got {value}.")
+    return value
+
+
+def get_csv_env(name: str) -> list[str]:
+    raw = os.getenv(name, "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 def get_cors_origins() -> list[str]:
-    raw = os.getenv("FASTAPI_CORS_ORIGINS", "")
-    env_name = os.getenv("FASTAPI_ENV", "development").strip().lower()
-    configured = [_normalize_origin(origin) for origin in raw.split(",")]
+    configured = [_normalize_origin(origin) for origin in get_csv_env("FASTAPI_CORS_ORIGINS")]
     origins = [origin for origin in configured if origin]
 
-    if env_name == "production":
+    if is_production():
         missing_required = [origin for origin in REQUIRED_PRODUCTION_CORS_ORIGINS if origin not in origins]
         if missing_required:
             message = (
@@ -75,6 +118,20 @@ def get_cors_origins() -> list[str]:
         origins.extend(origin for origin in PRODUCTION_CORS_ORIGINS if origin not in origins)
 
     return list(dict.fromkeys(origins))
+
+
+def get_trusted_hosts() -> list[str]:
+    configured = get_csv_env("FASTAPI_TRUSTED_HOSTS")
+    if not is_production():
+        return configured or ["*"]
+
+    hosts = configured or DEFAULT_PRODUCTION_TRUSTED_HOSTS
+    cleaned = [host.strip().lower() for host in hosts if host.strip()]
+    if not cleaned:
+        raise RuntimeError("FASTAPI_TRUSTED_HOSTS must not be empty in production.")
+    if "*" in cleaned:
+        raise RuntimeError("FASTAPI_TRUSTED_HOSTS must not contain '*' in production.")
+    return list(dict.fromkeys(cleaned))
 
 
 def _normalize_origin(value: str) -> str | None:
@@ -104,8 +161,8 @@ def normalize_redis_url(redis_url: str, *, production: bool | None = None) -> st
         elif not cert_reqs:
             query["ssl_cert_reqs"] = "required"
         elif cert_reqs.lower() == "cert_none" or cert_reqs.lower() == "none":
-            is_production = production if production is not None else os.getenv("FASTAPI_ENV", "").lower() == "production"
-            if is_production:
+            is_prod = production if production is not None else is_production()
+            if is_prod:
                 raise RuntimeError("REDIS_URL must not use ssl_cert_reqs=none in production.")
     return urlunparse(parsed._replace(query=urlencode(query)))
 
@@ -131,3 +188,23 @@ def normalize_database_url(database_url: str) -> str:
     if not url.startswith("postgresql+asyncpg://"):
         raise RuntimeError("FASTAPI_DATABASE_URL must use postgresql+asyncpg://")
     return url
+
+
+def get_database_engine_options(database_url: str) -> dict:
+    options: dict = {
+        "echo": get_bool("FASTAPI_SQL_ECHO", default=False),
+        "future": True,
+    }
+
+    if database_url.startswith("postgresql+asyncpg://"):
+        options.update(
+            {
+                "pool_pre_ping": True,
+                "pool_recycle": get_int("FASTAPI_DB_POOL_RECYCLE_SECONDS", default=1800, minimum=60),
+                "pool_size": get_int("FASTAPI_DB_POOL_SIZE", default=5, minimum=1, maximum=50),
+                "max_overflow": get_int("FASTAPI_DB_MAX_OVERFLOW", default=5, minimum=0, maximum=100),
+                "pool_timeout": get_int("FASTAPI_DB_POOL_TIMEOUT_SECONDS", default=10, minimum=1, maximum=120),
+            }
+        )
+
+    return options
