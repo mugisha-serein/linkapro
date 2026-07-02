@@ -53,13 +53,15 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 
 # These task modules live in the root tasks package, not inside installed
 # Django apps, so Celery autodiscovery will not import them by itself.
-app.conf.imports = tuple(set(app.conf.imports or ()) | {
-    "tasks.document_tasks",
-    "tasks.email_tasks",
-    "tasks.image_tasks",
-    "tasks.marketplace_sync",
-    "payments.tasks",
-})
+app.conf.update(
+    imports=(
+        "tasks.document_tasks",
+        "tasks.email_tasks",
+        "tasks.image_tasks",
+        "tasks.marketplace_sync",
+        "payments.tasks",
+    )
+)
 
 if not apps.ready and not getattr(apps, "loading", False):
     django.setup()
