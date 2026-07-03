@@ -32,6 +32,21 @@ def process_vendor_portfolio_media_task(self, image_id: str):
     file_url = image.cloudinary_secure_url or image.secure_url
     if not file_url and not image.temp_upload_path:
         _mark_failed(image, "Uploaded media is no longer available.")
+        logger.warning(
+            "Portfolio media source missing.",
+            extra={"image_id": str(image.id), "vendor_id": str(image.vendor_id)},
+        )
+        return {"status": "failed", "image_id": str(image.id)}
+    if not file_url and image.temp_upload_path and not default_storage.exists(image.temp_upload_path):
+        _mark_failed(image, "Uploaded media is no longer available.")
+        logger.warning(
+            "Portfolio media temp file missing.",
+            extra={
+                "image_id": str(image.id),
+                "vendor_id": str(image.vendor_id),
+                "temp_upload_path": image.temp_upload_path,
+            },
+        )
         return {"status": "failed", "image_id": str(image.id)}
 
     with transaction.atomic():
@@ -40,8 +55,9 @@ def process_vendor_portfolio_media_task(self, image_id: str):
         image.failure_reason = None
         image.save(update_fields=["upload_status", "upload_error", "failure_reason", "updated_at"])
 
+    storage_path = None if file_url else image.temp_upload_path
     quality_result = MediaQualityAnalyzer().analyze(
-        storage_path=image.temp_upload_path,
+        storage_path=storage_path,
         media_type=image.media_type,
         file_url=file_url,
     )
@@ -80,10 +96,10 @@ def process_vendor_portfolio_media_task(self, image_id: str):
             return {"status": "failed", "image_id": str(image.id)}
 
     temp_upload_path = image.temp_upload_path
-    image.public_id = result["public_id"]
-    image.secure_url = result["secure_url"]
-    image.cloudinary_public_id = result["public_id"]
-    image.cloudinary_secure_url = result["secure_url"]
+    image.public_id = result.get("public_id") or image.public_id
+    image.secure_url = result.get("secure_url") or image.secure_url
+    image.cloudinary_public_id = result.get("public_id") or image.cloudinary_public_id
+    image.cloudinary_secure_url = result.get("secure_url") or image.cloudinary_secure_url
     image.upload_status = PortfolioImage.UploadStatus.UPLOADED
     image.visibility_status = (
         PortfolioImage.VisibilityStatus.WAITING_APPROVAL

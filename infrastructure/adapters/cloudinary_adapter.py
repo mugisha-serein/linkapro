@@ -3,6 +3,7 @@ import os
 import uuid
 
 import cloudinary
+import cloudinary.api
 import cloudinary.exceptions
 import cloudinary.uploader
 from django.conf import settings
@@ -76,3 +77,17 @@ class CloudinaryAdapter:
             unique_filename=False,
         )
         return {"public_id": result["public_id"], "secure_url": result["secure_url"]}
+
+    def get_resource(self, public_id: str, resource_type: str = "image") -> dict | None:
+        if not public_id:
+            return None
+        if not self._cloudinary_configured:
+            raise RuntimeError("Cloudinary credentials are not configured.")
+
+        try:
+            return cloudinary.api.resource(public_id, resource_type=resource_type)
+        except cloudinary.exceptions.Error as exc:
+            if getattr(exc, "http_code", None) == 404 or exc.__class__.__name__.lower() == "notfound":
+                return None
+            logger.exception("Cloudinary resource lookup failed.", extra={"public_id": public_id})
+            raise
