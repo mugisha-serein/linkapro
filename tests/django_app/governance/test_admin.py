@@ -6,8 +6,9 @@ from django.utils import timezone
 from django.urls import reverse
 from rest_framework.test import APIClient
 
+from django_app.governance.models import AuditLog
 from django_app.identity.models import PasswordResetEmailDelivery, User
-from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile
+from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile, VerificationDocument
 
 pytestmark = pytest.mark.django_db
 
@@ -230,11 +231,14 @@ class TestVendorApprovalAdmin:
         response = api_client.get(reverse("admin-vendor-detail", args=[vendor.id]))
 
         assert response.status_code == 200
-        assert response.data["id"] == str(vendor.id)
-        assert response.data["status"] == vendor_status
-        assert response.data["user_email"] == vendor_user.email
-        assert response.data["admin_review_context"]["packages_count"] == 1
-        assert response.data["admin_review_context"]["portfolio_count"] == 1
+        assert response.data["success"] is True
+        assert response.data["code"] == "admin_vendor_detail_loaded"
+        detail = response.data["data"]
+        assert detail["profile"]["id"] == str(vendor.id)
+        assert detail["profile"]["status"] == vendor_status
+        assert detail["user"]["email"] == vendor_user.email
+        assert detail["review_context"]["packages_count"] == 1
+        assert detail["review_context"]["portfolio_count"] == 1
 
     def test_admin_api_vendor_detail_requires_admin_role(self):
         vendor_user = User.objects.create_user(email="detail-vendor@t.com", password="p", role="vendor")
@@ -277,7 +281,233 @@ class TestVendorApprovalAdmin:
 
         assert public_response.status_code == 404
         assert admin_response.status_code == 200
-        assert admin_response.data["status"] == "pending_review"
+        assert admin_response.data["data"]["profile"]["status"] == "pending_review"
+
+    def test_admin_api_vendor_detail_returns_full_review_payload(self):
+        admin_user = User.objects.create_superuser("full-detail-admin@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(
+            email="full-detail-vendor@t.com",
+            password="p",
+            role="vendor",
+            first_name="Full",
+            last_name="Vendor",
+        )
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Full Detail Vendor",
+            category="other",
+            custom_category="Lighting",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="full-detail@example.com",
+            contact_phone="1",
+            website="https://vendor.example.test",
+            profile_image_url="https://cdn.example.test/profile.jpg",
+            cover_image_url="https://cdn.example.test/cover.jpg",
+            status="pending_review",
+            submitted_at=timezone.now(),
+        )
+        approved_at = timezone.now()
+        package = ServicePackage.objects.create(
+            vendor=vendor,
+            name="Review Package",
+            description="A standard package with enough detail for review.",
+            price="25000.00",
+            currency="RWF",
+            package_tier="standard",
+            approval_status=ServicePackage.ApprovalStatus.APPROVED,
+            last_approved_at=approved_at,
+            next_vendor_edit_allowed_at=approved_at + ServicePackage.vendor_edit_cooldown_delta(),
+        )
+        media = PortfolioImage.objects.create(
+            vendor=vendor,
+            media_type=PortfolioImage.MediaType.IMAGE,
+            secure_url="https://cdn.example.test/portfolio.jpg",
+            cloudinary_secure_url="https://res.cloudinary.com/example/portfolio.jpg",
+            local_preview_url="https://preview.example.test/portfolio.jpg",
+            caption="Portfolio caption",
+            upload_status=PortfolioImage.UploadStatus.UPLOADED,
+            quality_status=PortfolioImage.QualityStatus.NEEDS_MANUAL_REVIEW,
+            visibility_status=PortfolioImage.VisibilityStatus.WAITING_APPROVAL,
+            analyzer_score=72,
+            analyzer_summary="Needs a human look.",
+            width=1200,
+            height=800,
+        )
+        document = VerificationDocument.objects.create(
+            vendor=vendor,
+            document_type=VerificationDocument.DocumentType.BUSINESS_REGISTRATION,
+            original_filename="registration.pdf",
+            secure_url="https://docs.example.test/registration.pdf",
+            cloudinary_secure_url="https://res.cloudinary.com/example/registration.pdf",
+            mime_type="application/pdf",
+            file_size=2048,
+            upload_status=VerificationDocument.UploadStatus.COMPLETED,
+            verification_status=VerificationDocument.VerificationStatus.VERIFIED,
+            fraud_status=VerificationDocument.FraudStatus.REVIEW_REQUIRED,
+            fraud_score=42,
+            fraud_reasons=["name_mismatch"],
+            odcr_status="completed",
+            odcr_score=91,
+            odcr_result_summary="Business registration detected.",
+        )
+        AuditLog.objects.create(
+            admin=admin_user,
+            action_type=AuditLog.ActionType.APPROVE_PACKAGE,
+            target_type="service_package",
+            target_id=package.id,
+            details={"package": "approved"},
+        )
+        AuditLog.objects.create(
+            admin=admin_user,
+            action_type=AuditLog.ActionType.APPROVE_PORTFOLIO_MEDIA,
+            target_type="portfolio_image",
+            target_id=media.id,
+            details={"media": "approved"},
+        )
+        AuditLog.objects.create(
+            admin=admin_user,
+            action_type=AuditLog.ActionType.REJECT_VENDOR,
+            target_type="vendor_profile",
+            target_id=vendor.id,
+            details={"reason": "test"},
+        )
+
+        response = api_client.get(reverse("admin-vendor-detail", args=[vendor.id]))
+
+        assert response.status_code == 200
+        assert response.data["success"] is True
+        assert response.data["code"] == "admin_vendor_detail_loaded"
+        detail = response.data["data"]
+        assert set(detail) == {
+            "profile",
+            "user",
+            "packages",
+            "portfolio",
+            "verification_documents",
+            "review_context",
+            "available_actions",
+            "audit_logs",
+        }
+        assert detail["profile"]["custom_category"] == "Lighting"
+        assert detail["profile"]["profile_image_url"] == "https://cdn.example.test/profile.jpg"
+        assert detail["user"]["id"] == str(vendor_user.id)
+        assert detail["user"]["email"] == vendor_user.email
+        assert detail["packages"][0]["id"] == str(package.id)
+        assert detail["packages"][0]["approval_status"] == ServicePackage.ApprovalStatus.APPROVED
+        assert detail["packages"][0]["last_approved_at"] == package.last_approved_at.isoformat()
+        assert detail["packages"][0]["next_vendor_edit_allowed_at"] == package.next_vendor_edit_allowed_at.isoformat()
+        assert detail["packages"][0]["can_edit_now"] is False
+        assert detail["portfolio"][0]["id"] == str(media.id)
+        assert detail["portfolio"][0]["visibility_status"] == PortfolioImage.VisibilityStatus.WAITING_APPROVAL
+        assert detail["portfolio"][0]["quality_status"] == PortfolioImage.QualityStatus.NEEDS_MANUAL_REVIEW
+        assert detail["portfolio"][0]["display_url"] == media.cloudinary_secure_url
+        assert detail["portfolio"][0]["width"] == 1200
+        assert detail["verification_documents"][0]["id"] == str(document.id)
+        assert detail["verification_documents"][0]["fraud_status"] == VerificationDocument.FraudStatus.REVIEW_REQUIRED
+        assert detail["verification_documents"][0]["fraud_reasons"] == ["name_mismatch"]
+        assert detail["verification_documents"][0]["odcr_result_summary"] == "Business registration detected."
+        assert detail["review_context"] == {
+            "packages_count": 1,
+            "pending_packages_count": 0,
+            "approved_packages_count": 1,
+            "rejected_packages_count": 0,
+            "portfolio_count": 1,
+            "pending_portfolio_count": 1,
+            "approved_portfolio_count": 0,
+            "rejected_portfolio_count": 0,
+            "verification_documents_count": 1,
+            "verified_documents_count": 1,
+            "failed_documents_count": 0,
+        }
+        assert detail["available_actions"] == {
+            "approve_vendor": True,
+            "reject_vendor": True,
+            "suspend_vendor": False,
+            "reinstate_vendor": False,
+            "ban_user": True,
+            "reinstate_user": False,
+        }
+        assert {log["target_type"] for log in detail["audit_logs"]} == {
+            "vendor_profile",
+            "portfolio_image",
+            "service_package",
+        }
+        assert detail["audit_logs"][0]["admin"]["email"] == admin_user.email
+
+    @pytest.mark.parametrize(
+        ("vendor_status", "is_active", "expected_actions"),
+        [
+            (
+                "pending_review",
+                True,
+                {
+                    "approve_vendor": True,
+                    "reject_vendor": True,
+                    "suspend_vendor": False,
+                    "reinstate_vendor": False,
+                    "ban_user": True,
+                    "reinstate_user": False,
+                },
+            ),
+            (
+                "approved",
+                True,
+                {
+                    "approve_vendor": False,
+                    "reject_vendor": False,
+                    "suspend_vendor": True,
+                    "reinstate_vendor": False,
+                    "ban_user": True,
+                    "reinstate_user": False,
+                },
+            ),
+            (
+                "suspended",
+                False,
+                {
+                    "approve_vendor": False,
+                    "reject_vendor": False,
+                    "suspend_vendor": False,
+                    "reinstate_vendor": True,
+                    "ban_user": False,
+                    "reinstate_user": True,
+                },
+            ),
+        ],
+    )
+    def test_admin_api_vendor_detail_available_actions_match_status(
+        self,
+        vendor_status,
+        is_active,
+        expected_actions,
+    ):
+        admin_user = User.objects.create_superuser(f"actions-admin-{vendor_status}@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(
+            email=f"actions-vendor-{vendor_status}@t.com",
+            password="p",
+            role="vendor",
+            is_active=is_active,
+        )
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name=f"{vendor_status} actions",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email=f"{vendor_status}-actions@example.com",
+            contact_phone="1",
+            status=vendor_status,
+        )
+
+        response = api_client.get(reverse("admin-vendor-detail", args=[vendor.id]))
+
+        assert response.status_code == 200
+        assert response.data["data"]["available_actions"] == expected_actions
 
     def test_admin_api_suspend_and_reinstate_vendor_updates_marketplace(self, admin_client, monkeypatch):
         deleted = []
