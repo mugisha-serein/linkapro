@@ -229,6 +229,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "tasks.marketplace_sync.retry_due_marketplace_projection_outbox_events_task",
         "schedule": crontab(minute="*/5"),  # Every 5 minutes
     },
+    "reconcile-marketplace-projection": {
+        "task": "tasks.marketplace_sync.reconcile_marketplace_projection_task",
+        "schedule": crontab(hour=3, minute=0),  # Daily
+    },
 }
 
 # Logging

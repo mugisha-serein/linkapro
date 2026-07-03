@@ -59,6 +59,27 @@ def delete_vendor_from_marketplace(vendor_id: UUID | str) -> dict:
     return response.json()
 
 
+def list_marketplace_projection_vendor_ids() -> set[str]:
+    config = _get_marketplace_config()
+    if config is None:
+        return set()
+
+    response = _send_signed_request(
+        method="GET",
+        url=f"{config['base_url']}/internal/listings",
+        path="/internal/listings",
+        payload={},
+        shared_secret=config["shared_secret"],
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return {
+        str(item["vendor_id"])
+        for item in payload.get("results", [])
+        if item.get("vendor_id")
+    }
+
+
 def sync_or_delete_vendor_projection(vendor: VendorProfile) -> dict:
     if _is_vendor_listable(vendor):
         return sync_vendor_to_marketplace(vendor)
@@ -74,6 +95,7 @@ def sync_vendor_payload_to_marketplace(
     service_area: str,
     cover_image_url: str | None = None,
     approval_status: str = "approved",
+    is_verified: bool = True,
     starting_price: str | None = None,
     min_package_price: str | None = None,
     max_package_price: str | None = None,
@@ -92,6 +114,7 @@ def sync_vendor_payload_to_marketplace(
         "cover_image_url": cover_image_url,
         "approval_status": approval_status,
         "is_approved": approval_status == VendorProfile.Status.APPROVED,
+        "is_verified": is_verified,
         "starting_price": starting_price,
         "min_package_price": min_package_price,
         "max_package_price": max_package_price,

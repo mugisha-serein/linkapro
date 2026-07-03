@@ -259,6 +259,7 @@ async def test_marketplace_health_reports_listing_counts(session: AsyncSession):
                 description="Visible listing",
                 service_area="Kigali",
                 approval_status="approved",
+                is_verified=True,
             ),
             VendorListingModel(
                 vendor_id=uuid.uuid4(),
@@ -350,6 +351,7 @@ async def test_search_filters_approved_only_and_partial_location(session: AsyncS
                 description="Visible listing",
                 service_area="Kigali, Rwanda",
                 approval_status="approved",
+                is_verified=True,
             ),
             VendorListingModel(
                 vendor_id=uuid.uuid4(),
@@ -366,6 +368,7 @@ async def test_search_filters_approved_only_and_partial_location(session: AsyncS
                 description="Other city listing",
                 service_area="Musanze, Rwanda",
                 approval_status="approved",
+                is_verified=True,
             ),
         ]
     )
@@ -394,6 +397,7 @@ async def test_redis_unavailable_does_not_make_search_fail(session: AsyncSession
             description="Visible listing",
             service_area="Kigali",
             approval_status="approved",
+            is_verified=True,
         )
     )
     await session.commit()
@@ -484,6 +488,8 @@ async def test_internal_upsert_is_idempotent_and_non_approved_payload_deletes(se
                     "description": "Visible listing",
                     "service_area": "Kigali",
                     "approval_status": "approved",
+                    "is_approved": True,
+                    "is_verified": True,
                 },
             )
             second = await client.post(
@@ -496,6 +502,8 @@ async def test_internal_upsert_is_idempotent_and_non_approved_payload_deletes(se
                     "description": "Updated listing",
                     "service_area": "Kigali, Rwanda",
                     "approval_status": "approved",
+                    "is_approved": True,
+                    "is_verified": True,
                 },
             )
     finally:
