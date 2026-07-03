@@ -171,6 +171,8 @@ def _serialize_vendor(vendor: VendorProfile) -> dict:
         "contact_email": vendor.contact_email,
         "contact_phone": vendor.contact_phone,
         "website": vendor.website,
+        "profile_image_url": vendor.profile_image_url,
+        "cover_image_url": vendor.cover_image_url,
         "status": vendor.status,
         "submitted_at": vendor.submitted_at.isoformat() if vendor.submitted_at else None,
         "approved_at": vendor.approved_at.isoformat() if vendor.approved_at else None,

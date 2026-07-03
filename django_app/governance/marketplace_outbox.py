@@ -176,6 +176,15 @@ def _is_vendor_listable(vendor: VendorProfile) -> bool:
     return vendor.status == VendorProfile.Status.APPROVED and vendor.is_profile_complete
 
 
+def _safe_public_cover_image_url(vendor: VendorProfile) -> str | None:
+    url = (vendor.cover_image_url or "").strip()
+    if not url or not url.startswith("https://"):
+        return None
+    if url.startswith("/media/") or "vendor_portfolio_uploads" in url:
+        return None
+    return url
+
+
 def _vendor_payload(vendor: VendorProfile, *, reason: str | None = None) -> dict:
     pricing = _approved_package_pricing(vendor)
     return {
@@ -185,7 +194,7 @@ def _vendor_payload(vendor: VendorProfile, *, reason: str | None = None) -> dict
         "custom_category": vendor.custom_category if vendor.category == VendorProfile.Category.OTHER else None,
         "description": vendor.description,
         "service_area": vendor.service_area,
-        "cover_image_url": None,
+        "cover_image_url": _safe_public_cover_image_url(vendor),
         "approval_status": VendorProfile.Status.APPROVED,
         "is_approved": True,
         "is_verified": True,

@@ -15,6 +15,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from django_app.identity.models import User
+from django_app.governance.models import MarketplaceProjectionOutbox
 from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VerificationDocument, VendorProfile as DjangoProfile
 from tasks.document_tasks import process_vendor_verification_document_task
 from tasks.image_tasks import process_vendor_portfolio_media_task, upload_vendor_portfolio_image_task
@@ -414,6 +415,156 @@ class TestVendorProfileViews:
         assert response.status_code == 400
         profile.refresh_from_db()
         assert profile.status == "suspended"
+
+
+class TestVendorBrandingMediaViews:
+    @pytest.fixture(autouse=True)
+    def setup(self, monkeypatch):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="branding-vendor@example.com",
+            password="pass123",
+            first_name="Branding",
+            last_name="Vendor",
+            role="vendor",
+        )
+        self.client.force_authenticate(user=self.user)
+        self.profile = DjangoProfile.objects.create(
+            user=self.user,
+            business_name="Brand Studio",
+            category="photography",
+            description="A complete vendor branding description.",
+            service_area="Kigali",
+            contact_email="brand@example.com",
+            contact_phone="123",
+            status="approved",
+        )
+        monkeypatch.setattr(
+            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.upload_image",
+            lambda self, file, folder="vendor_portfolio", fallback_to_storage=False: {
+                "public_id": f"{folder}/uploaded",
+                "secure_url": f"https://res.cloudinary.com/demo/{folder}/uploaded.jpg",
+            },
+        )
+        monkeypatch.setattr(
+            "infrastructure.adapters.cloudinary_adapter.CloudinaryAdapter.delete_image",
+            lambda self, public_id: True,
+        )
+        monkeypatch.setattr(
+            "tasks.marketplace_sync.deliver_marketplace_projection_outbox_event_task.delay",
+            lambda event_id: None,
+        )
+
+    def test_vendor_profile_model_has_branding_media_fields(self):
+        field_names = {field.name for field in DjangoProfile._meta.fields}
+
+        assert "profile_image_url" in field_names
+        assert "profile_image_public_id" in field_names
+        assert "cover_image_url" in field_names
+        assert "cover_image_public_id" in field_names
+
+    def test_vendor_profile_response_includes_branding_media_urls(self):
+        self.profile.profile_image_url = "https://cdn.example.com/profile.jpg"
+        self.profile.cover_image_url = "https://cdn.example.com/cover.jpg"
+        self.profile.save(update_fields=["profile_image_url", "cover_image_url", "updated_at"])
+
+        response = self.client.get(reverse("vendor-profile"))
+
+        assert response.status_code == 200
+        assert response.data["profile_image_url"] == "https://cdn.example.com/profile.jpg"
+        assert response.data["cover_image_url"] == "https://cdn.example.com/cover.jpg"
+
+    def test_profile_image_upload_saves_branding_fields(self):
+        image = SimpleUploadedFile("logo.jpg", valid_image_bytes(size=(300, 300)), content_type="image/jpeg")
+
+        response = self.client.post(reverse("vendor-profile-image"), {"image": image}, format="multipart")
+
+        assert response.status_code == 200
+        self.profile.refresh_from_db()
+        assert self.profile.profile_image_public_id == "vendor_profile_images/uploaded"
+        assert self.profile.profile_image_url == "https://res.cloudinary.com/demo/vendor_profile_images/uploaded.jpg"
+        assert response.data["profile_image_url"] == self.profile.profile_image_url
+
+    def test_cover_image_upload_saves_branding_fields_and_enqueues_projection(self, django_capture_on_commit_callbacks):
+        image = SimpleUploadedFile("cover.jpg", valid_image_bytes(size=(1200, 500)), content_type="image/jpeg")
+
+        with django_capture_on_commit_callbacks(execute=True):
+            response = self.client.post(reverse("vendor-cover-image"), {"image": image}, format="multipart")
+
+        assert response.status_code == 200
+        self.profile.refresh_from_db()
+        assert self.profile.cover_image_public_id == "vendor_cover_images/uploaded"
+        assert self.profile.cover_image_url == "https://res.cloudinary.com/demo/vendor_cover_images/uploaded.jpg"
+        assert response.data["cover_image_url"] == self.profile.cover_image_url
+        assert MarketplaceProjectionOutbox.objects.filter(vendor_id=self.profile.id).count() == 1
+
+    def test_profile_image_rejects_invalid_file_type(self):
+        image = SimpleUploadedFile("logo.txt", b"not-image", content_type="text/plain")
+
+        response = self.client.post(reverse("vendor-profile-image"), {"image": image}, format="multipart")
+
+        assert response.status_code == 400
+        assert response.data["code"] == "vendor_profile_image_invalid"
+        assert "Only JPEG" in response.data["field_errors"]["image"][0]
+
+    def test_cover_image_rejects_too_small_image(self):
+        image = SimpleUploadedFile("cover.jpg", valid_image_bytes(size=(800, 400)), content_type="image/jpeg")
+
+        response = self.client.post(reverse("vendor-cover-image"), {"image": image}, format="multipart")
+
+        assert response.status_code == 400
+        assert response.data["code"] == "vendor_cover_image_invalid"
+        assert response.data["field_errors"]["image"][0] == "Image is too small. Minimum size is 1200x500px."
+
+    def test_missing_vendor_profile_cannot_upload_branding_media(self):
+        self.profile.delete()
+        image = SimpleUploadedFile("logo.jpg", valid_image_bytes(size=(300, 300)), content_type="image/jpeg")
+
+        response = self.client.post(reverse("vendor-profile-image"), {"image": image}, format="multipart")
+
+        assert response.status_code == 404
+        assert response.data["code"] == "vendor_profile_incomplete"
+
+    def test_vendor_branding_delete_does_not_affect_another_vendor(self):
+        other = DjangoProfile.objects.create(
+            user=User.objects.create_user(email="other-vendor@example.com", password="pass123", role="vendor"),
+            business_name="Other Studio",
+            category="photography",
+            description="A complete vendor branding description.",
+            service_area="Kigali",
+            contact_email="other@example.com",
+            contact_phone="123",
+            profile_image_url="https://cdn.example.com/other-profile.jpg",
+            profile_image_public_id="vendor_profile_images/other",
+        )
+        self.profile.profile_image_url = "https://cdn.example.com/profile.jpg"
+        self.profile.profile_image_public_id = "vendor_profile_images/current"
+        self.profile.save(update_fields=["profile_image_url", "profile_image_public_id", "updated_at"])
+
+        response = self.client.delete(reverse("vendor-profile-image"))
+
+        assert response.status_code == 200
+        self.profile.refresh_from_db()
+        other.refresh_from_db()
+        assert self.profile.profile_image_url is None
+        assert self.profile.profile_image_public_id is None
+        assert other.profile_image_url == "https://cdn.example.com/other-profile.jpg"
+        assert other.profile_image_public_id == "vendor_profile_images/other"
+
+    def test_deleting_cover_image_clears_fields(self, django_capture_on_commit_callbacks):
+        self.profile.cover_image_url = "https://cdn.example.com/cover.jpg"
+        self.profile.cover_image_public_id = "vendor_cover_images/current"
+        self.profile.save(update_fields=["cover_image_url", "cover_image_public_id", "updated_at"])
+
+        with django_capture_on_commit_callbacks(execute=True):
+            response = self.client.delete(reverse("vendor-cover-image"))
+
+        assert response.status_code == 200
+        self.profile.refresh_from_db()
+        assert self.profile.cover_image_url is None
+        assert self.profile.cover_image_public_id is None
+        assert response.data["cover_image_url"] is None
+        assert MarketplaceProjectionOutbox.objects.filter(vendor_id=self.profile.id).count() == 1
 
 
 class TestPortfolioImageViews:

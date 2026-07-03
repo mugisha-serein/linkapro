@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Max, Prefetch
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -65,12 +66,16 @@ VENDOR_SUSPENDED_DETAIL = "Your vendor account is suspended. Please contact supp
 ALLOWED_PORTFOLIO_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 ALLOWED_PORTFOLIO_VIDEO_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
 ALLOWED_PORTFOLIO_MEDIA_TYPES = ALLOWED_PORTFOLIO_IMAGE_TYPES | ALLOWED_PORTFOLIO_VIDEO_TYPES
+ALLOWED_VENDOR_BRANDING_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 VIDEO_PORTFOLIO_MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 PDF_MIME_TYPE = "application/pdf"
 DOCUMENT_RECEIVED_MESSAGE = "Document received. Verification will continue automatically."
 logger = logging.getLogger(__name__)
 PORTFOLIO_MEDIA_INVALID_CODE = "portfolio_media_invalid"
 PORTFOLIO_MEDIA_INVALID_MESSAGE = "Upload a valid portfolio image or highlight video."
+VENDOR_PROFILE_IMAGE_INVALID_CODE = "vendor_profile_image_invalid"
+VENDOR_COVER_IMAGE_INVALID_CODE = "vendor_cover_image_invalid"
+VENDOR_PROFILE_MEDIA_UPLOAD_FAILED_CODE = "vendor_profile_media_upload_failed"
 
 
 def _get_public_marketplace_stats(vendor_id) -> dict:
@@ -164,6 +169,8 @@ def _serialize_profile(dto: VendorProfileDTO, *, message: str | None = None) -> 
         "contact_email": dto.contact_email,
         "contact_phone": dto.contact_phone,
         "website": dto.website,
+        "profile_image_url": dto.profile_image_url,
+        "cover_image_url": dto.cover_image_url,
         "status": dto.status,
         "submitted_at": dto.submitted_at.isoformat() if dto.submitted_at else None,
         "approved_at": dto.approved_at.isoformat() if dto.approved_at else None,
@@ -244,6 +251,40 @@ def _safe_portfolio_display_url(*urls: str | None) -> str | None:
 
 def _is_private_portfolio_upload_url(url: str) -> bool:
     return "vendor_portfolio_uploads" in url or url.startswith("/media/")
+
+
+def _safe_public_branding_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    value = str(url).strip()
+    if not value or not value.startswith("https://"):
+        return None
+    if value.startswith("/media/") or "vendor_portfolio_uploads" in value:
+        return None
+    return value
+
+
+def _infer_image_content_type(extension: str, header: bytes) -> str | None:
+    if extension in {".jpg", ".jpeg"} and header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if extension == ".png" and header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if extension == ".webp" and header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _branding_media_error(kind: str, message: str, *, status_code=status.HTTP_400_BAD_REQUEST) -> Response:
+    is_cover = kind == "cover"
+    return Response(
+        {
+            "code": VENDOR_COVER_IMAGE_INVALID_CODE if is_cover else VENDOR_PROFILE_IMAGE_INVALID_CODE,
+            "message": "Upload a valid vendor cover image." if is_cover else "Upload a valid vendor profile image.",
+            "detail": message,
+            "field_errors": {"image": [message]},
+        },
+        status=status_code,
+    )
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -335,6 +376,183 @@ class VendorProfileView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
+class VendorBrandingMediaView(APIView):
+    permission_classes = [IsAuthenticated, IsVendor]
+    parser_classes = [MultiPartParser, FormParser]
+
+    media_kind = "profile"
+    folder = "vendor_profile_images"
+    min_width = 300
+    min_height = 300
+    max_upload_size = 2 * 1024 * 1024
+
+    def post(self, request):
+        profile, error_response = _get_current_vendor_profile(request)
+        if error_response:
+            return error_response
+
+        uploaded_media = request.FILES.get("image") or request.FILES.get("media")
+        if not uploaded_media:
+            return _branding_media_error(self.media_kind, "No image file provided.")
+
+        validation_error = self._validate_branding_image(uploaded_media)
+        if validation_error:
+            return validation_error
+
+        if hasattr(uploaded_media, "seek"):
+            uploaded_media.seek(0)
+        try:
+            upload_result = CloudinaryAdapter().upload_image(
+                uploaded_media,
+                folder=self.folder,
+                fallback_to_storage=False,
+            )
+        except Exception:
+            logger.exception(
+                "Vendor branding media upload failed.",
+                extra={"vendor_id": str(profile.id), "media_kind": self.media_kind},
+            )
+            return Response(
+                {
+                    "code": VENDOR_PROFILE_MEDIA_UPLOAD_FAILED_CODE,
+                    "message": "Vendor profile media upload failed.",
+                    "detail": "Upload failed. Please try again.",
+                    "field_errors": {"image": ["Upload failed. Please try again."]},
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        secure_url = _safe_public_branding_url(upload_result.get("secure_url"))
+        if not secure_url:
+            return Response(
+                {
+                    "code": VENDOR_PROFILE_MEDIA_UPLOAD_FAILED_CODE,
+                    "message": "Vendor profile media upload failed.",
+                    "detail": "Upload did not return a safe public image URL.",
+                    "field_errors": {"image": ["Upload did not return a safe public image URL."]},
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        vendor = VendorProfileModel.objects.get(id=profile.id, user_id=request.user.id)
+        if self.media_kind == "cover":
+            vendor.cover_image_url = secure_url
+            vendor.cover_image_public_id = upload_result.get("public_id")
+            update_fields = ["cover_image_url", "cover_image_public_id", "updated_at"]
+        else:
+            vendor.profile_image_url = secure_url
+            vendor.profile_image_public_id = upload_result.get("public_id")
+            update_fields = ["profile_image_url", "profile_image_public_id", "updated_at"]
+        vendor.save(update_fields=update_fields)
+        if self.media_kind == "cover":
+            self._enqueue_projection_update(vendor)
+
+        updated_profile = get_query_handlers().get_vendor(vendor.id)
+        return Response(_serialize_profile(updated_profile, message="Vendor profile media saved."))
+
+    def delete(self, request):
+        profile, error_response = _get_current_vendor_profile(request)
+        if error_response:
+            return error_response
+
+        vendor = VendorProfileModel.objects.get(id=profile.id, user_id=request.user.id)
+        public_id = vendor.cover_image_public_id if self.media_kind == "cover" else vendor.profile_image_public_id
+        self._delete_cloudinary_image(public_id)
+        if self.media_kind == "cover":
+            vendor.cover_image_url = None
+            vendor.cover_image_public_id = None
+            update_fields = ["cover_image_url", "cover_image_public_id", "updated_at"]
+        else:
+            vendor.profile_image_url = None
+            vendor.profile_image_public_id = None
+            update_fields = ["profile_image_url", "profile_image_public_id", "updated_at"]
+        vendor.save(update_fields=update_fields)
+        if self.media_kind == "cover":
+            self._enqueue_projection_update(vendor)
+
+        updated_profile = get_query_handlers().get_vendor(vendor.id)
+        return Response(_serialize_profile(updated_profile, message="Vendor profile media removed."))
+
+    def _validate_branding_image(self, uploaded_media) -> Response | None:
+        content_type = (getattr(uploaded_media, "content_type", "") or "").lower()
+        filename = uploaded_media.name or ""
+        extension = Path(filename).suffix.lower()
+        if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+            return _branding_media_error(self.media_kind, "Only JPEG, PNG, or WEBP image files are allowed.")
+        if uploaded_media.size > self.max_upload_size:
+            size_mb = self.max_upload_size // (1024 * 1024)
+            return _branding_media_error(self.media_kind, f"Image file is too large. Maximum size is {size_mb}MB.")
+
+        current_position = uploaded_media.tell() if hasattr(uploaded_media, "tell") else None
+        try:
+            uploaded_media.seek(0)
+            header = uploaded_media.read(128)
+        finally:
+            try:
+                uploaded_media.seek(current_position or 0)
+            except Exception:
+                pass
+        inferred_type = _infer_image_content_type(extension, header)
+        if content_type not in ALLOWED_VENDOR_BRANDING_IMAGE_TYPES or inferred_type != content_type:
+            return _branding_media_error(self.media_kind, "Image type does not match the uploaded file.")
+
+        dimensions = self._image_dimensions(uploaded_media)
+        if dimensions is None:
+            return _branding_media_error(self.media_kind, "This image could not be read. Upload a valid image.")
+        width, height = dimensions
+        if width < self.min_width or height < self.min_height:
+            return _branding_media_error(
+                self.media_kind,
+                f"Image is too small. Minimum size is {self.min_width}x{self.min_height}px.",
+            )
+        if self.media_kind == "cover" and width <= height:
+            return _branding_media_error(self.media_kind, "Cover image must use a landscape orientation.")
+        return None
+
+    def _image_dimensions(self, uploaded_media) -> tuple[int, int] | None:
+        current_position = uploaded_media.tell() if hasattr(uploaded_media, "tell") else None
+        try:
+            from PIL import Image
+
+            uploaded_media.seek(0)
+            with Image.open(uploaded_media) as image:
+                image.verify()
+            uploaded_media.seek(0)
+            with Image.open(uploaded_media) as image:
+                return image.size
+        except Exception:
+            return None
+        finally:
+            try:
+                uploaded_media.seek(current_position or 0)
+            except Exception:
+                pass
+
+    def _delete_cloudinary_image(self, public_id: str | None) -> None:
+        if not public_id:
+            return
+        try:
+            CloudinaryAdapter().delete_image(public_id)
+        except Exception:
+            logger.warning("Vendor branding Cloudinary delete failed.", extra={"public_id": public_id}, exc_info=True)
+
+    def _enqueue_projection_update(self, vendor: VendorProfileModel) -> None:
+        def enqueue():
+            from django_app.governance.marketplace_outbox import enqueue_vendor_projection
+
+            enqueue_vendor_projection(vendor, reason="vendor_cover_image_updated")
+
+        transaction.on_commit(enqueue)
+
+
+class VendorCoverImageView(VendorBrandingMediaView):
+    media_kind = "cover"
+    folder = "vendor_cover_images"
+    min_width = 1200
+    min_height = 500
+    max_upload_size = 4 * 1024 * 1024
 
 
 class VendorProfileStatusView(APIView):

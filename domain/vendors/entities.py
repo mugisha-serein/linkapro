@@ -40,6 +40,10 @@ class VendorProfile:
     contact_phone: str
     custom_category: Optional[str] = None
     website: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    profile_image_public_id: Optional[str] = None
+    cover_image_url: Optional[str] = None
+    cover_image_public_id: Optional[str] = None
     status: VendorStatus = VendorStatus.DRAFT
     submitted_at: Optional[datetime] = None
     approved_at: Optional[datetime] = None

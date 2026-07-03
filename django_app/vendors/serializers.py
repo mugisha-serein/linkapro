@@ -26,6 +26,19 @@ def public_portfolio_display_url(obj: PortfolioImage) -> str | None:
     return None
 
 
+def safe_public_branding_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    value = str(url).strip()
+    if not value or not value.startswith("https://"):
+        return None
+    if value.startswith(PRIVATE_PORTFOLIO_URL_PREFIXES):
+        return None
+    if any(marker in value for marker in PRIVATE_PORTFOLIO_URL_MARKERS):
+        return None
+    return value
+
+
 class VendorProfileSerializer(serializers.Serializer):
     business_name = serializers.CharField(max_length=200)
     category = serializers.ChoiceField(choices=[
@@ -102,6 +115,7 @@ class VendorPublicReviewSummarySerializer(serializers.Serializer):
 class VendorPublicProfileSerializer(serializers.ModelSerializer):
     category_label = serializers.CharField(source="get_category_display")
     custom_category = serializers.SerializerMethodField()
+    profile_image_url = serializers.SerializerMethodField()
     cover_image_url = serializers.SerializerMethodField()
     is_verified = serializers.SerializerMethodField()
     average_rating = serializers.SerializerMethodField()
@@ -114,14 +128,20 @@ class VendorPublicProfileSerializer(serializers.ModelSerializer):
         model = VendorProfile
         fields = (
             "id", "business_name", "category", "category_label", "custom_category",
-            "description", "service_area", "website", "cover_image_url", "is_verified",
+            "description", "service_area", "website", "profile_image_url", "cover_image_url", "is_verified",
             "average_rating", "total_reviews", "portfolio", "packages", "reviews_summary",
         )
 
     def get_custom_category(self, obj):
         return obj.custom_category if obj.category == VendorProfile.Category.OTHER else None
 
+    def get_profile_image_url(self, obj):
+        return safe_public_branding_url(obj.profile_image_url)
+
     def get_cover_image_url(self, obj):
+        cover_image_url = safe_public_branding_url(obj.cover_image_url)
+        if cover_image_url:
+            return cover_image_url
         for item in getattr(obj, "public_portfolio", []):
             display_url = public_portfolio_display_url(item)
             if display_url:

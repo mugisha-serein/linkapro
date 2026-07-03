@@ -17,6 +17,8 @@ from .views import (
     VendorAnalyticsView,
     VendorActivityView,
     AdminPendingVendorListView,
+    VendorBrandingMediaView,
+    VendorCoverImageView,
     PublicVendorProfileView,
 )
 from .status_views import (
@@ -30,6 +32,8 @@ urlpatterns = [
     path("profile/", VendorProfileView.as_view(), name="vendor-profile"),
     path("profile/status/", VendorProfileStatusView.as_view(), name="vendor-profile-status"),
     path("profile/submit/", VendorSubmitForReviewView.as_view(), name="vendor-submit"),
+    path("profile/media/profile-image/", VendorBrandingMediaView.as_view(), name="vendor-profile-image"),
+    path("profile/media/cover-image/", VendorCoverImageView.as_view(), name="vendor-cover-image"),
     path("portfolio/", PortfolioImageView.as_view(), name="portfolio-list"),
     path("portfolio/<uuid:image_id>/", PortfolioImageView.as_view(), name="portfolio-detail"),
     path("portfolio/reorder/", PortfolioImageReorderView.as_view(), name="portfolio-reorder"),
