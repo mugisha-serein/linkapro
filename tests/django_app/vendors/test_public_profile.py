@@ -70,6 +70,7 @@ def test_approved_public_profile_only_exposes_public_media_and_packages(client):
     profile = response.data["data"]
     assert profile["category_label"] == "Other"
     assert profile["custom_category"] == "Wedding stationery"
+    assert profile["profile_image_url"] is None
     assert profile["cover_image_url"] == "https://cdn.example.com/public.jpg"
     assert [item["id"] for item in profile["portfolio"]] == [str(public_image.id)]
     assert profile["portfolio"][0]["display_url"] == "https://cdn.example.com/public.jpg"
@@ -141,6 +142,31 @@ def test_public_profile_filters_private_portfolio_urls_even_when_media_is_approv
     assert "private-local.jpg" not in serialized
     assert "private-temp.jpg" not in serialized
     assert "vendor_portfolio_uploads" not in serialized
+
+
+def test_public_profile_prefers_dedicated_branding_images(client):
+    vendor = create_vendor_profile(
+        status="approved",
+        profile_image_url="https://cdn.example.com/profile-logo.jpg",
+        cover_image_url="https://cdn.example.com/dedicated-cover.jpg",
+    )
+    create_portfolio_image(
+        vendor=vendor,
+        secure_url="https://cdn.example.com/fallback.jpg",
+        cloudinary_secure_url="https://cdn.example.com/public-fallback.jpg",
+        upload_status=PortfolioImage.UploadStatus.UPLOADED,
+        quality_status=PortfolioImage.QualityStatus.PASSED,
+        visibility_status=PortfolioImage.VisibilityStatus.APPROVED,
+        is_active=True,
+    )
+
+    response = client.get(reverse("public-vendor-profile", args=[vendor.id]))
+
+    assert response.status_code == 200
+    profile = response.data["data"]
+    assert profile["profile_image_url"] == "https://cdn.example.com/profile-logo.jpg"
+    assert profile["cover_image_url"] == "https://cdn.example.com/dedicated-cover.jpg"
+    assert profile["portfolio"][0]["display_url"] == "https://cdn.example.com/public-fallback.jpg"
 
 
 def test_public_inquiry_requires_approved_vendor(client):

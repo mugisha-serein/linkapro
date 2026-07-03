@@ -16,6 +16,8 @@ class VendorProfileDTO:
     contact_phone: str
     custom_category: Optional[str]
     website: Optional[str]
+    profile_image_url: Optional[str]
+    cover_image_url: Optional[str]
     status: str
     submitted_at: Optional[datetime]
     approved_at: Optional[datetime]

@@ -283,6 +283,7 @@ class VendorCommandHandlers:
             id=p.id, user_id=p.user_id, business_name=p.business_name, category=p.category.value,
             description=p.description, service_area=p.service_area, contact_email=p.contact_email,
             contact_phone=p.contact_phone, custom_category=p.custom_category, website=p.website, status=p.status.value,
+            profile_image_url=p.profile_image_url, cover_image_url=p.cover_image_url,
             submitted_at=p.submitted_at, approved_at=p.approved_at, rejected_at=p.rejected_at,
             rejection_reason=p.rejection_reason
         )

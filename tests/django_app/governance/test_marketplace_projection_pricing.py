@@ -100,3 +100,32 @@ def test_projection_pricing_is_empty_when_vendor_has_no_approved_active_packages
     assert event.payload["min_package_price"] is None
     assert event.payload["max_package_price"] is None
     assert event.payload["currency"] is None
+
+
+def test_projection_payload_includes_safe_cover_image_url(monkeypatch):
+    monkeypatch.setattr(
+        "tasks.marketplace_sync.deliver_marketplace_projection_outbox_event_task.delay",
+        lambda event_id: None,
+    )
+    vendor = create_approved_vendor()
+    vendor.cover_image_url = "https://cdn.example.com/vendor-cover.jpg"
+    vendor.save(update_fields=["cover_image_url", "updated_at"])
+
+    event = enqueue_vendor_projection(vendor, reason="cover_projection")
+
+    assert event.event_type == MarketplaceProjectionOutbox.EventType.UPSERT_VENDOR
+    assert event.payload["cover_image_url"] == "https://cdn.example.com/vendor-cover.jpg"
+
+
+def test_projection_payload_omits_private_cover_image_url(monkeypatch):
+    monkeypatch.setattr(
+        "tasks.marketplace_sync.deliver_marketplace_projection_outbox_event_task.delay",
+        lambda event_id: None,
+    )
+    vendor = create_approved_vendor()
+    vendor.cover_image_url = "/media/vendor-cover.jpg"
+    vendor.save(update_fields=["cover_image_url", "updated_at"])
+
+    event = enqueue_vendor_projection(vendor, reason="cover_projection")
+
+    assert event.payload["cover_image_url"] is None

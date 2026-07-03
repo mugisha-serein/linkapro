@@ -57,6 +57,10 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         obj.contact_phone = domain.contact_phone
         obj.custom_category = domain.custom_category
         obj.website = domain.website
+        obj.profile_image_url = domain.profile_image_url
+        obj.profile_image_public_id = domain.profile_image_public_id
+        obj.cover_image_url = domain.cover_image_url
+        obj.cover_image_public_id = domain.cover_image_public_id
         obj.status = domain.status.value
         obj.submitted_at = domain.submitted_at
         obj.approved_at = domain.approved_at
@@ -106,6 +110,10 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
             contact_phone=model.contact_phone,
             custom_category=model.custom_category,
             website=model.website,
+            profile_image_url=model.profile_image_url,
+            profile_image_public_id=model.profile_image_public_id,
+            cover_image_url=model.cover_image_url,
+            cover_image_public_id=model.cover_image_public_id,
             status=VendorStatus(model.status),
             submitted_at=model.submitted_at,
             approved_at=model.approved_at,
