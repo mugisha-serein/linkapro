@@ -13,10 +13,22 @@ from django_app.identity.models import PasswordResetEmailDelivery, User
 from django_app.events.models import Event
 from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile, VerificationDocument
 from domain.vendors.package_edit_policy import effective_next_edit_allowed_at
-from .marketplace_outbox import enqueue_vendor_projection, enqueue_vendor_projection_by_id
-from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile
 from .marketplace_outbox import enqueue_vendor_delete_projection, enqueue_vendor_projection, enqueue_vendor_projection_by_id
 from .models import AuditLog, ContentFlag
+from .policy_reasons import (
+    APPROVE,
+    BAN,
+    HARD_DELETE,
+    PORTFOLIO_MEDIA,
+    REINSTATE,
+    REJECT,
+    SERVICE_PACKAGE,
+    SUSPEND,
+    USER_ACCOUNT,
+    VENDOR_PROFILE,
+    generate_governance_reason,
+    policy_reason_audit_details,
+)
 from .serializers import FlagContentSerializer
 from .services import get_command_handlers, get_query_handlers
 from application.governance.commands import FlagContentCommand
@@ -188,13 +200,15 @@ def _serialize_vendor(vendor: VendorProfile) -> dict:
     }
 
 
-def _admin_action_success(payload: dict, *, code: str, message: str) -> dict:
+def _admin_action_success(payload: dict, *, code: str, message: str, reason: dict | None = None) -> dict:
     response_data = dict(payload)
     data = dict(payload)
     response_data.setdefault("success", True)
     response_data.setdefault("code", code)
     response_data.setdefault("message", message)
     response_data.setdefault("data", data)
+    if reason:
+        response_data.setdefault("reason", reason)
     return response_data
 
 
@@ -209,6 +223,13 @@ def _admin_action_error(code: str, message: str, response_status: int) -> Respon
         },
         status=response_status,
     )
+
+
+def _admin_reason_from_request(request) -> str | None:
+    data = getattr(request, "data", {}) or {}
+    if not isinstance(data, dict):
+        return None
+    return data.get("reason")
 
 
 def _serialize_admin_vendor_detail(vendor: VendorProfile) -> dict:
@@ -550,10 +571,24 @@ class AdminUserBanView(APIView):
         except User.DoesNotExist:
             return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        reason = generate_governance_reason(
+            target_type=USER_ACCOUNT,
+            action=BAN,
+            target=user,
+            admin_reason=_admin_reason_from_request(request),
+        )
         user.is_active = False
         user.save(update_fields=["is_active", "updated_at"])
-        _audit(request.user, AuditLog.ActionType.BAN_USER, "user", user.id)
-        return Response(_serialize_user(user))
+        payload = _serialize_user(user)
+        _audit(request.user, AuditLog.ActionType.BAN_USER, "user", user.id, policy_reason_audit_details(reason))
+        return Response(
+            _admin_action_success(
+                payload,
+                code="admin_user_ban_completed",
+                message="User account disabled successfully.",
+                reason=reason,
+            )
+        )
 
 
 class AdminUserReinstateView(APIView):
@@ -565,10 +600,24 @@ class AdminUserReinstateView(APIView):
         except User.DoesNotExist:
             return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        reason = generate_governance_reason(
+            target_type=USER_ACCOUNT,
+            action=REINSTATE,
+            target=user,
+            admin_reason=_admin_reason_from_request(request),
+        )
         user.is_active = True
         user.save(update_fields=["is_active", "updated_at"])
-        _audit(request.user, AuditLog.ActionType.REINSTATE_USER, "user", user.id)
-        return Response(_serialize_user(user))
+        payload = _serialize_user(user)
+        _audit(request.user, AuditLog.ActionType.REINSTATE_USER, "user", user.id, policy_reason_audit_details(reason))
+        return Response(
+            _admin_action_success(
+                payload,
+                code="admin_user_reinstate_completed",
+                message="User account reinstated successfully.",
+                reason=reason,
+            )
+        )
 
 
 class AdminVendorApproveView(APIView):
@@ -594,12 +643,20 @@ class AdminVendorApproveView(APIView):
         vendor.rejection_reason = None
         vendor.save(update_fields=["status", "approved_at", "rejected_at", "rejection_reason", "updated_at"])
         _sync_approved_vendor(vendor)
-        _audit(request.user, AuditLog.ActionType.APPROVE_VENDOR, "vendor_profile", vendor.id)
+        reason = generate_governance_reason(target_type=VENDOR_PROFILE, action=APPROVE, target=vendor)
+        _audit(
+            request.user,
+            AuditLog.ActionType.APPROVE_VENDOR,
+            "vendor_profile",
+            vendor.id,
+            policy_reason_audit_details(reason),
+        )
         return Response(
             _admin_action_success(
                 _serialize_vendor(vendor),
                 code="vendor_approve_completed",
                 message="Vendor approved successfully.",
+                reason=reason,
             )
         )
 
@@ -608,7 +665,6 @@ class AdminVendorRejectView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def post(self, request, vendor_id):
-        reason = request.data.get("reason") or "Rejected by administrator."
         try:
             vendor = VendorProfile.objects.get(id=vendor_id)
         except VendorProfile.DoesNotExist:
@@ -622,17 +678,30 @@ class AdminVendorRejectView(APIView):
 
         from django.utils import timezone
 
+        reason = generate_governance_reason(
+            target_type=VENDOR_PROFILE,
+            action=REJECT,
+            target=vendor,
+            admin_reason=_admin_reason_from_request(request),
+        )
         vendor.status = VendorProfile.Status.REJECTED
         vendor.rejected_at = timezone.now()
-        vendor.rejection_reason = reason
+        vendor.rejection_reason = reason["reason"]
         vendor.save(update_fields=["status", "rejected_at", "rejection_reason", "updated_at"])
         _delete_vendor_listing(vendor)
-        _audit(request.user, AuditLog.ActionType.REJECT_VENDOR, "vendor_profile", vendor.id, {"reason": reason})
+        _audit(
+            request.user,
+            AuditLog.ActionType.REJECT_VENDOR,
+            "vendor_profile",
+            vendor.id,
+            policy_reason_audit_details(reason),
+        )
         return Response(
             _admin_action_success(
                 _serialize_vendor(vendor),
                 code="vendor_reject_completed",
                 message="Vendor rejected successfully.",
+                reason=reason,
             )
         )
 
@@ -652,15 +721,28 @@ class AdminVendorSuspendView(APIView):
                 status.HTTP_400_BAD_REQUEST,
             )
 
+        reason = generate_governance_reason(
+            target_type=VENDOR_PROFILE,
+            action=SUSPEND,
+            target=vendor,
+            admin_reason=_admin_reason_from_request(request),
+        )
         vendor.status = VendorProfile.Status.SUSPENDED
         vendor.save(update_fields=["status", "updated_at"])
         _delete_vendor_listing(vendor)
-        _audit(request.user, AuditLog.ActionType.SUSPEND_VENDOR, "vendor_profile", vendor.id)
+        _audit(
+            request.user,
+            AuditLog.ActionType.SUSPEND_VENDOR,
+            "vendor_profile",
+            vendor.id,
+            policy_reason_audit_details(reason),
+        )
         return Response(
             _admin_action_success(
                 _serialize_vendor(vendor),
                 code="vendor_suspend_completed",
                 message="Vendor suspended successfully.",
+                reason=reason,
             )
         )
 
@@ -682,16 +764,29 @@ class AdminVendorReinstateView(APIView):
 
         from django.utils import timezone
 
+        reason = generate_governance_reason(
+            target_type=VENDOR_PROFILE,
+            action=REINSTATE,
+            target=vendor,
+            admin_reason=_admin_reason_from_request(request),
+        )
         vendor.status = VendorProfile.Status.APPROVED
         vendor.approved_at = timezone.now()
         vendor.save(update_fields=["status", "approved_at", "updated_at"])
         _sync_approved_vendor(vendor)
-        _audit(request.user, AuditLog.ActionType.APPROVE_VENDOR, "vendor_profile", vendor.id, {"from": "suspended"})
+        _audit(
+            request.user,
+            AuditLog.ActionType.APPROVE_VENDOR,
+            "vendor_profile",
+            vendor.id,
+            policy_reason_audit_details(reason, {"from": "suspended"}),
+        )
         return Response(
             _admin_action_success(
                 _serialize_vendor(vendor),
                 code="vendor_reinstate_completed",
                 message="Vendor reinstated successfully.",
+                reason=reason,
             )
         )
 
@@ -722,27 +817,65 @@ class AdminVendorPackageApproveView(APIView):
         package.is_active = True
         package.save(update_fields=["approval_status", "rejection_reason", "is_active", "updated_at"])
         enqueue_vendor_projection(package.vendor, reason="package_approved")
-        _audit(request.user, AuditLog.ActionType.APPROVE_PACKAGE, "service_package", package.id)
-        return Response({"message": "Package approved.", "package": _serialize_package(package)})
+        reason = generate_governance_reason(target_type=SERVICE_PACKAGE, action=APPROVE, target=package)
+        _audit(
+            request.user,
+            AuditLog.ActionType.APPROVE_PACKAGE,
+            "service_package",
+            package.id,
+            policy_reason_audit_details(reason),
+        )
+        package_payload = _serialize_package(package)
+        return Response(
+            {
+                "success": True,
+                "code": "admin_package_approve_completed",
+                "message": "Package approved.",
+                "data": {"package": package_payload},
+                "package": package_payload,
+                "reason": reason,
+            }
+        )
 
 
 class AdminVendorPackageRejectView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def post(self, request, package_id):
-        reason = request.data.get("reason") or "Package rejected by administrator."
         try:
             package = ServicePackage.objects.select_related("vendor").get(id=package_id)
         except ServicePackage.DoesNotExist:
             return Response({"detail": "Package not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        reason = generate_governance_reason(
+            target_type=SERVICE_PACKAGE,
+            action=REJECT,
+            target=package,
+            admin_reason=_admin_reason_from_request(request),
+        )
         package.approval_status = ServicePackage.ApprovalStatus.REJECTED
-        package.rejection_reason = reason
+        package.rejection_reason = reason["reason"]
         package.is_active = False
         package.save(update_fields=["approval_status", "rejection_reason", "is_active", "updated_at"])
         enqueue_vendor_projection(package.vendor, reason="package_rejected")
-        _audit(request.user, AuditLog.ActionType.REJECT_PACKAGE, "service_package", package.id, {"reason": reason})
-        return Response({"message": "Package rejected.", "package": _serialize_package(package)})
+        _audit(
+            request.user,
+            AuditLog.ActionType.REJECT_PACKAGE,
+            "service_package",
+            package.id,
+            policy_reason_audit_details(reason),
+        )
+        package_payload = _serialize_package(package)
+        return Response(
+            {
+                "success": True,
+                "code": "admin_package_reject_completed",
+                "message": "Package rejected.",
+                "data": {"package": package_payload},
+                "package": package_payload,
+                "reason": reason,
+            }
+        )
 
 
 class AdminVendorPackageHardDeleteView(APIView):
@@ -756,10 +889,31 @@ class AdminVendorPackageHardDeleteView(APIView):
 
         package_id_value = package.id
         vendor = package.vendor
-        _audit(request.user, AuditLog.ActionType.HARD_DELETE_PACKAGE, "service_package", package_id_value)
+        reason = generate_governance_reason(
+            target_type=SERVICE_PACKAGE,
+            action=HARD_DELETE,
+            target=package,
+            admin_reason=_admin_reason_from_request(request),
+        )
+        _audit(
+            request.user,
+            AuditLog.ActionType.HARD_DELETE_PACKAGE,
+            "service_package",
+            package_id_value,
+            policy_reason_audit_details(reason),
+        )
         package.hard_delete()
         enqueue_vendor_projection(vendor, reason="package_hard_deleted")
-        return Response({"message": "Package permanently deleted.", "package_id": str(package_id_value)})
+        return Response(
+            {
+                "success": True,
+                "code": "admin_package_hard_delete_completed",
+                "message": "Package permanently deleted.",
+                "data": {"package_id": str(package_id_value)},
+                "package_id": str(package_id_value),
+                "reason": reason,
+            }
+        )
 
 
 class AdminVendorPortfolioPendingListView(APIView):
@@ -805,26 +959,64 @@ class AdminVendorPortfolioApproveView(APIView):
         media.rejection_reason = None
         media.is_active = True
         media.save(update_fields=["visibility_status", "rejection_reason", "is_active", "updated_at"])
-        _audit(request.user, AuditLog.ActionType.APPROVE_PORTFOLIO_MEDIA, "portfolio_image", media.id)
-        return Response({"message": "Portfolio item approved.", "portfolio_item": _serialize_portfolio_media(media)})
+        reason = generate_governance_reason(target_type=PORTFOLIO_MEDIA, action=APPROVE, target=media)
+        _audit(
+            request.user,
+            AuditLog.ActionType.APPROVE_PORTFOLIO_MEDIA,
+            "portfolio_image",
+            media.id,
+            policy_reason_audit_details(reason),
+        )
+        portfolio_payload = _serialize_portfolio_media(media)
+        return Response(
+            {
+                "success": True,
+                "code": "admin_portfolio_media_approve_completed",
+                "message": "Portfolio item approved.",
+                "data": {"portfolio_item": portfolio_payload},
+                "portfolio_item": portfolio_payload,
+                "reason": reason,
+            }
+        )
 
 
 class AdminVendorPortfolioRejectView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def post(self, request, media_id):
-        reason = request.data.get("reason") or "Portfolio item rejected by administrator."
         try:
             media = PortfolioImage.objects.select_related("vendor").get(id=media_id)
         except PortfolioImage.DoesNotExist:
             return Response({"detail": "Portfolio item not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        reason = generate_governance_reason(
+            target_type=PORTFOLIO_MEDIA,
+            action=REJECT,
+            target=media,
+            admin_reason=_admin_reason_from_request(request),
+        )
         media.visibility_status = PortfolioImage.VisibilityStatus.REJECTED
-        media.rejection_reason = reason
+        media.rejection_reason = reason["reason"]
         media.is_active = False
         media.save(update_fields=["visibility_status", "rejection_reason", "is_active", "updated_at"])
-        _audit(request.user, AuditLog.ActionType.REJECT_PORTFOLIO_MEDIA, "portfolio_image", media.id, {"reason": reason})
-        return Response({"message": "Portfolio item rejected.", "portfolio_item": _serialize_portfolio_media(media)})
+        _audit(
+            request.user,
+            AuditLog.ActionType.REJECT_PORTFOLIO_MEDIA,
+            "portfolio_image",
+            media.id,
+            policy_reason_audit_details(reason),
+        )
+        portfolio_payload = _serialize_portfolio_media(media)
+        return Response(
+            {
+                "success": True,
+                "code": "admin_portfolio_media_reject_completed",
+                "message": "Portfolio item rejected.",
+                "data": {"portfolio_item": portfolio_payload},
+                "portfolio_item": portfolio_payload,
+                "reason": reason,
+            }
+        )
 
 
 class AdminVendorPortfolioHardDeleteView(APIView):
@@ -837,9 +1029,30 @@ class AdminVendorPortfolioHardDeleteView(APIView):
             return Response({"detail": "Portfolio item not found."}, status=status.HTTP_404_NOT_FOUND)
 
         media_id_value = media.id
-        _audit(request.user, AuditLog.ActionType.HARD_DELETE_PORTFOLIO_MEDIA, "portfolio_image", media_id_value)
+        reason = generate_governance_reason(
+            target_type=PORTFOLIO_MEDIA,
+            action=HARD_DELETE,
+            target=media,
+            admin_reason=_admin_reason_from_request(request),
+        )
+        _audit(
+            request.user,
+            AuditLog.ActionType.HARD_DELETE_PORTFOLIO_MEDIA,
+            "portfolio_image",
+            media_id_value,
+            policy_reason_audit_details(reason),
+        )
         media.hard_delete()
-        return Response({"message": "Portfolio item permanently deleted.", "portfolio_item_id": str(media_id_value)})
+        return Response(
+            {
+                "success": True,
+                "code": "admin_portfolio_media_hard_delete_completed",
+                "message": "Portfolio item permanently deleted.",
+                "data": {"portfolio_item_id": str(media_id_value)},
+                "portfolio_item_id": str(media_id_value),
+                "reason": reason,
+            }
+        )
 
 
 class AdminFlagListView(APIView):

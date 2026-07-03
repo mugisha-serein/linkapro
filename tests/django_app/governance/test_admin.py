@@ -549,6 +549,138 @@ class TestVendorApprovalAdmin:
         assert vendor.status == "approved"
         assert synced
 
+    def test_admin_vendor_reject_without_reason_uses_generated_policy_reason(self):
+        admin_user = User.objects.create_superuser("policy-reject-admin@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(email="policy-reject-vendor@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Policy Reject",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="policy-reject@example.com",
+            contact_phone="1",
+            status="pending_review",
+        )
+
+        response = api_client.post(reverse("admin-vendor-reject", args=[vendor.id]))
+
+        vendor.refresh_from_db()
+        audit = AuditLog.objects.get(action_type=AuditLog.ActionType.REJECT_VENDOR, target_id=vendor.id)
+        assert response.status_code == 200
+        assert response.data["reason"]["source"] == "system"
+        assert response.data["reason"]["policy_code"] == "vendor_profile_reject"
+        assert vendor.rejection_reason == response.data["reason"]["reason"]
+        assert audit.details["reason"] == response.data["reason"]["reason"]
+        assert audit.details["reason_source"] == "system"
+        assert audit.details["community_guideline"]
+
+    def test_admin_vendor_reject_with_reason_uses_admin_policy_reason(self):
+        admin_user = User.objects.create_superuser("policy-admin-reason@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(email="policy-admin-reason-vendor@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Policy Admin Reason",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="policy-admin-reason@example.com",
+            contact_phone="1",
+            status="pending_review",
+        )
+
+        response = api_client.post(
+            reverse("admin-vendor-reject", args=[vendor.id]),
+            {"reason": "Business registration number could not be verified."},
+            format="json",
+        )
+
+        vendor.refresh_from_db()
+        audit = AuditLog.objects.get(action_type=AuditLog.ActionType.REJECT_VENDOR, target_id=vendor.id)
+        assert response.status_code == 200
+        assert response.data["reason"]["source"] == "admin"
+        assert response.data["reason"]["reason"] == "Business registration number could not be verified."
+        assert vendor.rejection_reason == "Business registration number could not be verified."
+        assert audit.details["reason_source"] == "admin"
+        assert audit.details["policy_code"] == "vendor_profile_reject"
+
+    def test_admin_vendor_suspend_and_reinstate_return_generated_policy_reasons(self, monkeypatch):
+        deleted = []
+        synced = []
+        monkeypatch.setattr(
+            "django_app.governance.views.delete_vendor_from_marketplace",
+            lambda vendor_id: deleted.append(str(vendor_id)) or {"status": "ok"},
+        )
+        monkeypatch.setattr(
+            "django_app.governance.views.sync_vendor_to_marketplace",
+            lambda vendor: synced.append(vendor) or {"status": "ok"},
+        )
+        admin_user = User.objects.create_superuser("policy-status-admin@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(email="policy-status-vendor@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Policy Status",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="policy-status@example.com",
+            contact_phone="1",
+            status="approved",
+        )
+
+        suspend_response = api_client.post(reverse("admin-vendor-suspend", args=[vendor.id]))
+        vendor.refresh_from_db()
+        reinstate_response = api_client.post(reverse("admin-vendor-reinstate", args=[vendor.id]))
+        vendor.refresh_from_db()
+
+        suspend_audit = AuditLog.objects.get(action_type=AuditLog.ActionType.SUSPEND_VENDOR, target_id=vendor.id)
+        reinstate_audit = AuditLog.objects.get(
+            action_type=AuditLog.ActionType.APPROVE_VENDOR,
+            target_id=vendor.id,
+            details__from="suspended",
+        )
+        assert suspend_response.status_code == 200
+        assert suspend_response.data["reason"]["policy_code"] == "vendor_profile_suspend"
+        assert suspend_audit.details["reason_source"] == "system"
+        assert reinstate_response.status_code == 200
+        assert reinstate_response.data["reason"]["policy_code"] == "vendor_profile_reinstate"
+        assert reinstate_audit.details["reason_source"] == "system"
+        assert vendor.status == "approved"
+        assert deleted == [str(vendor.id)]
+        assert synced
+
+    def test_admin_user_ban_and_reinstate_return_generated_policy_reasons(self):
+        admin_user = User.objects.create_superuser("policy-user-admin@t.com", "pass")
+        target_user = User.objects.create_user(email="policy-user@t.com", password="p", role="planner")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+
+        ban_response = api_client.post(reverse("admin-user-ban", args=[target_user.id]))
+        target_user.refresh_from_db()
+        reinstate_response = api_client.post(reverse("admin-user-reinstate", args=[target_user.id]))
+        target_user.refresh_from_db()
+
+        ban_audit = AuditLog.objects.get(action_type=AuditLog.ActionType.BAN_USER, target_id=target_user.id)
+        reinstate_audit = AuditLog.objects.get(
+            action_type=AuditLog.ActionType.REINSTATE_USER,
+            target_id=target_user.id,
+        )
+        assert ban_response.status_code == 200
+        assert ban_response.data["reason"]["policy_code"] == "user_account_ban"
+        assert ban_response.data["email"] == target_user.email
+        assert ban_audit.details["reason_source"] == "system"
+        assert reinstate_response.status_code == 200
+        assert reinstate_response.data["reason"]["policy_code"] == "user_account_reinstate"
+        assert reinstate_response.data["email"] == target_user.email
+        assert reinstate_audit.details["reason_source"] == "system"
+        assert target_user.is_active is True
+
     def test_admin_package_review_and_hard_delete(self):
         admin_user = User.objects.create_superuser("package-admin@t.com", "pass")
         api_client = APIClient()
@@ -589,6 +721,93 @@ class TestVendorApprovalAdmin:
 
         assert delete_response.status_code == 200
         assert not ServicePackage.all_objects.filter(id=package.id).exists()
+
+    def test_admin_package_reject_and_hard_delete_use_policy_reasons(self):
+        admin_user = User.objects.create_superuser("policy-package-admin@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(email="policy-package-owner@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Policy Package Owner",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="policy-package@example.com",
+            contact_phone="1",
+            status="approved",
+        )
+        rejected_package = ServicePackage.objects.create(
+            vendor=vendor,
+            name="Package To Reject",
+            description="A standard package with enough detail for review.",
+            price="25000.00",
+            currency="RWF",
+            package_tier="standard",
+            approval_status=ServicePackage.ApprovalStatus.WAITING_APPROVAL,
+        )
+        deleted_package = ServicePackage.objects.create(
+            vendor=vendor,
+            name="Package To Delete",
+            description="A standard package with enough detail for review.",
+            price="30000.00",
+            currency="RWF",
+            package_tier="standard",
+        )
+
+        reject_response = api_client.post(reverse("admin-vendor-package-reject", args=[rejected_package.id]))
+        delete_response = api_client.delete(reverse("admin-vendor-package-hard-delete", args=[deleted_package.id]))
+
+        rejected_package.refresh_from_db()
+        reject_audit = AuditLog.objects.get(
+            action_type=AuditLog.ActionType.REJECT_PACKAGE,
+            target_id=rejected_package.id,
+        )
+        delete_audit = AuditLog.objects.get(
+            action_type=AuditLog.ActionType.HARD_DELETE_PACKAGE,
+            target_id=deleted_package.id,
+        )
+        assert reject_response.status_code == 200
+        assert reject_response.data["reason"]["policy_code"] == "service_package_reject"
+        assert reject_response.data["reason"]["source"] == "system"
+        assert rejected_package.rejection_reason == reject_response.data["reason"]["reason"]
+        assert reject_audit.details["policy_code"] == "service_package_reject"
+        assert delete_response.status_code == 200
+        assert delete_response.data["reason"]["policy_code"] == "service_package_hard_delete"
+        assert delete_audit.details["reason_source"] == "system"
+
+    def test_admin_package_approve_logs_policy_reason(self):
+        admin_user = User.objects.create_superuser("policy-package-approve-admin@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(email="policy-package-approve-owner@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Policy Package Approve Owner",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="policy-package-approve@example.com",
+            contact_phone="1",
+            status="approved",
+        )
+        package = ServicePackage.objects.create(
+            vendor=vendor,
+            name="Package To Approve",
+            description="A standard package with enough detail for review.",
+            price="30000.00",
+            currency="RWF",
+            package_tier="standard",
+            approval_status=ServicePackage.ApprovalStatus.WAITING_APPROVAL,
+        )
+
+        response = api_client.post(reverse("admin-vendor-package-approve", args=[package.id]))
+
+        audit = AuditLog.objects.get(action_type=AuditLog.ActionType.APPROVE_PACKAGE, target_id=package.id)
+        assert response.status_code == 200
+        assert response.data["reason"]["policy_code"] == "service_package_approve"
+        assert response.data["package"]["approval_status"] == ServicePackage.ApprovalStatus.APPROVED
+        assert audit.details["reason_source"] == "system"
 
     def test_vendor_cannot_hard_delete_package(self):
         vendor_user = User.objects.create_user(email="not-admin@t.com", password="p", role="vendor")
@@ -657,6 +876,56 @@ class TestVendorApprovalAdmin:
 
         assert delete_response.status_code == 200
         assert not PortfolioImage.all_objects.filter(id=media.id).exists()
+
+    def test_admin_portfolio_reject_and_hard_delete_use_policy_reasons(self):
+        admin_user = User.objects.create_superuser("policy-portfolio-admin@t.com", "pass")
+        api_client = APIClient()
+        api_client.force_authenticate(user=admin_user)
+        vendor_user = User.objects.create_user(email="policy-portfolio-owner@t.com", password="p", role="vendor")
+        vendor = VendorProfile.objects.create(
+            user=vendor_user,
+            business_name="Policy Portfolio Owner",
+            category="photography",
+            description="A complete vendor description.",
+            service_area="Kigali",
+            contact_email="policy-portfolio@example.com",
+            contact_phone="1",
+            status="approved",
+        )
+        rejected_media = PortfolioImage.objects.create(
+            vendor=vendor,
+            media_type=PortfolioImage.MediaType.IMAGE,
+            upload_status=PortfolioImage.UploadStatus.UPLOADED,
+            quality_status=PortfolioImage.QualityStatus.PASSED,
+            visibility_status=PortfolioImage.VisibilityStatus.WAITING_APPROVAL,
+        )
+        deleted_media = PortfolioImage.objects.create(
+            vendor=vendor,
+            media_type=PortfolioImage.MediaType.IMAGE,
+            upload_status=PortfolioImage.UploadStatus.UPLOADED,
+            quality_status=PortfolioImage.QualityStatus.PASSED,
+            visibility_status=PortfolioImage.VisibilityStatus.WAITING_APPROVAL,
+        )
+
+        reject_response = api_client.post(reverse("admin-vendor-portfolio-reject", args=[rejected_media.id]))
+        delete_response = api_client.delete(reverse("admin-vendor-portfolio-hard-delete", args=[deleted_media.id]))
+
+        rejected_media.refresh_from_db()
+        reject_audit = AuditLog.objects.get(
+            action_type=AuditLog.ActionType.REJECT_PORTFOLIO_MEDIA,
+            target_id=rejected_media.id,
+        )
+        delete_audit = AuditLog.objects.get(
+            action_type=AuditLog.ActionType.HARD_DELETE_PORTFOLIO_MEDIA,
+            target_id=deleted_media.id,
+        )
+        assert reject_response.status_code == 200
+        assert reject_response.data["reason"]["policy_code"] == "portfolio_media_reject"
+        assert rejected_media.rejection_reason == reject_response.data["reason"]["reason"]
+        assert reject_audit.details["reason_source"] == "system"
+        assert delete_response.status_code == 200
+        assert delete_response.data["reason"]["policy_code"] == "portfolio_media_hard_delete"
+        assert delete_audit.details["policy_code"] == "portfolio_media_hard_delete"
 
     def test_admin_cannot_approve_failed_portfolio_media(self):
         admin_user = User.objects.create_superuser("portfolio-admin2@t.com", "pass")

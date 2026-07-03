@@ -7,6 +7,12 @@ from django_app.common.permissions import IsAdmin
 from django_app.vendors.approval_workflow import approve_pending_vendor_submission
 
 from .models import AuditLog
+from .policy_reasons import (
+    APPROVE,
+    VENDOR_PROFILE,
+    generate_governance_reason,
+    policy_reason_audit_details,
+)
 from .views import _admin_action_error, _admin_action_success, _audit, _serialize_vendor, _sync_approved_vendor
 
 
@@ -20,12 +26,17 @@ class AdminVendorApproveView(APIView):
             return _admin_action_error("vendor_approve_failed", str(exc), status.HTTP_400_BAD_REQUEST)
 
         _sync_approved_vendor(approval.vendor)
+        reason = generate_governance_reason(
+            target_type=VENDOR_PROFILE,
+            action=APPROVE,
+            target=approval.vendor,
+        )
         _audit(
             request.user,
             AuditLog.ActionType.APPROVE_VENDOR,
             "vendor_profile",
             approval.vendor.id,
-            approval.summary(),
+            policy_reason_audit_details(reason, approval.summary()),
         )
         payload = _serialize_vendor(approval.vendor)
         payload["approval_summary"] = approval.summary()
@@ -34,5 +45,6 @@ class AdminVendorApproveView(APIView):
                 payload,
                 code="vendor_approve_completed",
                 message="Vendor approved successfully.",
+                reason=reason,
             )
         )

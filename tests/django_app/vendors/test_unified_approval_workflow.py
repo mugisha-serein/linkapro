@@ -92,7 +92,10 @@ def test_admin_vendor_approval_approves_profile_packages_and_safe_portfolio(monk
     }
     assert synced and synced[0].id == vendor.id
     audit = AuditLog.objects.get(action_type=AuditLog.ActionType.APPROVE_VENDOR, target_id=vendor.id)
-    assert audit.details == response.data["approval_summary"]
+    for key, value in response.data["approval_summary"].items():
+        assert audit.details[key] == value
+    assert audit.details["policy_code"] == "vendor_profile_approve"
+    assert audit.details["reason_source"] == "system"
 
 
 def test_governance_command_handler_uses_unified_vendor_approval(monkeypatch):
