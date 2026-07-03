@@ -16,16 +16,9 @@ from .views import (
     VendorDashboardSummaryView,
     VendorAnalyticsView,
     VendorActivityView,
-    AdminPendingVendorListView,
     VendorBrandingMediaView,
     VendorCoverImageView,
     PublicVendorProfileView,
-)
-from .status_views import (
-    AdminVendorApproveView,
-    AdminVendorRejectView,
-    AdminVendorSuspendView,
-    AdminVendorReinstateView,
 )
 
 urlpatterns = [
@@ -45,11 +38,6 @@ urlpatterns = [
     path("dashboard-summary/", VendorDashboardSummaryView.as_view(), name="vendor-dashboard-summary"),
     path("analytics/", VendorAnalyticsView.as_view(), name="vendor-analytics"),
     path("activity/", VendorActivityView.as_view(), name="vendor-activity"),
-    path("pending/", AdminPendingVendorListView.as_view(), name="admin-pending-vendors"),
-    path("<uuid:vendor_id>/approve/", AdminVendorApproveView.as_view(), name="admin-vendor-approve"),
-    path("<uuid:vendor_id>/reject/", AdminVendorRejectView.as_view(), name="admin-vendor-reject"),
-    path("<uuid:vendor_id>/suspend/", AdminVendorSuspendView.as_view(), name="admin-vendor-suspend"),
-    path("<uuid:vendor_id>/reinstate/", AdminVendorReinstateView.as_view(), name="admin-vendor-reinstate"),
     path("public/<uuid:vendor_id>/", PublicVendorProfileView.as_view(), name="public-vendor-profile"),
     path("public/<uuid:vendor_id>/inquiries/", PublicInquiryView.as_view(), name="public-inquiries"),
     path("public/<uuid:vendor_id>/inquiry/", PublicInquiryView.as_view(), name="public-inquiry"),
