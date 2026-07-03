@@ -55,6 +55,7 @@ async def test_signed_internal_listing_request_is_accepted(session: AsyncSession
             "description": "Public approved marketplace listing.",
             "service_area": "Kigali",
             "approval_status": "approved",
+            "is_approved": True,
             "is_verified": True,
         },
     )
@@ -92,6 +93,8 @@ async def test_legacy_internal_secret_rejected_by_default(session: AsyncSession,
                     "description": "Public approved marketplace listing.",
                     "service_area": "Kigali",
                     "approval_status": "approved",
+                    "is_approved": True,
+                    "is_verified": True,
                 },
             )
     finally:
@@ -116,11 +119,13 @@ async def test_legacy_internal_secret_rejected_in_production_even_when_allowed(s
                     "vendor_id": str(uuid.uuid4()),
                     "business_name": "Legacy Vendor",
                     "category": "photography",
-                    "description": "Public approved marketplace listing.",
-                    "service_area": "Kigali",
-                    "approval_status": "approved",
-                },
-            )
+                        "description": "Public approved marketplace listing.",
+                        "service_area": "Kigali",
+                        "approval_status": "approved",
+                        "is_approved": True,
+                        "is_verified": True,
+                    },
+                )
     finally:
         app.dependency_overrides.clear()
 
@@ -149,6 +154,8 @@ async def test_legacy_internal_secret_allowed_only_with_non_production_opt_in(se
                     "description": "Public approved marketplace listing.",
                     "service_area": "Kigali",
                     "approval_status": "approved",
+                    "is_approved": True,
+                    "is_verified": True,
                 },
             )
     finally:
@@ -157,6 +164,94 @@ async def test_legacy_internal_secret_allowed_only_with_non_production_opt_in(se
     listing = await session.scalar(select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_id))
     assert response.status_code == 200
     assert listing.business_name == "Legacy Vendor"
+
+
+async def test_signed_internal_listing_inventory_requires_hmac(session: AsyncSession, monkeypatch):
+    monkeypatch.setattr("fastapi_app.routers.internal.INTERNAL_SHARED_SECRET", "test-secret")
+    await install_session(session)
+
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/internal/listings")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+
+
+async def test_signed_internal_listing_inventory_returns_minimal_rows(session: AsyncSession, monkeypatch):
+    await session.execute(delete(VendorListingModel))
+    await session.commit()
+    monkeypatch.setattr("fastapi_app.routers.internal.INTERNAL_SHARED_SECRET", "test-secret")
+    await install_session(session)
+    vendor_id = uuid.uuid4()
+    session.add(
+        VendorListingModel(
+            vendor_id=vendor_id,
+            business_name="Inventory Vendor",
+            category="photography",
+            description="Public approved marketplace listing.",
+            service_area="Kigali",
+            approval_status="approved",
+            is_verified=True,
+        )
+    )
+    await session.commit()
+    body, headers = signed_payload("GET", "/internal/listings", {})
+
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.request("GET", "/internal/listings", content=body, headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "results": [
+            {
+                "vendor_id": str(vendor_id),
+                "business_name": "Inventory Vendor",
+                "approval_status": "approved",
+            }
+        ],
+        "count": 1,
+    }
+
+
+async def test_upsert_with_approved_status_but_unapproved_flag_does_not_list(session: AsyncSession, monkeypatch):
+    await session.execute(delete(VendorListingModel))
+    await session.commit()
+    monkeypatch.setattr("fastapi_app.routers.internal.INTERNAL_SHARED_SECRET", "test-secret")
+    await install_session(session)
+    vendor_id = uuid.uuid4()
+    body, headers = signed_payload(
+        "POST",
+        "/internal/listings",
+        {
+            "vendor_id": str(vendor_id),
+            "business_name": "Malformed Vendor",
+            "category": "photography",
+            "description": "Approval status alone is not enough.",
+            "service_area": "Kigali",
+            "approval_status": "approved",
+            "is_approved": False,
+            "is_verified": True,
+        },
+    )
+
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/internal/listings", content=body, headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+
+    listing = await session.scalar(select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_id))
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "listed": False}
+    assert listing is None
 
 
 async def test_signed_internal_listing_request_validates_payload(session: AsyncSession, monkeypatch):

@@ -6,6 +6,7 @@ from django_app.governance.marketplace_outbox import (
     deliver_marketplace_projection_outbox_event,
     retry_due_marketplace_projection_outbox_events,
 )
+from django_app.governance.marketplace_reconciliation import reconcile_marketplace_projection
 from infrastructure.adapters.marketplace_projection import (
     delete_vendor_from_marketplace,
     sync_vendor_payload_to_marketplace,
@@ -38,6 +39,19 @@ def retry_due_marketplace_projection_outbox_events_task(batch_size: int | None =
     return retry_due_marketplace_projection_outbox_events(batch_size=batch_size)
 
 
+@shared_task(name="tasks.marketplace_sync.reconcile_marketplace_projection_task")
+def reconcile_marketplace_projection_task() -> dict:
+    result = reconcile_marketplace_projection()
+    return {
+        "django_approved_complete_count": result.django_approved_complete_count,
+        "fastapi_projection_count": result.fastapi_projection_count,
+        "stale_projection_count": result.stale_projection_count,
+        "deleted_stale_count": result.deleted_stale_count,
+        "upsert_enqueued_count": result.upsert_enqueued_count,
+        "dry_run": result.dry_run,
+    }
+
+
 def sync_vendor_listing_to_fastapi(
     vendor_id: str,
     business_name: str,
@@ -46,6 +60,7 @@ def sync_vendor_listing_to_fastapi(
     service_area: str,
     cover_image_url: str = None,
     approval_status: str = "approved",
+    is_verified: bool = True,
     starting_price: str | None = None,
     min_package_price: str | None = None,
     max_package_price: str | None = None,
@@ -59,6 +74,7 @@ def sync_vendor_listing_to_fastapi(
         service_area=service_area,
         cover_image_url=cover_image_url,
         approval_status=approval_status,
+        is_verified=is_verified,
         starting_price=starting_price,
         min_package_price=min_package_price,
         max_package_price=max_package_price,

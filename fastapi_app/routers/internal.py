@@ -68,7 +68,7 @@ async def _upsert_listing_payload(payload: InternalListingUpsertRequest, session
     vendor_id = payload.vendor_id
     external_id = payload.external_id.strip() if payload.external_id else None
     approval_status = str(payload.approval_status or payload.status or "").strip().lower()
-    is_approved = payload.is_approved is True or approval_status == "approved"
+    is_approved = payload.is_approved is True and approval_status == "approved"
 
     result = await session.execute(select(VendorListingModel).where(VendorListingModel.vendor_id == vendor_id))
     listing = result.scalar_one_or_none()
@@ -130,6 +130,38 @@ async def upsert_listing(
     result = await _upsert_listing_payload(_parse_listing_payload(body), session)
     await _invalidate_marketplace_cache()
     return result
+
+
+@router.get("/listings")
+async def list_listings(
+    request: Request,
+    x_service_name: str | None = Header(default=None, alias="X-Service-Name"),
+    x_request_timestamp: str | None = Header(default=None, alias="X-Request-Timestamp"),
+    x_request_id: str | None = Header(default=None, alias="X-Request-Id"),
+    x_payload_sha256: str | None = Header(default=None, alias="X-Payload-SHA256"),
+    x_service_mac: str | None = Header(default=None, alias="X-Service-MAC"),
+    x_internal_secret: str | None = Header(default=None, alias="X-Internal-Secret"),
+    session: AsyncSession = Depends(get_session),
+):
+    await _verified_body(request, x_service_name, x_request_timestamp, x_request_id, x_payload_sha256, x_service_mac, x_internal_secret)
+    rows = (
+        await session.execute(
+            select(
+                VendorListingModel.vendor_id,
+                VendorListingModel.business_name,
+                VendorListingModel.approval_status,
+            ).order_by(VendorListingModel.business_name.asc(), VendorListingModel.vendor_id.asc())
+        )
+    ).all()
+    results = [
+        {
+            "vendor_id": str(row.vendor_id),
+            "business_name": row.business_name,
+            "approval_status": row.approval_status,
+        }
+        for row in rows
+    ]
+    return {"results": results, "count": len(results)}
 
 
 @router.post("/listings/", include_in_schema=False)

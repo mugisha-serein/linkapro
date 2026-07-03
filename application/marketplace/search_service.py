@@ -242,7 +242,10 @@ class MarketplaceSearchService:
             VendorListingModel.created_at.label("created_at"),
         ]
 
-        conditions = [VendorListingModel.approval_status == "approved"]
+        conditions = [
+            VendorListingModel.approval_status == "approved",
+            VendorListingModel.is_verified.is_(True),
+        ]
         ts_query = None
         if normalized_query:
             ts_query = func.plainto_tsquery("simple", normalized_query)
