@@ -96,3 +96,14 @@ def test_vendor_user_cannot_call_admin_vendor_status_endpoint():
     assert response.status_code == 403
     profile.refresh_from_db()
     assert profile.status == "pending_review"
+
+
+def test_vendor_api_does_not_expose_admin_vendor_routes():
+    profile = _vendor_profile("pending_review")
+    client = APIClient()
+
+    approve_response = client.post(f"/api/django/vendors/{profile.id}/approve/")
+    pending_response = client.get("/api/django/vendors/pending/")
+
+    assert approve_response.status_code == 404
+    assert pending_response.status_code == 404
