@@ -8,7 +8,13 @@ from django_app.vendors.models import ServicePackage
 
 from .marketplace_outbox import enqueue_vendor_projection
 from .models import AuditLog
-from .views import _audit, _serialize_package
+from .policy_reasons import (
+    APPROVE,
+    SERVICE_PACKAGE,
+    generate_governance_reason,
+    policy_reason_audit_details,
+)
+from .views import _admin_action_success, _audit, _serialize_package
 
 
 def _augment_package_payload(package: ServicePackage, payload: dict) -> dict:
@@ -35,5 +41,20 @@ class AdminVendorPackageApproveView(APIView):
 
         package.approve()
         enqueue_vendor_projection(package.vendor, reason="package_approved")
-        _audit(request.user, AuditLog.ActionType.APPROVE_PACKAGE, "service_package", package.id)
-        return Response({"message": "Package approved.", "package": _augment_package_payload(package, _serialize_package(package))})
+        reason = generate_governance_reason(target_type=SERVICE_PACKAGE, action=APPROVE, target=package)
+        _audit(
+            request.user,
+            AuditLog.ActionType.APPROVE_PACKAGE,
+            "service_package",
+            package.id,
+            policy_reason_audit_details(reason),
+        )
+        payload = {"package": _augment_package_payload(package, _serialize_package(package))}
+        return Response(
+            _admin_action_success(
+                payload,
+                code="admin_package_approve_completed",
+                message="Package approved.",
+                reason=reason,
+            )
+        )
