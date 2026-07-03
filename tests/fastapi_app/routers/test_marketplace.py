@@ -12,7 +12,7 @@ from fastapi_app.main import app
 from fastapi_app.dependencies import get_query_handlers, get_command_handlers, get_marketplace_search_service
 from fastapi_app.database import get_session
 from fastapi_app.config import get_cors_origins, normalize_database_url, normalize_redis_url
-from fastapi_app.marketplace.models import VendorListingModel
+from fastapi_app.marketplace.models import ReviewModel, VendorListingModel
 from application.marketplace.search_service import MarketplaceSearchCache, MarketplaceSearchCriteria, MarketplaceSearchService
 from application.marketplace.dtos import ReviewDTO, SearchResultDTO, VendorListingDTO
 
@@ -290,6 +290,51 @@ async def test_marketplace_health_reports_listing_counts(session: AsyncSession):
         "listings_count": 2,
         "approved_listings_count": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_marketplace_public_routes_use_vendor_id_not_listing_row_id(session: AsyncSession):
+    await session.execute(delete(ReviewModel))
+    await session.execute(delete(VendorListingModel))
+    await session.commit()
+    listing_uuid = uuid.uuid4()
+    vendor_uuid = uuid.uuid4()
+    session.add(
+        VendorListingModel(
+            id=listing_uuid,
+            vendor_id=vendor_uuid,
+            business_name="Routed Vendor",
+            category="photography",
+            description="Visible listing",
+            service_area="Kigali",
+            approval_status="approved",
+            is_verified=True,
+        )
+    )
+    await session.commit()
+
+    async def override_session():
+        yield session
+
+    app.dependency_overrides[get_session] = override_session
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            search_response = await client.get("/api/v1/marketplace/search?page=1&page_size=12")
+            vendor_response = await client.get(f"/api/v1/marketplace/vendors/{vendor_uuid}")
+            listing_response = await client.get(f"/api/v1/marketplace/vendors/{listing_uuid}")
+            reviews_response = await client.get(f"/api/v1/marketplace/vendors/{vendor_uuid}/reviews")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert search_response.status_code == 200
+    assert search_response.json()["items"][0]["id"] == str(vendor_uuid)
+    assert search_response.json()["items"][0]["id"] != str(listing_uuid)
+    assert vendor_response.status_code == 200
+    assert vendor_response.json()["id"] == str(vendor_uuid)
+    assert listing_response.status_code == 404
+    assert reviews_response.status_code == 200
+    assert reviews_response.json() == []
 
 
 @pytest.mark.asyncio

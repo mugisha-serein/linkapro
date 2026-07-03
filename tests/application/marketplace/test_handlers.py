@@ -7,7 +7,7 @@ from application.marketplace.commands import (
     UpdateVendorListingCommand,
     PostReviewCommand,
 )
-from application.marketplace.queries import SearchVendorsQuery
+from application.marketplace.queries import GetVendorListingQuery, SearchVendorsQuery
 from application.marketplace.handlers import (
     MarketplaceCommandHandlers,
     MarketplaceQueryHandlers,
@@ -112,32 +112,26 @@ class TestMarketplaceCommandHandlers:
 class TestMarketplaceQueryHandlers:
     @pytest.mark.asyncio
     async def test_search_vendors(self, query_handlers, mock_listing_repo):
-        listings = [
-            VendorListing(
-                id=uuid.uuid4(),
-                vendor_id=uuid.uuid4(),
-                business_name="Biz1",
-                category="photography",
-                description="...",
-                service_area="Kigali",
-                cover_image_url=None, 
-            ),
-            VendorListing(
-                id=uuid.uuid4(),
-                vendor_id=uuid.uuid4(),
-                business_name="Biz2",
-                category="catering",
-                description="...",
-                service_area="Kigali",
-                cover_image_url=None, 
-            ),
-        ]
-        mock_listing_repo.search.return_value = (listings, 2)
-
         query = SearchVendorsQuery(query="Biz", page=1, page_size=10)
-        result = await query_handlers.search_vendors(query)
 
-        assert result.total == 2
-        assert len(result.items) == 2
-        assert result.page == 1
-        assert result.total_pages == 1
+        with pytest.raises(RuntimeError, match="Legacy marketplace search handler is disabled"):
+            await query_handlers.search_vendors(query)
+
+    @pytest.mark.asyncio
+    async def test_get_vendor_listing_uses_public_vendor_id(self, query_handlers, mock_listing_repo):
+        listing_id = uuid.uuid4()
+        vendor_id = uuid.uuid4()
+        mock_listing_repo.get_by_vendor_id.return_value = VendorListing(
+            id=listing_id,
+            vendor_id=vendor_id,
+            business_name="Biz1",
+            category="photography",
+            description="...",
+            service_area="Kigali",
+            cover_image_url=None,
+        )
+
+        result = await query_handlers.get_vendor_listing(GetVendorListingQuery(vendor_id=str(vendor_id)))
+
+        assert result.id == str(vendor_id)
+        assert result.id != str(listing_id)

@@ -350,7 +350,7 @@ class MarketplaceSearchService:
     @staticmethod
     def _row_to_dto(row) -> VendorListingDTO:
         return VendorListingDTO(
-            id=str(row["id"]),
+            id=str(row["vendor_id"]),
             business_name=row["business_name"],
             category=row["category"],
             description=row["description"],

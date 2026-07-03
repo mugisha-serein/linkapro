@@ -71,7 +71,7 @@ class MarketplaceCommandHandlers:
     @staticmethod
     def _to_listing_dto(l: VendorListing) -> VendorListingDTO:
         return VendorListingDTO(
-            id=str(l.id),
+            id=str(l.vendor_id),
             business_name=l.business_name,
             category=l.category,
             description=l.description,
