@@ -2,6 +2,7 @@ from datetime import timedelta
 import logging
 
 from django.conf import settings
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -10,7 +11,8 @@ from rest_framework.permissions import IsAuthenticated
 from django_app.common.permissions import IsAdmin
 from django_app.identity.models import PasswordResetEmailDelivery, User
 from django_app.events.models import Event
-from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile
+from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile, VerificationDocument
+from domain.vendors.package_edit_policy import effective_next_edit_allowed_at
 from .marketplace_outbox import enqueue_vendor_projection, enqueue_vendor_projection_by_id
 from .models import AuditLog, ContentFlag
 from .serializers import FlagContentSerializer
@@ -166,6 +168,7 @@ def _serialize_vendor(vendor: VendorProfile) -> dict:
         "user_id": str(vendor.user_id),
         "business_name": vendor.business_name,
         "category": vendor.category,
+        "custom_category": vendor.custom_category,
         "description": vendor.description,
         "service_area": vendor.service_area,
         "contact_email": vendor.contact_email,
@@ -178,6 +181,8 @@ def _serialize_vendor(vendor: VendorProfile) -> dict:
         "approved_at": vendor.approved_at.isoformat() if vendor.approved_at else None,
         "rejected_at": vendor.rejected_at.isoformat() if vendor.rejected_at else None,
         "rejection_reason": vendor.rejection_reason,
+        "created_at": vendor.created_at.isoformat(),
+        "updated_at": vendor.updated_at.isoformat(),
     }
 
 
@@ -205,36 +210,165 @@ def _admin_action_error(code: str, message: str, response_status: int) -> Respon
 
 
 def _serialize_admin_vendor_detail(vendor: VendorProfile) -> dict:
-    payload = _serialize_vendor(vendor)
     user = getattr(vendor, "user", None)
+    packages = list(getattr(vendor, "admin_packages", vendor.packages.all()))
+    portfolio = list(getattr(vendor, "admin_portfolio", vendor.images.all()))
     documents = list(vendor.verification_documents.all())
-    user_name = " ".join(
-        part for part in [getattr(user, "first_name", ""), getattr(user, "last_name", "")] if part
-    ) if user else ""
-    payload.update(
-        {
-            "admin_review_context": {
-                "packages_count": vendor.packages.count(),
-                "portfolio_count": vendor.images.count(),
-                "verification_documents_count": len(documents),
-                "verification_document_statuses": [
-                    {
-                        "id": str(document.id),
-                        "document_type": document.document_type,
-                        "upload_status": document.upload_status,
-                        "verification_status": document.verification_status,
-                        "fraud_status": document.fraud_status,
-                        "created_at": document.created_at.isoformat(),
-                    }
-                    for document in documents
-                ],
-            },
-            "user": _serialize_user(user) if user else None,
-            "user_email": user.email if user else None,
-            "user_name": user_name,
-        }
+    package_ids = [package.id for package in packages]
+    portfolio_ids = [item.id for item in portfolio]
+    audit_logs = (
+        AuditLog.objects.select_related("admin")
+        .filter(
+            Q(target_type="vendor_profile", target_id=vendor.id)
+            | Q(target_type="service_package", target_id__in=package_ids)
+            | Q(target_type="portfolio_image", target_id__in=portfolio_ids)
+        )
+        .order_by("-created_at")[:20]
     )
-    return payload
+    data = {
+        "profile": _serialize_vendor(vendor),
+        "user": _serialize_user(user) if user else None,
+        "packages": [_serialize_admin_package(package) for package in packages],
+        "portfolio": [_serialize_admin_portfolio_media(item) for item in portfolio],
+        "verification_documents": [_serialize_verification_document(document) for document in documents],
+        "review_context": _admin_vendor_review_context(packages, portfolio, documents),
+        "available_actions": _admin_vendor_available_actions(vendor, user),
+        "audit_logs": [_serialize_audit_log(log, include_admin_detail=True) for log in audit_logs],
+    }
+    return {
+        "success": True,
+        "code": "admin_vendor_detail_loaded",
+        "message": "Vendor review detail loaded.",
+        "data": data,
+    }
+
+
+def _serialize_admin_package(package: ServicePackage) -> dict:
+    next_allowed = effective_next_edit_allowed_at(package)
+    now = timezone.now()
+    return {
+        "id": str(package.id),
+        "vendor_id": str(package.vendor_id),
+        "name": package.name,
+        "description": package.description,
+        "price": str(package.price),
+        "currency": package.currency,
+        "package_tier": package.package_tier,
+        "approval_status": package.approval_status,
+        "rejection_reason": package.rejection_reason,
+        "is_active": package.is_active,
+        "is_deleted": package.is_deleted,
+        "deleted_at": package.deleted_at.isoformat() if package.deleted_at else None,
+        "last_approved_at": package.last_approved_at.isoformat() if package.last_approved_at else None,
+        "last_vendor_public_edit_at": (
+            package.last_vendor_public_edit_at.isoformat() if package.last_vendor_public_edit_at else None
+        ),
+        "next_vendor_edit_allowed_at": next_allowed.isoformat() if next_allowed else None,
+        "can_edit_now": next_allowed is None or now >= next_allowed,
+        "created_at": package.created_at.isoformat(),
+        "updated_at": package.updated_at.isoformat(),
+    }
+
+
+def _serialize_admin_portfolio_media(media: PortfolioImage) -> dict:
+    display_url = media.cloudinary_secure_url or media.secure_url or media.local_preview_url
+    return {
+        "id": str(media.id),
+        "vendor_id": str(media.vendor_id),
+        "media_type": media.media_type,
+        "secure_url": media.cloudinary_secure_url or media.secure_url,
+        "display_url": display_url,
+        "local_preview_url": media.local_preview_url,
+        "caption": media.caption,
+        "order": media.order,
+        "upload_status": media.upload_status,
+        "quality_status": media.quality_status,
+        "visibility_status": media.visibility_status,
+        "rejection_reason": media.rejection_reason,
+        "failure_reason": media.failure_reason,
+        "analyzer_score": media.analyzer_score,
+        "analyzer_summary": media.analyzer_summary,
+        "width": media.width,
+        "height": media.height,
+        "duration_seconds": media.duration_seconds,
+        "is_active": media.is_active,
+        "is_deleted": media.is_deleted,
+        "created_at": media.created_at.isoformat(),
+        "updated_at": media.updated_at.isoformat(),
+    }
+
+
+def _serialize_verification_document(document: VerificationDocument) -> dict:
+    return {
+        "id": str(document.id),
+        "document_type": document.document_type,
+        "original_filename": document.original_filename,
+        "secure_url": document.secure_url,
+        "cloudinary_secure_url": document.cloudinary_secure_url,
+        "mime_type": document.mime_type,
+        "file_size": document.file_size,
+        "upload_status": document.upload_status,
+        "verification_status": document.verification_status,
+        "failure_reason": document.failure_reason,
+        "fraud_status": document.fraud_status,
+        "fraud_score": document.fraud_score,
+        "fraud_reasons": document.fraud_reasons,
+        "odcr_status": document.odcr_status,
+        "odcr_score": document.odcr_score,
+        "odcr_result_summary": document.odcr_result_summary,
+        "created_at": document.created_at.isoformat(),
+        "updated_at": document.updated_at.isoformat(),
+    }
+
+
+def _admin_vendor_review_context(
+    packages: list[ServicePackage],
+    portfolio: list[PortfolioImage],
+    documents: list[VerificationDocument],
+) -> dict:
+    return {
+        "packages_count": len(packages),
+        "pending_packages_count": sum(
+            1 for package in packages if package.approval_status == ServicePackage.ApprovalStatus.WAITING_APPROVAL
+        ),
+        "approved_packages_count": sum(
+            1 for package in packages if package.approval_status == ServicePackage.ApprovalStatus.APPROVED
+        ),
+        "rejected_packages_count": sum(
+            1 for package in packages if package.approval_status == ServicePackage.ApprovalStatus.REJECTED
+        ),
+        "portfolio_count": len(portfolio),
+        "pending_portfolio_count": sum(
+            1 for item in portfolio if item.visibility_status == PortfolioImage.VisibilityStatus.WAITING_APPROVAL
+        ),
+        "approved_portfolio_count": sum(
+            1 for item in portfolio if item.visibility_status == PortfolioImage.VisibilityStatus.APPROVED
+        ),
+        "rejected_portfolio_count": sum(
+            1 for item in portfolio if item.visibility_status == PortfolioImage.VisibilityStatus.REJECTED
+        ),
+        "verification_documents_count": len(documents),
+        "verified_documents_count": sum(
+            1 for document in documents if document.verification_status == VerificationDocument.VerificationStatus.VERIFIED
+        ),
+        "failed_documents_count": sum(
+            1
+            for document in documents
+            if document.verification_status
+            in {VerificationDocument.VerificationStatus.FAILED, VerificationDocument.VerificationStatus.REJECTED}
+        ),
+    }
+
+
+def _admin_vendor_available_actions(vendor: VendorProfile, user: User | None) -> dict:
+    return {
+        "approve_vendor": vendor.status == VendorProfile.Status.PENDING_REVIEW,
+        "reject_vendor": vendor.status == VendorProfile.Status.PENDING_REVIEW,
+        "suspend_vendor": vendor.status == VendorProfile.Status.APPROVED,
+        "reinstate_vendor": vendor.status == VendorProfile.Status.SUSPENDED,
+        "ban_user": bool(user and user.is_active),
+        "reinstate_user": bool(user and not user.is_active),
+    }
 
 
 def _serialize_package(package: ServicePackage) -> dict:
@@ -302,8 +436,8 @@ def _serialize_flag(flag: ContentFlag) -> dict:
     }
 
 
-def _serialize_audit_log(log: AuditLog) -> dict:
-    return {
+def _serialize_audit_log(log: AuditLog, *, include_admin_detail: bool = False) -> dict:
+    payload = {
         "id": str(log.id),
         "admin": str(log.admin_id) if log.admin_id else None,
         "action_type": log.action_type,
@@ -312,6 +446,9 @@ def _serialize_audit_log(log: AuditLog) -> dict:
         "details": log.details,
         "created_at": log.created_at.isoformat(),
     }
+    if include_admin_detail:
+        payload["admin"] = _serialize_user(log.admin) if log.admin else None
+    return payload
 
 
 def _audit(admin, action_type: str, target_type: str, target_id, details: dict | None = None) -> None:
@@ -381,7 +518,19 @@ class AdminVendorDetailView(APIView):
         try:
             vendor = (
                 VendorProfile.objects.select_related("user")
-                .prefetch_related("packages", "images", "verification_documents")
+                .prefetch_related(
+                    Prefetch(
+                        "packages",
+                        queryset=ServicePackage.all_objects.order_by("-updated_at", "-created_at"),
+                        to_attr="admin_packages",
+                    ),
+                    Prefetch(
+                        "images",
+                        queryset=PortfolioImage.all_objects.order_by("order", "-updated_at", "-created_at"),
+                        to_attr="admin_portfolio",
+                    ),
+                    "verification_documents",
+                )
                 .get(id=vendor_id)
             )
         except VendorProfile.DoesNotExist:
