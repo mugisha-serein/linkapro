@@ -138,6 +138,7 @@ def _deliver_event(event: MarketplaceProjectionOutbox) -> dict:
             service_area=payload["service_area"],
             cover_image_url=payload.get("cover_image_url"),
             approval_status=payload.get("approval_status", VendorProfile.Status.APPROVED),
+            is_verified=payload.get("is_verified", True),
             starting_price=payload.get("starting_price"),
             min_package_price=payload.get("min_package_price"),
             max_package_price=payload.get("max_package_price"),
