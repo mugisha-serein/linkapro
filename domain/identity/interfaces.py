@@ -1,6 +1,6 @@
 """Repository interfaces (ABCs) for identity."""
 from abc import ABC, abstractmethod
-from typing import Optional, List
+from typing import Optional
 import uuid
 
 from .entities import User, OAuthToken
@@ -22,7 +22,11 @@ class IUserRepository(ABC):
 
     @abstractmethod
     def delete(self, user_id: uuid.UUID) -> None:
-        """Permanently delete user (use with caution)."""
+        """Permanently delete user data. Dangerous; prefer deactivate()."""
+
+    @abstractmethod
+    def deactivate(self, user_id: uuid.UUID) -> None:
+        """Deactivate a user without permanently deleting data."""
 
     @abstractmethod
     def set_totp_secret(self, user_id: uuid.UUID, secret: TOTPSecret) -> None: ...

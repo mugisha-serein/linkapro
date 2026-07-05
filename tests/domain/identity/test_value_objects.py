@@ -2,6 +2,8 @@ import pytest
 
 from domain.identity.value_objects import (
     Email,
+    OAuthAccessToken,
+    OAuthRefreshToken,
     PasswordHash,
     PlainPassword,
     TOTPSecret,
@@ -85,8 +87,21 @@ class TestPasswordHash:
         assert str(password_hash) == "******"
         assert secret_hash not in repr(password_hash)
 
+    def test_raw_value_is_explicit(self):
+        secret_hash = "pbkdf2_sha256$secret_hash"
+        password_hash = PasswordHash(secret_hash)
+        assert password_hash.raw_value == secret_hash
+
 
 class TestTOTPSecret:
+    def test_normalizes_to_uppercase(self):
+        secret = TOTPSecret("abcdabcdabcdabcd")
+        assert secret.raw_value == "ABCDABCDABCDABCD"
+
+    def test_too_short_secret_is_rejected(self):
+        with pytest.raises(ValueError, match="at least 16 characters"):
+            TOTPSecret("ABCDABCD")
+
     def test_str_and_repr_are_masked(self):
         secret = "JBSWY3DPEHPK3PXP"
         totp_secret = TOTPSecret(secret)
@@ -98,3 +113,19 @@ class TestTOTPSecret:
         totp_secret = TOTPSecret(secret)
         assert totp_secret.raw_value == secret
         assert totp_secret.reveal() == secret
+        assert totp_secret.reveal_for_totp_verification() == secret
+
+
+class TestOAuthTokenValues:
+    @pytest.mark.parametrize("token_cls", [OAuthAccessToken, OAuthRefreshToken])
+    def test_str_and_repr_are_masked(self, token_cls):
+        secret = "oauth-secret"
+        token = token_cls(secret)
+        assert str(token) == "******"
+        assert secret not in repr(token)
+        assert token.raw_value == secret
+
+    @pytest.mark.parametrize("token_cls", [OAuthAccessToken, OAuthRefreshToken])
+    def test_empty_values_are_rejected(self, token_cls):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            token_cls("")

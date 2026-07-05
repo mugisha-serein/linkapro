@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from .value_objects import Email
 from .entities import UserRole
@@ -14,6 +15,8 @@ class UserRegistered:
     role: UserRole
     occurred_at: datetime
     event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    actor_user_id: Optional[uuid.UUID] = None
+    reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -21,6 +24,7 @@ class UserLoggedIn:
     user_id: uuid.UUID
     occurred_at: datetime
     event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    auth_token_version: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,9 @@ class UserPasswordChanged:
     user_id: uuid.UUID
     occurred_at: datetime
     event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    actor_user_id: Optional[uuid.UUID] = None
+    reason: Optional[str] = None
+    auth_token_version: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -36,6 +43,8 @@ class UserOAuthLinked:
     provider: str
     occurred_at: datetime
     event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    actor_user_id: Optional[uuid.UUID] = None
+    reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -43,3 +52,6 @@ class UserDeactivated:
     user_id: uuid.UUID
     occurred_at: datetime
     event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    actor_user_id: Optional[uuid.UUID] = None
+    reason: Optional[str] = None
+    auth_token_version: Optional[int] = None
