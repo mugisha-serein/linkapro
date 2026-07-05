@@ -1,10 +1,16 @@
 import uuid
 import pytest
 from dataclasses import fields
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 from freezegun import freeze_time
 
 from domain.identity.entities import User, OAuthToken, UserRole
+from domain.identity.events import (
+    UserDeactivated,
+    UserPasswordChanged,
+    UserTwoFactorDisabled,
+    UserTwoFactorEnabled,
+)
 from domain.identity.value_objects import (
     Email,
     OAuthAccessToken,
@@ -36,6 +42,34 @@ class TestUserEntity:
         assert user.is_active is True
         assert user.is_verified is False
 
+    @pytest.mark.parametrize(
+        ("first_name", "last_name"),
+        [("", "Doe"), ("   ", "Doe"), ("John", ""), ("John", "   ")],
+    )
+    def test_direct_user_construction_rejects_empty_names(self, first_name, last_name):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            User(
+                id=uuid.uuid4(),
+                email=Email("test@example.com"),
+                password_hash=PasswordHash("hash"),
+                first_name=first_name,
+                last_name=last_name,
+                role=UserRole.PLANNER,
+            )
+
+    def test_direct_user_construction_strips_names_and_coerces_role(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name=" John ",
+            last_name=" Doe ",
+            role="planner",
+        )
+        assert user.first_name == "John"
+        assert user.last_name == "Doe"
+        assert user.role is UserRole.PLANNER
+
     @freeze_time("2025-01-01 12:00:00")
     def test_change_password_updates_hash_and_timestamp(self):
         user = User(
@@ -54,6 +88,22 @@ class TestUserEntity:
         assert user.password_hash == new_hash
         assert user.updated_at == datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
         assert user.auth_token_version == original_version + 1
+
+    def test_change_password_records_domain_event(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("old"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+        )
+        user.change_password(PasswordHash("new"))
+        events = user.pull_events()
+        assert len(events) == 1
+        assert isinstance(events[0], UserPasswordChanged)
+        assert events[0].user_id == user.id
+        assert user.pull_events() == []
 
     def test_rotate_auth_token_version_updates_timestamp(self):
         user = User(
@@ -84,6 +134,21 @@ class TestUserEntity:
         user.deactivate()
         assert user.is_active is False
         assert user.auth_token_version == original_version + 1
+
+    def test_deactivation_records_domain_event(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+        )
+        user.deactivate()
+        events = user.pull_events()
+        assert len(events) == 1
+        assert isinstance(events[0], UserDeactivated)
+        assert events[0].user_id == user.id
 
     def test_deactivate_only_rotates_once_when_repeated(self):
         user = User(
@@ -157,6 +222,47 @@ class TestUserEntity:
         user.enable_two_factor()
         assert user.two_factor_enabled is True
         assert user.auth_token_version == 4
+
+    def test_activate_is_idempotent(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            is_active=False,
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        with freeze_time("2025-01-01 12:00:00"):
+            user.activate()
+        first_updated_at = user.updated_at
+        assert user.is_active is True
+        assert user.auth_token_version == 0
+
+        with freeze_time("2026-01-01 12:00:00"):
+            user.activate()
+        assert user.is_active is True
+        assert user.updated_at == first_updated_at
+        assert user.auth_token_version == 0
+
+    def test_two_factor_mutations_record_domain_events(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+        )
+        user.enable_two_factor()
+        user.disable_two_factor()
+        events = user.pull_events()
+        assert [type(event) for event in events] == [
+            UserTwoFactorEnabled,
+            UserTwoFactorDisabled,
+        ]
+        assert all(event.user_id == user.id for event in events)
 
     def test_admin_cannot_self_register(self):
         assert UserRole.ADMIN.can_self_register() is False
@@ -241,6 +347,34 @@ class TestOAuthTokenEntity:
         )
         assert token.is_expired() is False
         assert isinstance(token.access_token, OAuthAccessToken)
+
+    def test_close_to_expiry_is_expired_with_buffer(self):
+        with freeze_time("2025-01-01 12:00:00"):
+            token = OAuthToken(
+                id=uuid.uuid4(),
+                user_id=uuid.uuid4(),
+                provider=OAuthProvider.GOOGLE,
+                provider_user_id="12345",
+                access_token="abc",
+                refresh_token=None,
+                expires_at=datetime(2025, 1, 1, 12, 0, 30, tzinfo=UTC),
+            )
+            assert token.is_expired() is False
+            assert token.is_expired(buffer_seconds=60) is True
+            assert token.should_refresh() is True
+
+    def test_negative_expiry_buffer_is_rejected(self):
+        token = OAuthToken(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            provider=OAuthProvider.GOOGLE,
+            provider_user_id="12345",
+            access_token="abc",
+            refresh_token=None,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        with pytest.raises(ValueError, match="buffer"):
+            token.is_expired(buffer_seconds=-1)
 
     def test_expires_at_must_be_timezone_aware(self):
         with pytest.raises(ValueError, match="timezone-aware"):

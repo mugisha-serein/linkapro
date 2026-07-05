@@ -9,6 +9,8 @@ from domain.identity.events import (
     UserOAuthLinked,
     UserPasswordChanged,
     UserRegistered,
+    UserTwoFactorDisabled,
+    UserTwoFactorEnabled,
 )
 from domain.identity.value_objects import Email
 
@@ -25,19 +27,18 @@ class TestIdentityEvents:
         assert isinstance(event.event_id, uuid.UUID)
 
     def test_events_do_not_define_secret_fields(self):
-        forbidden_fragments = ("password", "secret", "totp")
-        allowed_token_fields = {"auth_token_version"}
+        forbidden_fragments = ("password", "token", "refresh", "secret", "totp")
         event_types = [
             UserRegistered,
             UserLoggedIn,
             UserPasswordChanged,
             UserOAuthLinked,
             UserDeactivated,
+            UserTwoFactorEnabled,
+            UserTwoFactorDisabled,
         ]
 
         for event_type in event_types:
             event_field_names = {field.name for field in fields(event_type)}
             for field_name in event_field_names:
                 assert not any(fragment in field_name for fragment in forbidden_fragments)
-                if "token" in field_name:
-                    assert field_name in allowed_token_fields
