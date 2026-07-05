@@ -4,7 +4,7 @@ from dataclasses import fields
 from datetime import datetime, UTC, timedelta
 from freezegun import freeze_time
 
-from domain.identity.entities import User, OAuthToken, UserRole
+from domain.identity.entities import AccountStatus, User, OAuthToken, UserRole
 from domain.identity.events import (
     UserDeactivated,
     UserPasswordChanged,
@@ -69,6 +69,32 @@ class TestUserEntity:
         assert user.first_name == "John"
         assert user.last_name == "Doe"
         assert user.role is UserRole.PLANNER
+
+    def test_direct_user_construction_rejects_negative_auth_token_version(self):
+        with pytest.raises(ValueError, match="Auth token version"):
+            User(
+                id=uuid.uuid4(),
+                email=Email("test@example.com"),
+                password_hash=PasswordHash("hash"),
+                first_name="John",
+                last_name="Doe",
+                role=UserRole.PLANNER,
+                auth_token_version=-1,
+            )
+
+    @pytest.mark.parametrize("field_name", ["created_at", "updated_at", "last_login"])
+    def test_direct_user_construction_rejects_naive_datetimes(self, field_name):
+        kwargs = {
+            "id": uuid.uuid4(),
+            "email": Email("test@example.com"),
+            "password_hash": PasswordHash("hash"),
+            "first_name": "John",
+            "last_name": "Doe",
+            "role": UserRole.PLANNER,
+        }
+        kwargs[field_name] = datetime(2025, 1, 1)
+        with pytest.raises(ValueError, match=field_name):
+            User(**kwargs)
 
     @freeze_time("2025-01-01 12:00:00")
     def test_change_password_updates_hash_and_timestamp(self):
@@ -304,6 +330,43 @@ class TestUserEntity:
                 last_name="User",
                 role=UserRole.ADMIN,
             )
+
+    def test_rehydrate_allows_existing_admin_users(self):
+        user = User.rehydrate(
+            id=uuid.uuid4(),
+            email=Email("admin@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="Admin",
+            last_name="User",
+            role=UserRole.ADMIN,
+            is_active=True,
+            is_verified=True,
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        assert user.role is UserRole.ADMIN
+
+    @pytest.mark.parametrize(
+        ("is_active", "is_verified", "expected"),
+        [
+            (False, False, AccountStatus.DEACTIVATED),
+            (False, True, AccountStatus.DEACTIVATED),
+            (True, False, AccountStatus.PENDING_VERIFICATION),
+            (True, True, AccountStatus.ACTIVE),
+        ],
+    )
+    def test_account_status(self, is_active, is_verified, expected):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            is_active=is_active,
+            is_verified=is_verified,
+        )
+        assert user.account_status() is expected
 
     @pytest.mark.parametrize(
         ("first_name", "last_name"),
