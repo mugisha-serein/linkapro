@@ -5,6 +5,7 @@ from domain.identity.value_objects import (
     OAuthAccessToken,
     OAuthRefreshToken,
     PasswordHash,
+    PersonName,
     PlainPassword,
     SecurityReason,
     TOTPSecret,
@@ -41,6 +42,25 @@ class TestEmail:
     def test_various_invalid_emails(self, invalid):
         with pytest.raises(InvalidEmailError):
             Email(invalid)
+
+
+class TestPersonName:
+    def test_strips_names(self):
+        name = PersonName(" John ", " Doe ")
+        assert name.first_name == "John"
+        assert name.last_name == "Doe"
+
+    def test_full_name(self):
+        name = PersonName("John", "Doe")
+        assert name.full_name == "John Doe"
+
+    @pytest.mark.parametrize(
+        ("first_name", "last_name"),
+        [("", "Doe"), ("   ", "Doe"), ("John", ""), ("John", "   ")],
+    )
+    def test_rejects_empty_names(self, first_name, last_name):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            PersonName(first_name, last_name)
 
 
 class TestPlainPassword:

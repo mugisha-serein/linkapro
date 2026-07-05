@@ -12,6 +12,7 @@ from .value_objects import (
     OAuthProvider,
     OAuthRefreshToken,
     PasswordHash,
+    PersonName,
 )
 
 
@@ -26,6 +27,13 @@ class UserRole(str, Enum):
 
     def can_self_register(self) -> bool:
         return self in self.public_registration_roles()
+
+
+class AccountStatus(str, Enum):
+    PENDING_VERIFICATION = "pending_verification"
+    ACTIVE = "active"
+    DEACTIVATED = "deactivated"
+    SUSPENDED = "suspended"
 
 
 @dataclass
@@ -47,12 +55,20 @@ class User:
 
     def __post_init__(self) -> None:
         self.role = UserRole(self.role)
-        self.first_name = self.first_name.strip()
-        self.last_name = self.last_name.strip()
-        if not self.first_name:
-            raise ValueError("First name cannot be empty")
-        if not self.last_name:
-            raise ValueError("Last name cannot be empty")
+        name = PersonName(self.first_name, self.last_name)
+        self.first_name = name.first_name
+        self.last_name = name.last_name
+        if self.auth_token_version < 0:
+            raise ValueError("Auth token version cannot be negative")
+        self._validate_timezone_aware(self.created_at, "created_at")
+        self._validate_timezone_aware(self.updated_at, "updated_at")
+        if self.last_login is not None:
+            self._validate_timezone_aware(self.last_login, "last_login")
+
+    @staticmethod
+    def _validate_timezone_aware(value: datetime, field_name: str) -> None:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{field_name} must be timezone-aware")
 
     @classmethod
     def register_new(
@@ -66,6 +82,7 @@ class User:
         role: UserRole,
         is_verified: bool = False,
     ) -> "User":
+        role = UserRole(role)
         if not role.can_self_register():
             raise ValueError("Role cannot self-register")
         return cls(
@@ -76,6 +93,40 @@ class User:
             last_name=last_name,
             role=role,
             is_verified=is_verified,
+        )
+
+    @classmethod
+    def rehydrate(
+        cls,
+        *,
+        id: uuid.UUID,
+        email: Email,
+        password_hash: Optional[PasswordHash],
+        first_name: str,
+        last_name: str,
+        role: UserRole | str,
+        two_factor_enabled: bool = False,
+        auth_token_version: int = 0,
+        is_active: bool = True,
+        is_verified: bool = False,
+        created_at: datetime,
+        updated_at: datetime,
+        last_login: Optional[datetime] = None,
+    ) -> "User":
+        return cls(
+            id=id,
+            email=email,
+            password_hash=password_hash,
+            first_name=first_name,
+            last_name=last_name,
+            role=role,
+            two_factor_enabled=two_factor_enabled,
+            auth_token_version=auth_token_version,
+            is_active=is_active,
+            is_verified=is_verified,
+            created_at=created_at,
+            updated_at=updated_at,
+            last_login=last_login,
         )
 
     def _record_event(self, event: object) -> None:
@@ -161,6 +212,13 @@ class User:
 
     def record_login(self) -> None:
         self.last_login = utc_now()
+
+    def account_status(self) -> AccountStatus:
+        if not self.is_active:
+            return AccountStatus.DEACTIVATED
+        if not self.is_verified:
+            return AccountStatus.PENDING_VERIFICATION
+        return AccountStatus.ACTIVE
 
 
 @dataclass
