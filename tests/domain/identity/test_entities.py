@@ -508,8 +508,8 @@ class TestOAuthTokenEntity:
         )
         assert isinstance(token.access_token, OAuthAccessToken)
         assert isinstance(token.refresh_token, OAuthRefreshToken)
-        assert token.access_token.raw_value == "new-access"
-        assert token.refresh_token.raw_value == "new-refresh"
+        assert token.access_token.reveal_for_provider_sync() == "new-access"
+        assert token.refresh_token.reveal_for_provider_sync() == "new-refresh"
 
     def test_update_tokens_requires_timezone_aware_expiry(self):
         token = OAuthToken(

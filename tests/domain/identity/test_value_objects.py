@@ -113,6 +113,24 @@ class TestPlainPassword:
         pwd = PlainPassword(secret)
         assert secret not in repr(pwd)
 
+    def test_str_and_repr_do_not_expose_secret(self):
+        secret = "Password1!"
+        password = PlainPassword(secret)
+        assert secret not in str(password)
+        assert secret not in repr(password)
+
+    @pytest.mark.parametrize("secret", ["Password1!\n", "Password1!\r", "Pass\tword1!", "Password1!\x00"])
+    def test_control_characters_are_rejected(self, secret):
+        with pytest.raises(WeakPasswordError) as exc_info:
+            PlainPassword(secret)
+        assert secret not in str(exc_info.value)
+
+    def test_fingerprint_does_not_expose_secret(self):
+        secret = "Password1!"
+        password = PlainPassword(secret)
+        assert password.fingerprint().startswith("sha256:")
+        assert secret not in password.fingerprint()
+
 
 class TestPasswordHash:
     def test_str_and_repr_are_masked(self):
@@ -121,17 +139,32 @@ class TestPasswordHash:
         assert str(password_hash) == "******"
         assert secret_hash not in repr(password_hash)
 
-    def test_raw_value_is_explicit(self):
+    def test_purpose_specific_reveal_is_explicit(self):
         secret_hash = "pbkdf2_sha256$secret_hash"
         password_hash = PasswordHash(secret_hash)
-        assert password_hash.raw_value == secret_hash
         assert password_hash.reveal_for_password_verification() == secret_hash
+
+    @pytest.mark.parametrize("secret_hash", ["hash\nvalue", "hash\rvalue", "hash\tvalue", "hash\x00value"])
+    def test_control_characters_are_rejected(self, secret_hash):
+        with pytest.raises(ValueError) as exc_info:
+            PasswordHash(secret_hash)
+        assert secret_hash not in str(exc_info.value)
+
+    def test_fingerprint_is_stable_and_non_reversible(self):
+        secret_hash = "pbkdf2_sha256$secret_hash"
+        same = PasswordHash(secret_hash)
+        duplicate = PasswordHash(secret_hash)
+        different = PasswordHash("pbkdf2_sha256$other_hash")
+        assert same.fingerprint().startswith("sha256:")
+        assert secret_hash not in same.fingerprint()
+        assert same.fingerprint() == duplicate.fingerprint()
+        assert same.fingerprint() != different.fingerprint()
 
 
 class TestTOTPSecret:
     def test_normalizes_to_uppercase(self):
         secret = TOTPSecret("abcdabcdabcdabcd")
-        assert secret.raw_value == "ABCDABCDABCDABCD"
+        assert secret.reveal_for_totp_verification() == "ABCDABCDABCDABCD"
 
     def test_too_short_secret_is_rejected(self):
         with pytest.raises(ValueError, match="at least 16 characters"):
@@ -154,12 +187,27 @@ class TestTOTPSecret:
         totp_secret = TOTPSecret(secret)
         assert str(totp_secret) == "******"
         assert secret not in repr(totp_secret)
+        assert secret not in str(totp_secret)
 
-    def test_raw_value_is_explicit(self):
+    def test_purpose_specific_reveal_is_explicit(self):
         secret = "JBSWY3DPEHPK3PXP"
         totp_secret = TOTPSecret(secret)
-        assert totp_secret.raw_value == secret
         assert totp_secret.reveal_for_totp_verification() == secret
+
+    @pytest.mark.parametrize(
+        "secret",
+        ["JBSWY3DPEHPK3PXP\n", "JBSWY3DPEHPK3PXP\r", "JBSWY3DPEHPK3PXP\t", "JBSWY3DPEHPK3PXP\x00"],
+    )
+    def test_control_characters_are_rejected(self, secret):
+        with pytest.raises(ValueError) as exc_info:
+            TOTPSecret(secret)
+        assert secret not in str(exc_info.value)
+
+    def test_fingerprint_does_not_expose_secret(self):
+        secret = "JBSWY3DPEHPK3PXP"
+        totp_secret = TOTPSecret(secret)
+        assert totp_secret.fingerprint().startswith("sha256:")
+        assert secret not in totp_secret.fingerprint()
 
 
 class TestOAuthTokenValues:
@@ -168,14 +216,32 @@ class TestOAuthTokenValues:
         secret = "oauth-secret"
         token = token_cls(secret)
         assert str(token) == "******"
+        assert secret not in str(token)
         assert secret not in repr(token)
-        assert token.raw_value == secret
         assert token.reveal_for_provider_sync() == secret
 
     @pytest.mark.parametrize("token_cls", [OAuthAccessToken, OAuthRefreshToken])
     def test_empty_values_are_rejected(self, token_cls):
         with pytest.raises(ValueError, match="cannot be empty"):
             token_cls("")
+
+    @pytest.mark.parametrize("token_cls", [OAuthAccessToken, OAuthRefreshToken])
+    @pytest.mark.parametrize("secret", ["oauth\nsecret", "oauth\rsecret", "oauth\tsecret", "oauth\x00secret"])
+    def test_control_characters_are_rejected(self, token_cls, secret):
+        with pytest.raises(ValueError) as exc_info:
+            token_cls(secret)
+        assert secret not in str(exc_info.value)
+
+    @pytest.mark.parametrize("token_cls", [OAuthAccessToken, OAuthRefreshToken])
+    def test_fingerprint_is_stable_and_non_reversible(self, token_cls):
+        secret = "oauth-secret"
+        same = token_cls(secret)
+        duplicate = token_cls(secret)
+        different = token_cls("different-oauth-secret")
+        assert same.fingerprint().startswith("sha256:")
+        assert secret not in same.fingerprint()
+        assert same.fingerprint() == duplicate.fingerprint()
+        assert same.fingerprint() != different.fingerprint()
 
 
 class TestSecurityReason:
