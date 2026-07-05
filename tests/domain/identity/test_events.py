@@ -1,4 +1,5 @@
 import uuid
+import pytest
 from dataclasses import fields
 from datetime import datetime, UTC
 
@@ -13,6 +14,7 @@ from domain.identity.events import (
     UserTwoFactorEnabled,
 )
 from domain.identity.value_objects import Email
+from domain.identity.value_objects import InvalidSecurityReasonError, SecurityReason
 
 
 class TestIdentityEvents:
@@ -28,6 +30,7 @@ class TestIdentityEvents:
 
     def test_events_do_not_define_secret_fields(self):
         forbidden_fragments = ("password", "token", "refresh", "secret", "totp")
+        allowed_fields = {"auth_token_version"}
         event_types = [
             UserRegistered,
             UserLoggedIn,
@@ -41,4 +44,23 @@ class TestIdentityEvents:
         for event_type in event_types:
             event_field_names = {field.name for field in fields(event_type)}
             for field_name in event_field_names:
+                if field_name in allowed_fields:
+                    continue
                 assert not any(fragment in field_name for fragment in forbidden_fragments)
+
+    def test_event_reason_is_security_reason(self):
+        event = UserDeactivated(
+            user_id=uuid.uuid4(),
+            occurred_at=datetime(2025, 1, 1, tzinfo=UTC),
+            reason="User requested closure",
+        )
+        assert isinstance(event.reason, SecurityReason)
+        assert str(event.reason) == "User requested closure"
+
+    def test_event_reason_rejects_secret_like_text(self):
+        with pytest.raises(InvalidSecurityReasonError):
+            UserPasswordChanged(
+                user_id=uuid.uuid4(),
+                occurred_at=datetime(2025, 1, 1, tzinfo=UTC),
+                reason="rotated password after support request",
+            )

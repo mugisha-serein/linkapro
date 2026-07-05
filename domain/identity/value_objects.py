@@ -4,6 +4,7 @@ import binascii
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import ClassVar
 
 
 class InvalidEmailError(ValueError):
@@ -11,6 +12,10 @@ class InvalidEmailError(ValueError):
 
 
 class WeakPasswordError(ValueError):
+    pass
+
+
+class InvalidSecurityReasonError(ValueError):
     pass
 
 
@@ -52,6 +57,32 @@ class OAuthRefreshToken(SecretValue):
     """OAuth refresh token. Raw value access must be explicit."""
 
     def reveal_for_provider_sync(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class SecurityReason:
+    """Human-readable security context that must not carry secrets."""
+    value: str
+
+    _FORBIDDEN_FRAGMENTS: ClassVar[tuple[str, ...]] = (
+        "password",
+        "token",
+        "secret",
+        "totp",
+        "refresh",
+    )
+
+    def __post_init__(self) -> None:
+        normalized = self.value.strip()
+        if not normalized:
+            raise InvalidSecurityReasonError("Security reason cannot be empty")
+        lowered = normalized.lower()
+        if any(fragment in lowered for fragment in self._FORBIDDEN_FRAGMENTS):
+            raise InvalidSecurityReasonError("Security reason cannot contain secret-like text")
+        object.__setattr__(self, "value", normalized)
+
+    def __str__(self) -> str:
         return self.value
 
 
