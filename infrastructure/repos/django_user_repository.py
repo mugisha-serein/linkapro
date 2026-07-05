@@ -3,7 +3,7 @@ from typing import Optional
 from django.core.exceptions import ObjectDoesNotExist
 
 from domain.identity.entities import User as DomainUser, UserRole as DomainRole
-from domain.identity.value_objects import Email, PasswordHash
+from domain.identity.value_objects import Email, PasswordHash, TOTPSecret
 from domain.identity.interfaces import IUserRepository
 from django_app.identity.models import User as DjangoUser
 
@@ -32,7 +32,7 @@ class DjangoUserRepository(IUserRepository):
         django_user.email = str(domain_user.email)
         if domain_user.password_hash:
             # The application layer already hashed the password.
-            django_user.password = str(domain_user.password_hash)
+            django_user.password = domain_user.password_hash.value
         else:
             django_user.password = None  # OAuth users have no password
         django_user.first_name = domain_user.first_name
@@ -63,12 +63,23 @@ class DjangoUserRepository(IUserRepository):
             last_login=model.last_login,
         )
     
-    def set_totp_secret(self, user_id: uuid.UUID, secret: str) -> None:
-        DjangoUser.objects.filter(id=user_id).update(totp_secret=secret, two_factor_enabled=True)
+    def set_totp_secret(self, user_id: uuid.UUID, secret: TOTPSecret) -> None:
+        DjangoUser.objects.filter(id=user_id).update(
+            totp_secret=secret.raw_value,
+            two_factor_enabled=True,
+        )
 
-    def get_totp_secret(self, user_id: uuid.UUID) -> Optional[str]:
+    def get_totp_secret(self, user_id: uuid.UUID) -> Optional[TOTPSecret]:
         try:
             user = DjangoUser.objects.get(id=user_id)
-            return user.totp_secret if user.two_factor_enabled else None
+            if user.two_factor_enabled and user.totp_secret:
+                return TOTPSecret(user.totp_secret)
+            return None
         except DjangoUser.DoesNotExist:
             return None
+
+    def clear_totp_secret(self, user_id: uuid.UUID) -> None:
+        DjangoUser.objects.filter(id=user_id).update(
+            totp_secret=None,
+            two_factor_enabled=False,
+        )

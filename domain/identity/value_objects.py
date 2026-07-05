@@ -23,12 +23,14 @@ class Email:
     value: str
 
     def __post_init__(self) -> None:
-        if not self._is_valid(self.value):
-            raise InvalidEmailError(f"Invalid email: {self.value}")
+        normalized = self.value.strip().lower()
+        object.__setattr__(self, "value", normalized)
+        if not self._is_valid(normalized):
+            raise InvalidEmailError("Invalid email")
 
     @staticmethod
     def _is_valid(email: str) -> bool:
-        pattern = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
+        pattern = r"^[a-z0-9_.+-]+@[a-z0-9-]+\.[a-z0-9-.]+$"
         return re.match(pattern, email) is not None
 
     def __str__(self) -> str:
@@ -45,7 +47,10 @@ class PasswordHash:
             raise ValueError("Password hash cannot be empty")
 
     def __str__(self) -> str:
-        return self.value
+        return "******"
+
+    def __repr__(self) -> str:
+        return "PasswordHash(value='******')"
 
 
 @dataclass(frozen=True)
@@ -56,15 +61,22 @@ class PlainPassword:
     def __post_init__(self) -> None:
         if len(self.value) < 8:
             raise WeakPasswordError("Password must be at least 8 characters long")
+        if len(self.value) > 128:
+            raise WeakPasswordError("Password must be at most 128 characters long")
         if not re.search(r"[A-Z]", self.value):
             raise WeakPasswordError("Password must contain at least one uppercase letter")
         if not re.search(r"[a-z]", self.value):
             raise WeakPasswordError("Password must contain at least one lowercase letter")
         if not re.search(r"\d", self.value):
             raise WeakPasswordError("Password must contain at least one digit")
+        if not re.search(r"[^A-Za-z0-9]", self.value):
+            raise WeakPasswordError("Password must contain at least one special character")
 
     def __str__(self) -> str:
-        return "******"  # Never expose plain password
+        return "******"
+
+    def __repr__(self) -> str:
+        return "PlainPassword(value='******')"
     
 @dataclass(frozen=True)
 class TOTPSecret:
@@ -75,5 +87,15 @@ class TOTPSecret:
         if not re.match(r'^[A-Z2-7]+=*$', self.value):
             raise ValueError("Invalid TOTP secret format")
 
-    def __str__(self) -> str:
+    @property
+    def raw_value(self) -> str:
         return self.value
+
+    def reveal(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return "******"
+
+    def __repr__(self) -> str:
+        return "TOTPSecret(value='******')"

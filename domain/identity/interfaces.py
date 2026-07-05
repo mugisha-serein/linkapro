@@ -4,7 +4,7 @@ from typing import Optional, List
 import uuid
 
 from .entities import User, OAuthToken
-from .value_objects import Email, OAuthProvider
+from .value_objects import Email, OAuthProvider, TOTPSecret
 
 
 class IUserRepository(ABC):
@@ -25,10 +25,13 @@ class IUserRepository(ABC):
         """Permanently delete user (use with caution)."""
 
     @abstractmethod
-    def set_totp_secret(self, user_id: uuid.UUID, secret: str) -> None: ...
+    def set_totp_secret(self, user_id: uuid.UUID, secret: TOTPSecret) -> None: ...
     
     @abstractmethod
-    def get_totp_secret(self, user_id: uuid.UUID) -> Optional[str]: ...
+    def get_totp_secret(self, user_id: uuid.UUID) -> Optional[TOTPSecret]: ...
+
+    @abstractmethod
+    def clear_totp_secret(self, user_id: uuid.UUID) -> None: ...
 
 
 class IOAuthTokenRepository(ABC):

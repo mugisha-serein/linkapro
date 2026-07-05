@@ -41,6 +41,23 @@ class TestUserEntity:
         user.change_password(new_hash)
         assert user.password_hash == new_hash
         assert user.updated_at == datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
+        assert user.auth_token_version == 1
+
+    def test_rotate_auth_token_version_updates_timestamp(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            auth_token_version=2,
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        with freeze_time("2025-01-01 12:00:00"):
+            user.rotate_auth_token_version()
+        assert user.auth_token_version == 3
+        assert user.updated_at == datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 
     def test_deactivate_user(self):
         user = User(
@@ -53,6 +70,13 @@ class TestUserEntity:
         )
         user.deactivate()
         assert user.is_active is False
+        assert user.auth_token_version == 1
+
+    def test_admin_cannot_self_register(self):
+        assert UserRole.ADMIN.can_self_register() is False
+        assert UserRole.PLANNER.can_self_register() is True
+        assert UserRole.VENDOR.can_self_register() is True
+        assert UserRole.ADMIN not in UserRole.public_registration_roles()
 
     def test_record_login_sets_last_login(self):
         user = User(
@@ -92,3 +116,19 @@ class TestOAuthTokenEntity:
             expires_at=datetime(2099, 1, 1, tzinfo=UTC),
         )
         assert token.is_expired() is False
+
+    def test_repr_does_not_expose_tokens(self):
+        access_token = "access-token-secret"
+        refresh_token = "refresh-token-secret"
+        token = OAuthToken(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            provider=OAuthProvider.GOOGLE,
+            provider_user_id="12345",
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+        )
+        token_repr = repr(token)
+        assert access_token not in token_repr
+        assert refresh_token not in token_repr

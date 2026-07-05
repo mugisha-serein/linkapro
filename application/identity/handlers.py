@@ -14,6 +14,7 @@ from domain.identity.value_objects import (
     PasswordHash,
     PlainPassword,
     OAuthProvider,
+    TOTPSecret,
 )
 from domain.shared.utils import utc_now
 from domain.identity.interfaces import IUserRepository, IOAuthTokenRepository
@@ -336,7 +337,7 @@ class IdentityCommandHandlers:
             raise ValueError("Invalid TOTP token")
 
         # Store the secret permanently and enable 2FA
-        self.user_repo.set_totp_secret(user.id, secret)
+        self.user_repo.set_totp_secret(user.id, TOTPSecret(secret))
         cache.delete(f"totp_setup_{user.id}")
 
     def login_two_factor(self, cmd: LoginTwoFactorCommand) -> AuthenticationDecision:
@@ -361,7 +362,7 @@ class IdentityCommandHandlers:
                 status=AuthenticationStatus.INVALID_TEMP_TOKEN
             )
 
-        totp = pyotp.TOTP(secret)
+        totp = pyotp.TOTP(secret.raw_value)
         if not totp.verify(cmd.token):
             return AuthenticationDecision(
                 status=AuthenticationStatus.INVALID_MFA_CODE
