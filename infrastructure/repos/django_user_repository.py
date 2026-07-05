@@ -33,11 +33,8 @@ class DjangoUserRepository(IUserRepository):
         django_user.email = str(domain_user.email)
         if domain_user.password_hash:
             # The application layer already hashed the password.
-            django_user.password = domain_user.password_hash.value
+            django_user.password = domain_user.password_hash.raw_value
         else:
-            django_user.password = None  # OAuth users have no password
-            django_user.password = str(domain_user.password_hash)
-        elif not django_user.password:
             django_user.set_unusable_password()
         django_user.first_name = domain_user.first_name
         django_user.last_name = domain_user.last_name
@@ -51,6 +48,9 @@ class DjangoUserRepository(IUserRepository):
 
     def delete(self, user_id: uuid.UUID) -> None:
         DjangoUser.objects.filter(id=user_id).delete()
+
+    def deactivate(self, user_id: uuid.UUID) -> None:
+        DjangoUser.objects.filter(id=user_id).update(is_active=False)
 
     def _to_domain(self, model: DjangoUser) -> DomainUser:
         return DomainUser(
@@ -71,7 +71,7 @@ class DjangoUserRepository(IUserRepository):
     
     def set_totp_secret(self, user_id: uuid.UUID, secret: TOTPSecret) -> None:
         DjangoUser.objects.filter(id=user_id).update(
-            totp_secret=secret.raw_value,
+            totp_secret=secret.reveal_for_totp_verification(),
             two_factor_enabled=True,
         )
 

@@ -2,7 +2,6 @@
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 
 class InvalidEmailError(ValueError):
@@ -15,6 +14,37 @@ class WeakPasswordError(ValueError):
 
 class OAuthProvider(str, Enum):
     GOOGLE = "google"
+
+
+@dataclass(frozen=True)
+class SecretValue:
+    """Sensitive string value that is safe by default in logs and reprs."""
+    value: str
+
+    def __post_init__(self) -> None:
+        if not self.value or not self.value.strip():
+            raise ValueError("Secret value cannot be empty")
+
+    @property
+    def raw_value(self) -> str:
+        return self.value
+
+    def reveal(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return "******"
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(value='******')"
+
+
+class OAuthAccessToken(SecretValue):
+    """OAuth access token. Raw value access must be explicit."""
+
+
+class OAuthRefreshToken(SecretValue):
+    """OAuth refresh token. Raw value access must be explicit."""
 
 
 @dataclass(frozen=True)
@@ -45,6 +75,13 @@ class PasswordHash:
     def __post_init__(self) -> None:
         if not self.value:
             raise ValueError("Password hash cannot be empty")
+
+    @property
+    def raw_value(self) -> str:
+        return self.value
+
+    def reveal(self) -> str:
+        return self.value
 
     def __str__(self) -> str:
         return "******"
@@ -84,7 +121,12 @@ class TOTPSecret:
     value: str
 
     def __post_init__(self):
-        if not re.match(r'^[A-Z2-7]+=*$', self.value):
+        normalized = self.value.strip().upper()
+        object.__setattr__(self, "value", normalized)
+        unpadded = normalized.rstrip("=")
+        if len(unpadded) < 16:
+            raise ValueError("TOTP secret must be at least 16 characters long")
+        if not re.match(r'^[A-Z2-7]+=*$', normalized):
             raise ValueError("Invalid TOTP secret format")
 
     @property
@@ -92,6 +134,9 @@ class TOTPSecret:
         return self.value
 
     def reveal(self) -> str:
+        return self.value
+
+    def reveal_for_totp_verification(self) -> str:
         return self.value
 
     def __str__(self) -> str:

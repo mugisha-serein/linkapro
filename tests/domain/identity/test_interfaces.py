@@ -13,3 +13,7 @@ class TestUserRepositoryInterface:
         assert set_signature.parameters["secret"].annotation is TOTPSecret
         assert get_signature.return_annotation == Optional[TOTPSecret]
         assert hasattr(IUserRepository, "clear_totp_secret")
+
+    def test_repository_exposes_safer_deactivation_contract(self):
+        assert hasattr(IUserRepository, "deactivate")
+        assert "Dangerous" in (IUserRepository.delete.__doc__ or "")

@@ -182,9 +182,11 @@ class IdentityCommandHandlers:
             AuthenticationStatus.AUTHENTICATED,
             AuthenticationStatus.MFA_REQUIRED,
         ):
-            oauth_token.access_token = cmd.access_token
-            oauth_token.refresh_token = cmd.refresh_token
-            oauth_token.expires_at = utc_now() + timedelta(seconds=cmd.expires_in)
+            oauth_token.update_tokens(
+                access_token=cmd.access_token,
+                refresh_token=cmd.refresh_token,
+                expires_at=utc_now() + timedelta(seconds=cmd.expires_in),
+            )
             self.oauth_repo.save(oauth_token)
 
         if decision.status is not AuthenticationStatus.AUTHENTICATED:
@@ -362,7 +364,7 @@ class IdentityCommandHandlers:
                 status=AuthenticationStatus.INVALID_TEMP_TOKEN
             )
 
-        totp = pyotp.TOTP(secret.raw_value)
+        totp = pyotp.TOTP(secret.reveal_for_totp_verification())
         if not totp.verify(cmd.token):
             return AuthenticationDecision(
                 status=AuthenticationStatus.INVALID_MFA_CODE
