@@ -25,16 +25,8 @@ class TestIdentityEvents:
         assert isinstance(event.event_id, uuid.UUID)
 
     def test_events_do_not_define_secret_fields(self):
-        forbidden_names = {
-            "access_token",
-            "refresh_token",
-            "password",
-            "password_hash",
-            "plain_password",
-            "totp_secret",
-            "secret",
-            "token",
-        }
+        forbidden_fragments = ("password", "secret", "totp")
+        allowed_token_fields = {"auth_token_version"}
         event_types = [
             UserRegistered,
             UserLoggedIn,
@@ -45,4 +37,7 @@ class TestIdentityEvents:
 
         for event_type in event_types:
             event_field_names = {field.name for field in fields(event_type)}
-            assert event_field_names.isdisjoint(forbidden_names)
+            for field_name in event_field_names:
+                assert not any(fragment in field_name for fragment in forbidden_fragments)
+                if "token" in field_name:
+                    assert field_name in allowed_token_fields

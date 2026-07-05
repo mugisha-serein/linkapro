@@ -1,4 +1,6 @@
 """Immutable value objects for identity."""
+import base64
+import binascii
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -96,6 +98,8 @@ class PlainPassword:
     value: str
 
     def __post_init__(self) -> None:
+        if self.value != self.value.strip():
+            raise WeakPasswordError("Password cannot start or end with whitespace")
         if len(self.value) < 8:
             raise WeakPasswordError("Password must be at least 8 characters long")
         if len(self.value) > 128:
@@ -106,8 +110,10 @@ class PlainPassword:
             raise WeakPasswordError("Password must contain at least one lowercase letter")
         if not re.search(r"\d", self.value):
             raise WeakPasswordError("Password must contain at least one digit")
-        if not re.search(r"[^A-Za-z0-9]", self.value):
-            raise WeakPasswordError("Password must contain at least one special character")
+        if not re.search(r"[^A-Za-z0-9\s]", self.value):
+            raise WeakPasswordError(
+                "Password must contain at least one non-whitespace special character"
+            )
 
     def __str__(self) -> str:
         return "******"
@@ -128,6 +134,10 @@ class TOTPSecret:
             raise ValueError("TOTP secret must be at least 16 characters long")
         if not re.match(r'^[A-Z2-7]+=*$', normalized):
             raise ValueError("Invalid TOTP secret format")
+        try:
+            base64.b32decode(normalized, casefold=False)
+        except (binascii.Error, ValueError):
+            raise ValueError("Invalid TOTP secret format") from None
 
     @property
     def raw_value(self) -> str:

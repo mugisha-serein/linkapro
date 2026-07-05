@@ -85,6 +85,21 @@ class TestUserEntity:
         assert user.is_active is False
         assert user.auth_token_version == original_version + 1
 
+    def test_deactivate_only_rotates_once_when_repeated(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            auth_token_version=7,
+        )
+        user.deactivate()
+        user.deactivate()
+        assert user.is_active is False
+        assert user.auth_token_version == 8
+
     def test_disable_two_factor_rotates_token_version(self):
         user = User(
             id=uuid.uuid4(),
@@ -100,6 +115,22 @@ class TestUserEntity:
         assert user.two_factor_enabled is False
         assert user.auth_token_version == 5
 
+    def test_disable_two_factor_only_rotates_when_enabled(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            two_factor_enabled=True,
+            auth_token_version=4,
+        )
+        user.disable_two_factor()
+        user.disable_two_factor()
+        assert user.two_factor_enabled is False
+        assert user.auth_token_version == 5
+
     def test_enable_two_factor_updates_state(self):
         user = User(
             id=uuid.uuid4(),
@@ -111,6 +142,21 @@ class TestUserEntity:
         )
         user.enable_two_factor()
         assert user.two_factor_enabled is True
+
+    def test_enable_two_factor_rotates_once_when_state_changes(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            auth_token_version=3,
+        )
+        user.enable_two_factor()
+        user.enable_two_factor()
+        assert user.two_factor_enabled is True
+        assert user.auth_token_version == 4
 
     def test_admin_cannot_self_register(self):
         assert UserRole.ADMIN.can_self_register() is False
@@ -139,6 +185,21 @@ class TestUserEntity:
                 first_name="Admin",
                 last_name="User",
                 role=UserRole.ADMIN,
+            )
+
+    @pytest.mark.parametrize(
+        ("first_name", "last_name"),
+        [("", "Doe"), ("   ", "Doe"), ("John", ""), ("John", "   ")],
+    )
+    def test_register_new_rejects_empty_names(self, first_name, last_name):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            User.register_new(
+                id=uuid.uuid4(),
+                email=Email("test@example.com"),
+                password_hash=PasswordHash("hash"),
+                first_name=first_name,
+                last_name=last_name,
+                role=UserRole.PLANNER,
             )
 
     def test_record_login_sets_last_login(self):
@@ -181,6 +242,30 @@ class TestOAuthTokenEntity:
         assert token.is_expired() is False
         assert isinstance(token.access_token, OAuthAccessToken)
 
+    def test_expires_at_must_be_timezone_aware(self):
+        with pytest.raises(ValueError, match="timezone-aware"):
+            OAuthToken(
+                id=uuid.uuid4(),
+                user_id=uuid.uuid4(),
+                provider=OAuthProvider.GOOGLE,
+                provider_user_id="12345",
+                access_token="abc",
+                refresh_token=None,
+                expires_at=datetime(2099, 1, 1),
+            )
+
+    def test_provider_user_id_must_not_be_empty(self):
+        with pytest.raises(ValueError, match="Provider user ID"):
+            OAuthToken(
+                id=uuid.uuid4(),
+                user_id=uuid.uuid4(),
+                provider=OAuthProvider.GOOGLE,
+                provider_user_id="   ",
+                access_token="abc",
+                refresh_token=None,
+                expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+            )
+
     def test_repr_does_not_expose_tokens(self):
         access_token = "access-token-secret"
         refresh_token = "refresh-token-secret"
@@ -216,3 +301,20 @@ class TestOAuthTokenEntity:
         assert isinstance(token.refresh_token, OAuthRefreshToken)
         assert token.access_token.raw_value == "new-access"
         assert token.refresh_token.raw_value == "new-refresh"
+
+    def test_update_tokens_requires_timezone_aware_expiry(self):
+        token = OAuthToken(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            provider=OAuthProvider.GOOGLE,
+            provider_user_id="12345",
+            access_token=OAuthAccessToken("old-access"),
+            refresh_token=OAuthRefreshToken("old-refresh"),
+            expires_at=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+        with pytest.raises(ValueError, match="timezone-aware"):
+            token.update_tokens(
+                access_token="new-access",
+                refresh_token="new-refresh",
+                expires_at=datetime(2099, 1, 1),
+            )

@@ -16,4 +16,9 @@ class TestUserRepositoryInterface:
 
     def test_repository_exposes_safer_deactivation_contract(self):
         assert hasattr(IUserRepository, "deactivate")
-        assert "Dangerous" in (IUserRepository.delete.__doc__ or "")
+        delete_doc = IUserRepository.delete.__doc__ or ""
+        assert "Dangerous" in delete_doc
+        assert "normal account removal" in delete_doc
+        assert "deactivate()" in delete_doc
+        assert "anonymize()" in delete_doc
+        assert hasattr(IUserRepository, "anonymize")

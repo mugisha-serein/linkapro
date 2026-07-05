@@ -46,6 +46,14 @@ class TestPlainPassword:
         pwd = PlainPassword("StrongPass1!")
         assert isinstance(pwd, PlainPassword)
 
+    def test_password_with_trailing_whitespace_is_rejected(self):
+        with pytest.raises(WeakPasswordError, match="whitespace"):
+            PlainPassword("Password1 ")
+
+    def test_password_with_leading_whitespace_is_rejected(self):
+        with pytest.raises(WeakPasswordError, match="whitespace"):
+            PlainPassword(" Password1!")
+
     def test_too_short_raises_error(self):
         with pytest.raises(WeakPasswordError, match="at least 8 characters"):
             PlainPassword("Short1")
@@ -65,6 +73,10 @@ class TestPlainPassword:
     def test_missing_special_character_raises_error(self):
         with pytest.raises(WeakPasswordError, match="special character"):
             PlainPassword("NoSpecial1")
+
+    def test_whitespace_cannot_satisfy_special_character_rule(self):
+        with pytest.raises(WeakPasswordError):
+            PlainPassword("Password1 ")
 
     def test_too_long_raises_error(self):
         with pytest.raises(WeakPasswordError, match="at most 128 characters"):
@@ -101,6 +113,18 @@ class TestTOTPSecret:
     def test_too_short_secret_is_rejected(self):
         with pytest.raises(ValueError, match="at least 16 characters"):
             TOTPSecret("ABCDABCD")
+
+    @pytest.mark.parametrize(
+        "secret",
+        [
+            "ABCDABCDABCDABC=",
+            "ABCDABCDABCDABCD===",
+            "JBSWY3DPEHPK3PX0",
+        ],
+    )
+    def test_malformed_base32_secret_is_rejected(self, secret):
+        with pytest.raises(ValueError, match="Invalid TOTP secret format"):
+            TOTPSecret(secret)
 
     def test_str_and_repr_are_masked(self):
         secret = "JBSWY3DPEHPK3PXP"
