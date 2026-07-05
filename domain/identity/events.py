@@ -24,7 +24,6 @@ class UserLoggedIn:
     user_id: uuid.UUID
     occurred_at: datetime
     event_id: uuid.UUID = field(default_factory=uuid.uuid4)
-    auth_token_version: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -34,7 +33,24 @@ class UserPasswordChanged:
     event_id: uuid.UUID = field(default_factory=uuid.uuid4)
     actor_user_id: Optional[uuid.UUID] = None
     reason: Optional[str] = None
-    auth_token_version: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class UserTwoFactorEnabled:
+    user_id: uuid.UUID
+    occurred_at: datetime
+    event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    actor_user_id: Optional[uuid.UUID] = None
+    reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class UserTwoFactorDisabled:
+    user_id: uuid.UUID
+    occurred_at: datetime
+    event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    actor_user_id: Optional[uuid.UUID] = None
+    reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -54,4 +70,3 @@ class UserDeactivated:
     event_id: uuid.UUID = field(default_factory=uuid.uuid4)
     actor_user_id: Optional[uuid.UUID] = None
     reason: Optional[str] = None
-    auth_token_version: Optional[int] = None

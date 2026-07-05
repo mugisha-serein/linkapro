@@ -103,6 +103,7 @@ class TestPasswordHash:
         secret_hash = "pbkdf2_sha256$secret_hash"
         password_hash = PasswordHash(secret_hash)
         assert password_hash.raw_value == secret_hash
+        assert password_hash.reveal_for_password_verification() == secret_hash
 
 
 class TestTOTPSecret:
@@ -136,7 +137,6 @@ class TestTOTPSecret:
         secret = "JBSWY3DPEHPK3PXP"
         totp_secret = TOTPSecret(secret)
         assert totp_secret.raw_value == secret
-        assert totp_secret.reveal() == secret
         assert totp_secret.reveal_for_totp_verification() == secret
 
 
@@ -148,6 +148,7 @@ class TestOAuthTokenValues:
         assert str(token) == "******"
         assert secret not in repr(token)
         assert token.raw_value == secret
+        assert token.reveal_for_provider_sync() == secret
 
     @pytest.mark.parametrize("token_cls", [OAuthAccessToken, OAuthRefreshToken])
     def test_empty_values_are_rejected(self, token_cls):

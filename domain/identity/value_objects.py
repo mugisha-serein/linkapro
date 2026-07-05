@@ -44,9 +44,15 @@ class SecretValue:
 class OAuthAccessToken(SecretValue):
     """OAuth access token. Raw value access must be explicit."""
 
+    def reveal_for_provider_sync(self) -> str:
+        return self.value
+
 
 class OAuthRefreshToken(SecretValue):
     """OAuth refresh token. Raw value access must be explicit."""
+
+    def reveal_for_provider_sync(self) -> str:
+        return self.value
 
 
 @dataclass(frozen=True)
@@ -83,6 +89,9 @@ class PasswordHash:
         return self.value
 
     def reveal(self) -> str:
+        return self.value
+
+    def reveal_for_password_verification(self) -> str:
         return self.value
 
     def __str__(self) -> str:

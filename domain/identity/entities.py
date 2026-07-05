@@ -43,6 +43,16 @@ class User:
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     last_login: Optional[datetime] = None
+    _events: list[object] = field(default_factory=list, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.role = UserRole(self.role)
+        self.first_name = self.first_name.strip()
+        self.last_name = self.last_name.strip()
+        if not self.first_name:
+            raise ValueError("First name cannot be empty")
+        if not self.last_name:
+            raise ValueError("Last name cannot be empty")
 
     @classmethod
     def register_new(
@@ -58,12 +68,6 @@ class User:
     ) -> "User":
         if not role.can_self_register():
             raise ValueError("Role cannot self-register")
-        first_name = first_name.strip()
-        last_name = last_name.strip()
-        if not first_name:
-            raise ValueError("First name cannot be empty")
-        if not last_name:
-            raise ValueError("Last name cannot be empty")
         return cls(
             id=id,
             email=email,
@@ -74,40 +78,82 @@ class User:
             is_verified=is_verified,
         )
 
+    def _record_event(self, event: object) -> None:
+        self._events.append(event)
+
+    def pull_events(self) -> list[object]:
+        events = list(self._events)
+        self._events.clear()
+        return events
+
     def rotate_auth_token_version(self) -> None:
         self.auth_token_version += 1
         self.updated_at = utc_now()
 
     def change_password(self, new_password_hash: PasswordHash) -> None:
         """Update password hash and record change."""
+        from .events import UserPasswordChanged
+
         self.password_hash = new_password_hash
         self.rotate_auth_token_version()
+        self._record_event(
+            UserPasswordChanged(
+                user_id=self.id,
+                occurred_at=self.updated_at,
+            )
+        )
 
     def mark_verified(self) -> None:
         self.is_verified = True
         self.updated_at = utc_now()
 
     def deactivate(self) -> None:
+        from .events import UserDeactivated
+
         if not self.is_active:
             return
         self.is_active = False
         self.rotate_auth_token_version()
+        self._record_event(
+            UserDeactivated(
+                user_id=self.id,
+                occurred_at=self.updated_at,
+            )
+        )
 
     def activate(self) -> None:
+        if self.is_active:
+            return
         self.is_active = True
         self.updated_at = utc_now()
 
     def enable_two_factor(self) -> None:
+        from .events import UserTwoFactorEnabled
+
         if self.two_factor_enabled:
             return
         self.two_factor_enabled = True
         self.rotate_auth_token_version()
+        self._record_event(
+            UserTwoFactorEnabled(
+                user_id=self.id,
+                occurred_at=self.updated_at,
+            )
+        )
 
     def disable_two_factor(self) -> None:
+        from .events import UserTwoFactorDisabled
+
         if not self.two_factor_enabled:
             return
         self.two_factor_enabled = False
         self.rotate_auth_token_version()
+        self._record_event(
+            UserTwoFactorDisabled(
+                user_id=self.id,
+                occurred_at=self.updated_at,
+            )
+        )
 
     def record_login(self) -> None:
         self.last_login = utc_now()
@@ -158,5 +204,10 @@ class OAuthToken:
         if expires_at.tzinfo is None or expires_at.utcoffset() is None:
             raise ValueError("OAuth token expiry must be timezone-aware")
 
-    def is_expired(self) -> bool:
-        return utc_now() >= self.expires_at
+    def is_expired(self, buffer_seconds: int = 0) -> bool:
+        if buffer_seconds < 0:
+            raise ValueError("Expiry buffer cannot be negative")
+        return utc_now().timestamp() + buffer_seconds >= self.expires_at.timestamp()
+
+    def should_refresh(self, buffer_seconds: int = 60) -> bool:
+        return self.is_expired(buffer_seconds=buffer_seconds)
