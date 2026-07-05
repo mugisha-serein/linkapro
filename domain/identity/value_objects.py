@@ -1,8 +1,9 @@
 """Immutable value objects for identity."""
 import base64
 import binascii
+import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import ClassVar
 
@@ -19,6 +20,15 @@ class InvalidSecurityReasonError(ValueError):
     pass
 
 
+def _contains_control_character(value: str) -> bool:
+    return any(ord(character) < 32 or ord(character) == 127 for character in value)
+
+
+def _fingerprint_secret(value: str) -> str:
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return f"sha256:{digest[:12]}"
+
+
 class OAuthProvider(str, Enum):
     GOOGLE = "google"
 
@@ -26,18 +36,25 @@ class OAuthProvider(str, Enum):
 @dataclass(frozen=True)
 class SecretValue:
     """Sensitive string value that is safe by default in logs and reprs."""
-    value: str
+    value: str = field(repr=False)
 
     def __post_init__(self) -> None:
         if not self.value or not self.value.strip():
             raise ValueError("Secret value cannot be empty")
+        if _contains_control_character(self.value):
+            raise ValueError("Secret value contains unsafe control characters")
 
     @property
     def raw_value(self) -> str:
+        """Deprecated compatibility accessor; prefer purpose-specific reveal methods."""
         return self.value
 
     def reveal(self) -> str:
+        """Deprecated compatibility accessor; prefer purpose-specific reveal methods."""
         return self.value
+
+    def fingerprint(self) -> str:
+        return _fingerprint_secret(self.value)
 
     def __str__(self) -> str:
         return "******"
@@ -130,21 +147,28 @@ class Email:
 @dataclass(frozen=True)
 class PasswordHash:
     """Hashed password value object. The hash is created by the infrastructure layer."""
-    value: str
+    value: str = field(repr=False)
 
     def __post_init__(self) -> None:
         if not self.value:
             raise ValueError("Password hash cannot be empty")
+        if _contains_control_character(self.value):
+            raise ValueError("Password hash contains unsafe control characters")
 
     @property
     def raw_value(self) -> str:
+        """Deprecated compatibility accessor; prefer reveal_for_password_verification()."""
         return self.value
 
     def reveal(self) -> str:
+        """Deprecated compatibility accessor; prefer reveal_for_password_verification()."""
         return self.value
 
     def reveal_for_password_verification(self) -> str:
         return self.value
+
+    def fingerprint(self) -> str:
+        return _fingerprint_secret(self.value)
 
     def __str__(self) -> str:
         return "******"
@@ -156,9 +180,11 @@ class PasswordHash:
 @dataclass(frozen=True)
 class PlainPassword:
     """Plain-text password used only during registration/password change. Never stored."""
-    value: str
+    value: str = field(repr=False)
 
     def __post_init__(self) -> None:
+        if _contains_control_character(self.value):
+            raise WeakPasswordError("Password contains unsafe control characters")
         if self.value != self.value.strip():
             raise WeakPasswordError("Password cannot start or end with whitespace")
         if len(self.value) < 8:
@@ -181,13 +207,18 @@ class PlainPassword:
 
     def __repr__(self) -> str:
         return "PlainPassword(value='******')"
+
+    def fingerprint(self) -> str:
+        return _fingerprint_secret(self.value)
     
 @dataclass(frozen=True)
 class TOTPSecret:
     """Base32‑encoded TOTP secret."""
-    value: str
+    value: str = field(repr=False)
 
     def __post_init__(self):
+        if _contains_control_character(self.value):
+            raise ValueError("TOTP secret contains unsafe control characters")
         normalized = self.value.strip().upper()
         object.__setattr__(self, "value", normalized)
         unpadded = normalized.rstrip("=")
@@ -202,13 +233,18 @@ class TOTPSecret:
 
     @property
     def raw_value(self) -> str:
+        """Deprecated compatibility accessor; prefer reveal_for_totp_verification()."""
         return self.value
 
     def reveal(self) -> str:
+        """Deprecated compatibility accessor; prefer reveal_for_totp_verification()."""
         return self.value
 
     def reveal_for_totp_verification(self) -> str:
         return self.value
+
+    def fingerprint(self) -> str:
+        return _fingerprint_secret(self.value)
 
     def __str__(self) -> str:
         return "******"

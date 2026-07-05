@@ -64,3 +64,14 @@ class TestIdentityEvents:
                 occurred_at=datetime(2025, 1, 1, tzinfo=UTC),
                 reason="rotated password after support request",
             )
+
+    def test_auth_token_version_is_version_metadata_not_raw_token(self):
+        event = UserPasswordChanged(
+            user_id=uuid.uuid4(),
+            occurred_at=datetime(2025, 1, 1, tzinfo=UTC),
+            auth_token_version=3,
+        )
+        assert event.auth_token_version == 3
+        assert isinstance(event.auth_token_version, int)
+        assert "secret" not in repr(event).lower()
+        assert "raw-token" not in repr(event)
