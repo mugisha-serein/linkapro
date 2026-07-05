@@ -100,6 +100,7 @@ class User:
             UserPasswordChanged(
                 user_id=self.id,
                 occurred_at=self.updated_at,
+                auth_token_version=self.auth_token_version,
             )
         )
 
@@ -118,6 +119,7 @@ class User:
             UserDeactivated(
                 user_id=self.id,
                 occurred_at=self.updated_at,
+                auth_token_version=self.auth_token_version,
             )
         )
 
@@ -138,6 +140,7 @@ class User:
             UserTwoFactorEnabled(
                 user_id=self.id,
                 occurred_at=self.updated_at,
+                auth_token_version=self.auth_token_version,
             )
         )
 
@@ -152,6 +155,7 @@ class User:
             UserTwoFactorDisabled(
                 user_id=self.id,
                 occurred_at=self.updated_at,
+                auth_token_version=self.auth_token_version,
             )
         )
 
@@ -204,10 +208,10 @@ class OAuthToken:
         if expires_at.tzinfo is None or expires_at.utcoffset() is None:
             raise ValueError("OAuth token expiry must be timezone-aware")
 
-    def is_expired(self, buffer_seconds: int = 0) -> bool:
+    def is_expired(self) -> bool:
+        return utc_now() >= self.expires_at
+
+    def should_refresh(self, buffer_seconds: int = 60) -> bool:
         if buffer_seconds < 0:
             raise ValueError("Expiry buffer cannot be negative")
         return utc_now().timestamp() + buffer_seconds >= self.expires_at.timestamp()
-
-    def should_refresh(self, buffer_seconds: int = 60) -> bool:
-        return self.is_expired(buffer_seconds=buffer_seconds)

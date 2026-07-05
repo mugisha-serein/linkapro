@@ -6,8 +6,10 @@ from domain.identity.value_objects import (
     OAuthRefreshToken,
     PasswordHash,
     PlainPassword,
+    SecurityReason,
     TOTPSecret,
     InvalidEmailError,
+    InvalidSecurityReasonError,
     WeakPasswordError,
 )
 
@@ -154,3 +156,17 @@ class TestOAuthTokenValues:
     def test_empty_values_are_rejected(self, token_cls):
         with pytest.raises(ValueError, match="cannot be empty"):
             token_cls("")
+
+
+class TestSecurityReason:
+    def test_reason_is_normalized(self):
+        reason = SecurityReason(" User requested account closure ")
+        assert str(reason) == "User requested account closure"
+
+    @pytest.mark.parametrize(
+        "reason",
+        ["", "   ", "contains password", "contains token", "contains secret", "contains totp", "contains refresh"],
+    )
+    def test_empty_or_secret_like_reason_is_rejected(self, reason):
+        with pytest.raises(InvalidSecurityReasonError):
+            SecurityReason(reason)

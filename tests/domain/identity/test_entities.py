@@ -103,6 +103,7 @@ class TestUserEntity:
         assert len(events) == 1
         assert isinstance(events[0], UserPasswordChanged)
         assert events[0].user_id == user.id
+        assert events[0].auth_token_version == user.auth_token_version
         assert user.pull_events() == []
 
     def test_rotate_auth_token_version_updates_timestamp(self):
@@ -149,6 +150,7 @@ class TestUserEntity:
         assert len(events) == 1
         assert isinstance(events[0], UserDeactivated)
         assert events[0].user_id == user.id
+        assert events[0].auth_token_version == user.auth_token_version
 
     def test_deactivate_only_rotates_once_when_repeated(self):
         user = User(
@@ -164,6 +166,9 @@ class TestUserEntity:
         user.deactivate()
         assert user.is_active is False
         assert user.auth_token_version == 8
+        events = user.pull_events()
+        assert len(events) == 1
+        assert isinstance(events[0], UserDeactivated)
 
     def test_disable_two_factor_rotates_token_version(self):
         user = User(
@@ -195,6 +200,9 @@ class TestUserEntity:
         user.disable_two_factor()
         assert user.two_factor_enabled is False
         assert user.auth_token_version == 5
+        events = user.pull_events()
+        assert len(events) == 1
+        assert isinstance(events[0], UserTwoFactorDisabled)
 
     def test_enable_two_factor_updates_state(self):
         user = User(
@@ -222,6 +230,9 @@ class TestUserEntity:
         user.enable_two_factor()
         assert user.two_factor_enabled is True
         assert user.auth_token_version == 4
+        events = user.pull_events()
+        assert len(events) == 1
+        assert isinstance(events[0], UserTwoFactorEnabled)
 
     def test_activate_is_idempotent(self):
         user = User(
@@ -263,6 +274,7 @@ class TestUserEntity:
             UserTwoFactorDisabled,
         ]
         assert all(event.user_id == user.id for event in events)
+        assert [event.auth_token_version for event in events] == [1, 2]
 
     def test_admin_cannot_self_register(self):
         assert UserRole.ADMIN.can_self_register() is False
@@ -360,7 +372,7 @@ class TestOAuthTokenEntity:
                 expires_at=datetime(2025, 1, 1, 12, 0, 30, tzinfo=UTC),
             )
             assert token.is_expired() is False
-            assert token.is_expired(buffer_seconds=60) is True
+            assert token.should_refresh(buffer_seconds=60) is True
             assert token.should_refresh() is True
 
     def test_negative_expiry_buffer_is_rejected(self):
@@ -374,7 +386,7 @@ class TestOAuthTokenEntity:
             expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
         with pytest.raises(ValueError, match="buffer"):
-            token.is_expired(buffer_seconds=-1)
+            token.should_refresh(buffer_seconds=-1)
 
     def test_expires_at_must_be_timezone_aware(self):
         with pytest.raises(ValueError, match="timezone-aware"):
