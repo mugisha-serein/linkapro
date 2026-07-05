@@ -14,6 +14,13 @@ class UserRole(str, Enum):
     VENDOR = "vendor"
     ADMIN = "admin"
 
+    @classmethod
+    def public_registration_roles(cls) -> tuple["UserRole", ...]:
+        return (cls.PLANNER, cls.VENDOR)
+
+    def can_self_register(self) -> bool:
+        return self in self.public_registration_roles()
+
 
 @dataclass
 class User:
@@ -27,14 +34,19 @@ class User:
     auth_token_version: int = 0
     is_active: bool = True
     is_verified: bool = False
+    auth_token_version: int = 0
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     last_login: Optional[datetime] = None
 
+    def rotate_auth_token_version(self) -> None:
+        self.auth_token_version += 1
+        self.updated_at = utc_now()
+
     def change_password(self, new_password_hash: PasswordHash) -> None:
         """Update password hash and record change."""
         self.password_hash = new_password_hash
-        self.updated_at = utc_now()
+        self.rotate_auth_token_version()
 
     def mark_verified(self) -> None:
         self.is_verified = True
@@ -42,7 +54,7 @@ class User:
 
     def deactivate(self) -> None:
         self.is_active = False
-        self.updated_at = utc_now()
+        self.rotate_auth_token_version()
 
     def activate(self) -> None:
         self.is_active = True
@@ -58,8 +70,8 @@ class OAuthToken:
     user_id: uuid.UUID
     provider: OAuthProvider
     provider_user_id: str
-    access_token: str
-    refresh_token: Optional[str]
+    access_token: str = field(repr=False)
+    refresh_token: Optional[str] = field(repr=False)
     expires_at: datetime
     created_at: datetime = field(default_factory=utc_now)
 
