@@ -31,6 +31,7 @@ class User:
     last_name: str
     role: UserRole
     two_factor_enabled: bool = False
+    auth_token_version: int = 0
     is_active: bool = True
     is_verified: bool = False
     auth_token_version: int = 0

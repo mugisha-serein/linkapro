@@ -423,7 +423,209 @@ cd linkapro
 ```
 ---
 
+
+### Marketplace Projection Operations
+
+FastAPI marketplace search reads from the `marketplace_vendorlisting` projection table. In production, create/update the FastAPI marketplace schema before starting FastAPI; the development-only startup bootstrap is intentionally not used for production schema changes.
+
+```bash
+python -m fastapi_app.bootstrap_db
+python manage.py sync_marketplace_listings
+```
+
+The Django vendor profile remains the source of truth. Run `sync_marketplace_listings` after deployment or data imports to backfill existing approved vendors into the FastAPI projection.
+
+---
+### Rwanda Wedding Workspace Operations
+
+The Rwanda wedding workspace template is system-owned seed data. Wedding event creation automatically ensures the active built-in template exists and clones a private editable workspace for the event in the same transaction.
+
+Run these commands during Django deployments or one-off production maintenance:
+
+```bash
+python manage.py migrate
+python manage.py seed_rwanda_wedding_template
+python manage.py backfill_wedding_workspaces
+```
+
+Normal planners do not need to ask an administrator to prepare a wedding workspace after creating an event. If the bundled workbook seed files are missing from deployment, Django returns a controlled `rwanda_wedding_template_missing` configuration error instead of creating an empty wedding event.
+
+---
+### Render Celery Worker and Beat
+
+Render Celery Worker and Celery Beat services must set `DJANGO_SETTINGS_MODULE=django_app.settings.production`. Celery intentionally fails at startup in Render/production-like environments when this variable is missing.
+
+Required worker/beat environment variables:
+
+```env
+DJANGO_SETTINGS_MODULE=django_app.settings.production
+DJANGO_SECRET_KEY=<production-secret>
+TOKEN_ENV=production
+DATABASE_URL=<production-database-url>
+DATABASE_SSL=true
+REDIS_URL=<redis-or-rediss-url>
+FASTAPI_INTERNAL_URL=<fastapi-internal-url>
+FASTAPI_INTERNAL_SHARED_SECRET=<shared-secret>
+```
+
+For Render/Upstash TLS Redis, `REDIS_URL` can use `rediss://`. The Django settings automatically configure Celery with `ssl.CERT_REQUIRED`; including the query parameter is also valid:
+
+```env
+REDIS_URL=rediss://default:PASSWORD@HOST:PORT?ssl_cert_reqs=CERT_REQUIRED
+```
+
+Example Upstash value:
+
+```env
+REDIS_URL=rediss://default:<PASSWORD>@relevant-eft-112987.upstash.io:6379?ssl_cert_reqs=CERT_REQUIRED
+```
+
+Set this exact format on the Django web service, Celery Worker, and Celery Beat. Do not wrap the value in quotes, add spaces, or split it across lines. Rotate the Redis credential if it has been exposed in logs or chat.
+
+Verify Celery Redis TLS settings from a Render shell:
+
+```bash
+python manage.py check_redis
+python manage.py check_redis --ping
+python manage.py shell -c "from django.conf import settings; print(settings.CELERY_BROKER_URL); print(getattr(settings, 'CELERY_BROKER_USE_SSL', None)); print(getattr(settings, 'CELERY_REDIS_BACKEND_USE_SSL', None))"
+python -c "from tasks.celery import app; print(app.conf.broker_url); print(app.conf.broker_use_ssl); print(app.conf.redis_backend_use_ssl)"
+```
+
+Worker command:
+
+```bash
+celery -A tasks.celery worker --loglevel=info
+```
+
+Beat command:
+
+```bash
+celery -A tasks.celery beat --loglevel=info
+```
+
+---
+### Render FastAPI Marketplace
+
+Required Render environment variables for the FastAPI service:
+
+```env
+FASTAPI_ENV=production
+FASTAPI_CORS_ORIGINS=https://www.linkapro.rw,https://linkapro.rw,https://linkapro.vercel.app
+REDIS_URL=rediss://default:<PASSWORD>@relevant-eft-112987.upstash.io:6379?ssl_cert_reqs=required
+FASTAPI_DATABASE_URL=postgresql+asyncpg://<USER>:<PASSWORD>@<HOST>:<PORT>/<DATABASE>
+```
+
+FastAPI marketplace search treats Redis cache/rate limiting as optional. If Redis is unavailable, public search continues against PostgreSQL and logs `marketplace_redis_unavailable` without exposing Redis credentials.
+
+---
+### Production Email / Password Reset
+
+Password reset emails use Django's SMTP email backend with SendGrid SMTP in production. Production settings fail fast when password reset email requirements are missing, while the forgot-password API still returns a generic `202 Accepted` response to avoid account enumeration.
+
+Password reset links are single-use. Django stores only a reset token `jti` and HMAC token hash, never the raw token or full reset URL. Requesting a new reset link revokes older active links for that user, and a successful reset marks the token as used. Legacy JWT-only reset links issued before single-use tracking are invalid after deployment; users can request a fresh reset link.
+
+Password recovery and identity auth endpoints use Redis-backed DRF throttles keyed by HMAC fingerprints rather than raw emails, reset tokens, or MFA temp tokens:
+
+```env
+FORGOT_PASSWORD_IP_RATE=5/min
+FORGOT_PASSWORD_EMAIL_RATE=3/hour
+RESET_PASSWORD_IP_RATE=10/min
+RESET_PASSWORD_TOKEN_RATE=5/hour
+LOGIN_IP_RATE=10/min
+LOGIN_EMAIL_RATE=5/min
+LOGIN_USER_RATE=20/hour
+REGISTER_IP_RATE=5/hour
+REGISTER_EMAIL_DOMAIN_RATE=20/hour
+TWO_FACTOR_IP_RATE=10/min
+TWO_FACTOR_TEMP_TOKEN_RATE=5/min
+LOGIN_FAILURE_LOCKOUT_THRESHOLD=8
+LOGIN_FAILURE_LOCKOUT_SECONDS=900
+MFA_FAILURE_LOCKOUT_THRESHOLD=5
+MFA_FAILURE_LOCKOUT_SECONDS=900
+RATE_LIMIT_HASH_KEY=<optional-dedicated-hmac-key>
+PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR=true
+```
+
+Set `PASSWORD_RECOVERY_TRUST_X_FORWARDED_FOR=true` only on services behind Render or another trusted proxy that overwrites the forwarding header. Direct deployments should leave it `false` so clients cannot spoof their source IP. If the Redis-backed cache is unavailable, password recovery, login, registration, and MFA login fail closed with a safe `429` and log `rate_limiter_unavailable`.
+
+Login, registration, and MFA throttled responses use the standard identity error envelope:
+
+```json
+{"success":false,"code":"login_rate_limited","message":"Too many sign-in attempts. Please try again later.","field_errors":{}}
+```
+
+```json
+{"success":false,"code":"registration_rate_limited","message":"Too many account creation attempts. Please try again later.","field_errors":{}}
+```
+
+```json
+{"success":false,"code":"mfa_rate_limited","message":"Too many verification attempts. Please try again later.","field_errors":{}}
+```
+
+Password recovery responses use a stable envelope:
+
+```json
+{"success":true,"code":"password_reset_email_queued","message":"If an account exists for that email, password reset instructions have been sent.","data":{}}
+```
+
+```json
+{"success":false,"code":"password_reset_token_invalid","message":"This reset link has expired or is invalid.","field_errors":{"token":["Invalid or expired reset token."]}}
+```
+
+The forgot-password response temporarily retains `detail`, and reset success temporarily retains top-level `status`, while clients migrate to `message` and `data.status`.
+
+Required Render environment variables for Django web, Celery Worker, and Celery Beat:
+
+```env
+TOKEN_ENV=production
+SENDGRID_API_KEY=<sendgrid-api-key>
+DEFAULT_FROM_EMAIL=no-reply@linkapro.rw
+FRONTEND_URL=https://www.linkapro.rw
+LOGIN_IP_RATE=10/min
+LOGIN_EMAIL_RATE=5/min
+LOGIN_USER_RATE=20/hour
+REGISTER_IP_RATE=5/hour
+REGISTER_EMAIL_DOMAIN_RATE=20/hour
+TWO_FACTOR_IP_RATE=10/min
+TWO_FACTOR_TEMP_TOKEN_RATE=5/min
+LOGIN_FAILURE_LOCKOUT_THRESHOLD=8
+LOGIN_FAILURE_LOCKOUT_SECONDS=900
+MFA_FAILURE_LOCKOUT_THRESHOLD=5
+MFA_FAILURE_LOCKOUT_SECONDS=900
+RATE_LIMIT_HASH_KEY=<strong-dedicated-hmac-key>
+```
+
+`TOKEN_ENV` controls identity/security token validity for access tokens, refresh tokens, password reset links, email verification links, and temporary 2FA tokens. Keep it stable as `production` across Django web, Celery Worker, and Celery Beat.
+
+`PAYMENT_ENV` controls payment provider mode only, for example `PAYMENT_ENV=test` or `PAYMENT_ENV=live`. Changing `PAYMENT_ENV` must not invalidate identity tokens or password reset links.
+
+During the transition away from legacy identity tokens that used `PAYMENT_ENV`, the backend can accept them with:
+
+```env
+ACCEPT_LEGACY_PAYMENT_ENV_TOKENS=true
+```
+
+Set this to `false` after existing short-lived reset/email/2FA/session tokens have expired.
+
+Production settings provide these SendGrid SMTP defaults:
+
+```env
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.sendgrid.net
+EMAIL_PORT=587
+EMAIL_USE_TLS=true
+EMAIL_HOST_USER=apikey
+```
+
+To verify email configuration from a Render shell or one-off job:
+
+```bash
+python manage.py send_test_email --to ops@example.com
+```
+
+---
 ### 🌐 Service Access Points
+
 
 ---
 

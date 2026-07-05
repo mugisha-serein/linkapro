@@ -1,5 +1,6 @@
 from .base import *
 from .base import _csv_env
+from django_app.common.redis_config import redis_ssl_options, redis_uses_tls
 
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
@@ -26,6 +27,9 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 # Celery Configuration for Local Development
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
+if redis_uses_tls(REDIS_URL):
+    CELERY_BROKER_USE_SSL = redis_ssl_options(REDIS_URL)
+    CELERY_REDIS_BACKEND_USE_SSL = redis_ssl_options(REDIS_URL)
 
 # CORS Configuration for Local Development
 # Allow requests from localhost frontend
@@ -43,11 +47,13 @@ CSRF_TRUSTED_ORIGINS = _csv_env(
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 FASTAPI_INTERNAL_URL = os.environ.get("FASTAPI_INTERNAL_URL", "http://localhost:8001")
+TOKEN_ENV = os.environ.get("TOKEN_ENV", "development")
 
 # Cache Configuration for Local Development
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
         'LOCATION': REDIS_URL,
+        **({"OPTIONS": redis_ssl_options(REDIS_URL)} if redis_uses_tls(REDIS_URL) else {}),
     }
 }

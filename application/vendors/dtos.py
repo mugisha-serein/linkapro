@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, List
 import uuid
 
@@ -13,7 +14,10 @@ class VendorProfileDTO:
     service_area: str
     contact_email: str
     contact_phone: str
+    custom_category: Optional[str]
     website: Optional[str]
+    profile_image_url: Optional[str]
+    cover_image_url: Optional[str]
     status: str
     submitted_at: Optional[datetime]
     approved_at: Optional[datetime]
@@ -27,6 +31,27 @@ class PortfolioImageDTO:
     secure_url: str
     caption: Optional[str]
     order: int
+    media_type: str = "image"
+    upload_status: str = "uploaded"
+    quality_status: str = "passed"
+    visibility_status: str = "approved"
+    upload_error: Optional[str] = None
+    failure_reason: Optional[str] = None
+    rejection_reason: Optional[str] = None
+    original_filename: Optional[str] = None
+    mime_type: str = ""
+    file_size: int = 0
+    local_preview_url: Optional[str] = None
+    cloudinary_public_id: Optional[str] = None
+    cloudinary_secure_url: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration_seconds: Optional[int] = None
+    analyzer_score: Optional[int] = None
+    analyzer_summary: Optional[str] = None
+    is_active: bool = True
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
 
 @dataclass(frozen=True)
 class ServicePackageDTO:
@@ -34,9 +59,14 @@ class ServicePackageDTO:
     vendor_id: uuid.UUID
     name: str
     description: str
-    price: float
+    price: Decimal
     currency: str
+    package_tier: str
+    approval_status: str
+    rejection_reason: Optional[str]
     is_active: bool
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
 
 @dataclass(frozen=True)
 class InquiryDTO:

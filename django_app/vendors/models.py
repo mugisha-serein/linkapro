@@ -1,7 +1,12 @@
+from datetime import timedelta
 import uuid
 from django.db import models
 from django.utils import timezone
+from django_app.common.models import SoftDeleteModel
 from django_app.identity.models import User
+
+VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS = 15
+
 
 class VendorProfile(models.Model):
     class Status(models.TextChoices):
@@ -25,11 +30,16 @@ class VendorProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="vendor_profile")
     business_name = models.CharField(max_length=200)
     category = models.CharField(max_length=30, choices=Category.choices)
+    custom_category = models.CharField(max_length=120, blank=True, null=True)
     description = models.TextField()
     service_area = models.CharField(max_length=200)
     contact_email = models.EmailField()
     contact_phone = models.CharField(max_length=30)
     website = models.URLField(blank=True, null=True)
+    profile_image_url = models.URLField(blank=True, null=True)
+    profile_image_public_id = models.CharField(max_length=255, blank=True, null=True)
+    cover_image_url = models.URLField(blank=True, null=True)
+    cover_image_public_id = models.CharField(max_length=255, blank=True, null=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     submitted_at = models.DateTimeField(null=True, blank=True)
     approved_at = models.DateTimeField(null=True, blank=True)
@@ -60,6 +70,8 @@ class VendorProfile(models.Model):
                 errors[field_name] = ["This field is required."]
         if self.description and len(self.description.strip()) < 20:
             errors["description"] = ["Use at least 20 characters for your description."]
+        if self.category == self.Category.OTHER and not (self.custom_category or "").strip():
+            errors["custom_category"] = ["Tell us what service you provide when choosing Other."]
         return errors
 
     @property
@@ -70,14 +82,67 @@ class VendorProfile(models.Model):
         return self.status != self.Status.DRAFT and self.is_profile_complete
 
 
-class PortfolioImage(models.Model):
+class PortfolioImage(SoftDeleteModel):
+    class MediaType(models.TextChoices):
+        IMAGE = "image", "Image"
+        VIDEO = "video", "Video"
+
+    class UploadStatus(models.TextChoices):
+        STAGED = "staged", "Staged"
+        QUEUED = "queued", "Queued"
+        PROCESSING = "processing", "Processing"
+        UPLOADED = "uploaded", "Uploaded"
+        PROCESSING_DEFERRED = "processing_deferred", "Processing Deferred"
+        FAILED = "failed", "Failed"
+
+    class QualityStatus(models.TextChoices):
+        PENDING_ANALYSIS = "pending_analysis", "Pending Analysis"
+        PASSED = "passed", "Passed"
+        FAILED = "failed", "Failed"
+        NEEDS_MANUAL_REVIEW = "needs_manual_review", "Needs Manual Review"
+
+    class VisibilityStatus(models.TextChoices):
+        PRIVATE = "private", "Private"
+        WAITING_APPROVAL = "waiting_approval", "Waiting Approval"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="images")
-    public_id = models.CharField(max_length=200)
-    secure_url = models.URLField()
+    public_id = models.CharField(max_length=200, blank=True)
+    secure_url = models.URLField(blank=True)
+    media_type = models.CharField(max_length=10, choices=MediaType.choices, default=MediaType.IMAGE)
     caption = models.CharField(max_length=500, blank=True, null=True)
     order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    upload_status = models.CharField(max_length=30, choices=UploadStatus.choices, default=UploadStatus.UPLOADED)
+    quality_status = models.CharField(
+        max_length=30,
+        choices=QualityStatus.choices,
+        default=QualityStatus.PASSED,
+    )
+    visibility_status = models.CharField(
+        max_length=30,
+        choices=VisibilityStatus.choices,
+        default=VisibilityStatus.APPROVED,
+    )
+    upload_error = models.TextField(blank=True, null=True)
+    failure_reason = models.TextField(blank=True, null=True)
+    rejection_reason = models.TextField(blank=True, null=True)
+    original_filename = models.CharField(max_length=255, blank=True, null=True)
+    mime_type = models.CharField(max_length=100, blank=True)
+    file_size = models.PositiveIntegerField(default=0)
+    temp_upload_path = models.CharField(max_length=500, blank=True, null=True)
+    local_preview_url = models.URLField(blank=True, null=True)
+    cloudinary_public_id = models.CharField(max_length=255, blank=True, null=True)
+    cloudinary_secure_url = models.URLField(blank=True, null=True)
+    width = models.PositiveIntegerField(blank=True, null=True)
+    height = models.PositiveIntegerField(blank=True, null=True)
+    duration_seconds = models.PositiveIntegerField(blank=True, null=True)
+    analyzer_score = models.PositiveSmallIntegerField(blank=True, null=True)
+    analyzer_summary = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["order"]
@@ -86,19 +151,67 @@ class PortfolioImage(models.Model):
         return f"Image {self.order} for {self.vendor.business_name}"
 
 
-class ServicePackage(models.Model):
+class ServicePackage(SoftDeleteModel):
+    class PackageTier(models.TextChoices):
+        STANDARD = "standard", "Standard"
+        PREMIER = "premier", "Premier"
+        GOLD = "gold", "Gold"
+
+    class ApprovalStatus(models.TextChoices):
+        WAITING_APPROVAL = "waiting_approval", "Waiting Approval"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="packages")
     name = models.CharField(max_length=200)
     description = models.TextField()
     price = models.DecimalField(max_digits=12, decimal_places=2)
     currency = models.CharField(max_length=3, default="RWF")
+    package_tier = models.CharField(max_length=20, choices=PackageTier.choices, default=PackageTier.STANDARD)
+    approval_status = models.CharField(
+        max_length=30,
+        choices=ApprovalStatus.choices,
+        default=ApprovalStatus.WAITING_APPROVAL,
+    )
+    rejection_reason = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
+    last_approved_at = models.DateTimeField(null=True, blank=True)
+    last_vendor_public_edit_at = models.DateTimeField(null=True, blank=True)
+    next_vendor_edit_allowed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.name} - {self.vendor.business_name}"
+
+    @staticmethod
+    def vendor_edit_cooldown_delta() -> timedelta:
+        return timedelta(days=VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS)
+
+    def approve(self):
+        approved_at = timezone.now()
+        self.approval_status = self.ApprovalStatus.APPROVED
+        self.rejection_reason = None
+        self.is_active = True
+        self.last_approved_at = approved_at
+        self.next_vendor_edit_allowed_at = approved_at + self.vendor_edit_cooldown_delta()
+        self.save(
+            update_fields=[
+                "approval_status",
+                "rejection_reason",
+                "is_active",
+                "last_approved_at",
+                "next_vendor_edit_allowed_at",
+                "updated_at",
+            ]
+        )
+
+    def reject(self, reason: str):
+        self.approval_status = self.ApprovalStatus.REJECTED
+        self.rejection_reason = reason
+        self.is_active = False
+        self.save(update_fields=["approval_status", "rejection_reason", "is_active", "updated_at"])
 
 
 class Inquiry(models.Model):
@@ -130,15 +243,46 @@ class VerificationDocument(models.Model):
         REVIEW_REQUIRED = "review_required", "Review Required"
         REJECTED = "rejected", "Rejected"
 
+    class UploadStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        QUEUED = "queued", "Queued"
+        PROCESSING = "processing", "Processing"
+        PROCESSING_DEFERRED = "processing_deferred", "Processing Deferred"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    class VerificationStatus(models.TextChoices):
+        PENDING_REVIEW = "pending_review", "Pending Review"
+        NEEDS_MANUAL_REVIEW = "needs_manual_review", "Needs Manual Review"
+        VERIFIED = "verified", "Verified"
+        REJECTED = "rejected", "Rejected"
+        FAILED = "failed", "Failed"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="verification_documents")
     document_type = models.CharField(max_length=40, choices=DocumentType.choices)
     original_filename = models.CharField(max_length=255)
-    secure_url = models.URLField()
+    mime_type = models.CharField(max_length=100, blank=True)
+    file_size = models.PositiveIntegerField(default=0)
+    secure_url = models.URLField(blank=True)
+    cloudinary_public_id = models.CharField(max_length=255, blank=True, null=True)
+    cloudinary_secure_url = models.URLField(blank=True, null=True)
+    upload_status = models.CharField(max_length=20, choices=UploadStatus.choices, default=UploadStatus.PENDING)
+    verification_status = models.CharField(
+        max_length=30,
+        choices=VerificationStatus.choices,
+        default=VerificationStatus.PENDING_REVIEW,
+    )
+    failure_reason = models.TextField(blank=True, null=True)
+    temp_upload_path = models.CharField(max_length=500, blank=True, null=True)
+    odcr_status = models.CharField(max_length=40, blank=True, null=True)
+    odcr_score = models.PositiveSmallIntegerField(blank=True, null=True)
+    odcr_result_summary = models.TextField(blank=True, null=True)
     fraud_status = models.CharField(max_length=20, choices=FraudStatus.choices, default=FraudStatus.PENDING)
     fraud_score = models.PositiveSmallIntegerField(default=0)
     fraud_reasons = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.document_type} for {self.vendor.business_name}"

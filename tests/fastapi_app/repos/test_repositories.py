@@ -55,9 +55,9 @@ class TestAsyncVendorListingRepository:
             cover_image_url=None,
         ))
 
-        items, total = await repo.search(query="Updated")
-        assert total == 1
-        assert items[0].business_name == "Updated"
+        retrieved = await repo.get_by_vendor_id(vendor_id)
+        assert retrieved is not None
+        assert retrieved.business_name == "Updated"
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="Full-text search requires PostgreSQL pg_trgm")
@@ -65,63 +65,10 @@ class TestAsyncVendorListingRepository:
         pass
 
     @pytest.mark.asyncio
-    async def test_search_with_filters(self, session: AsyncSession):
+    async def test_legacy_search_path_is_disabled(self, session: AsyncSession):
         repo = AsyncVendorListingRepository(session)
-        await repo.save(VendorListing(
-            id=uuid.uuid4(),
-            vendor_id=uuid.uuid4(),
-            business_name="Photo",
-            category="photography",
-            description="...",
-            service_area="Kigali",
-            cover_image_url=None,
-            average_rating=4.5,
-        ))
-        await repo.save(VendorListing(
-            id=uuid.uuid4(),
-            vendor_id=uuid.uuid4(),
-            business_name="Catering",
-            category="catering",
-            description="...",
-            service_area="Kigali",
-            cover_image_url=None,
-            average_rating=3.0,
-        ))
-
-        items, total = await repo.search(category="photography", min_rating=4.0)
-        assert total == 1
-        assert items[0].category == "photography"
-
-    @pytest.mark.asyncio
-    async def test_search_ranking_and_stable_order(self, session: AsyncSession):
-        repo = AsyncVendorListingRepository(session)
-        vendor_a = uuid.uuid4()
-        vendor_b = uuid.uuid4()
-
-        await repo.save(VendorListing(
-            id=uuid.uuid4(),
-            vendor_id=vendor_a,
-            business_name="Photo Studio",
-            category="photography",
-            description="Exact match studio",
-            service_area="Kigali",
-            cover_image_url=None,
-            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        ))
-        await repo.save(VendorListing(
-            id=uuid.uuid4(),
-            vendor_id=vendor_b,
-            business_name="Photo Works",
-            category="photography",
-            description="Prefix match",
-            service_area="Kigali",
-            cover_image_url=None,
-            created_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
-        ))
-
-        items, total = await repo.search(query="Photo Studio")
-        assert total == 1
-        assert items[0].business_name == "Photo Studio"
+        with pytest.raises(RuntimeError, match="Legacy marketplace search path is disabled"):
+            await repo.search(category="photography", min_rating=4.0)
 
 
 class TestAsyncReviewRepository:

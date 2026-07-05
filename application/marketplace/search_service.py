@@ -4,6 +4,7 @@ import logging
 import re
 import time
 from dataclasses import asdict, dataclass
+from decimal import Decimal
 from typing import Optional
 
 from redis.asyncio import Redis
@@ -29,8 +30,8 @@ class MarketplaceSearchCriteria:
     category: Optional[str] = None
     location: Optional[str] = None
     min_rating: Optional[float] = None
-    min_price: Optional[float] = None
-    max_price: Optional[float] = None
+    min_price: Optional[Decimal] = None
+    max_price: Optional[Decimal] = None
     page: int = 1
     page_size: int = 20
 
@@ -74,8 +75,8 @@ class MarketplaceSearchCache:
             "category": self._normalize(criteria.category),
             "location": self._normalize(criteria.location),
             "min_rating": criteria.min_rating,
-            "min_price": criteria.min_price,
-            "max_price": criteria.max_price,
+            "min_price": str(criteria.min_price) if criteria.min_price is not None else None,
+            "max_price": str(criteria.max_price) if criteria.max_price is not None else None,
             "page": criteria.page,
             "page_size": criteria.page_size,
         }
@@ -123,13 +124,12 @@ class MarketplaceSearchCache:
 
     @staticmethod
     def _serialize_result(result: SearchResultDTO) -> dict:
-        return {
-            "items": [asdict(item) for item in result.items],
-            "total": result.total,
-            "page": result.page,
-            "page_size": result.page_size,
-            "total_pages": result.total_pages,
-        }
+        payload = asdict(result)
+        for item in payload["items"]:
+            for field in ("starting_price", "min_package_price", "max_package_price"):
+                if item.get(field) is not None:
+                    item[field] = str(item[field])
+        return payload
 
 
 class MarketplaceSearchService:
@@ -153,8 +153,8 @@ class MarketplaceSearchService:
                 "page": normalized.page,
                 "page_size": normalized.page_size,
                 "min_rating": normalized.min_rating,
-                "min_price": normalized.min_price,
-                "max_price": normalized.max_price,
+                "min_price": str(normalized.min_price) if normalized.min_price is not None else None,
+                "max_price": str(normalized.max_price) if normalized.max_price is not None else None,
             },
         )
         cache_key = None
@@ -182,7 +182,11 @@ class MarketplaceSearchService:
                     )
                     return self._payload_to_result(cached)
             except RedisError:
-                logger.exception("Redis unavailable for marketplace search; continuing with database query.")
+                logger.warning(
+                    "marketplace_redis_unavailable",
+                    extra={"operation": "read_or_rate_limit"},
+                    exc_info=True,
+                )
                 cache_key = None
 
         result = await self._execute_search(normalized)
@@ -190,7 +194,11 @@ class MarketplaceSearchService:
             try:
                 await self.cache.set_cached_result(cache_key, result)
             except RedisError:
-                logger.exception("Failed to cache marketplace search result.")
+                logger.warning(
+                    "marketplace_redis_unavailable",
+                    extra={"operation": "write"},
+                    exc_info=True,
+                )
 
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
         logger.info(
@@ -227,10 +235,17 @@ class MarketplaceSearchService:
             VendorListingModel.average_rating.label("average_rating"),
             VendorListingModel.total_reviews.label("total_reviews"),
             VendorListingModel.is_verified.label("is_verified"),
+            VendorListingModel.starting_price.label("starting_price"),
+            VendorListingModel.min_package_price.label("min_package_price"),
+            VendorListingModel.max_package_price.label("max_package_price"),
+            VendorListingModel.currency.label("currency"),
             VendorListingModel.created_at.label("created_at"),
         ]
 
-        conditions = [VendorListingModel.approval_status == "approved"]
+        conditions = [
+            VendorListingModel.approval_status == "approved",
+            VendorListingModel.is_verified.is_(True),
+        ]
         ts_query = None
         if normalized_query:
             ts_query = func.plainto_tsquery("simple", normalized_query)
@@ -238,18 +253,13 @@ class MarketplaceSearchService:
         if normalized_category:
             conditions.append(func.lower(VendorListingModel.category) == normalized_category)
         if normalized_location:
-            conditions.append(func.lower(VendorListingModel.service_area) == normalized_location)
+            conditions.append(func.lower(VendorListingModel.service_area).like(f"%{normalized_location}%"))
         if criteria.min_rating is not None:
             conditions.append(VendorListingModel.average_rating >= criteria.min_rating)
-
-        if criteria.min_price is not None or criteria.max_price is not None:
-            logger.warning(
-                "Marketplace search received price filters, but the projection currently does not expose a price column.",
-                extra={
-                    "min_price": criteria.min_price,
-                    "max_price": criteria.max_price,
-                },
-            )
+        if criteria.min_price is not None:
+            conditions.append(VendorListingModel.min_package_price >= criteria.min_price)
+        if criteria.max_price is not None:
+            conditions.append(VendorListingModel.min_package_price <= criteria.max_price)
 
         where_clause = and_(*conditions)
 
@@ -320,8 +330,8 @@ class MarketplaceSearchService:
             category=MarketplaceSearchService._normalize_text(criteria.category),
             location=MarketplaceSearchService._normalize_text(criteria.location),
             min_rating=criteria.min_rating,
-            min_price=criteria.min_price,
-            max_price=criteria.max_price,
+            min_price=Decimal(str(criteria.min_price)) if criteria.min_price is not None else None,
+            max_price=Decimal(str(criteria.max_price)) if criteria.max_price is not None else None,
             page=max(1, min(criteria.page, MAX_PAGE_NUMBER)),
             page_size=max(1, min(criteria.page_size, MAX_PAGE_SIZE)),
         )
@@ -340,7 +350,7 @@ class MarketplaceSearchService:
     @staticmethod
     def _row_to_dto(row) -> VendorListingDTO:
         return VendorListingDTO(
-            id=str(row["id"]),
+            id=str(row["vendor_id"]),
             business_name=row["business_name"],
             category=row["category"],
             description=row["description"],
@@ -349,13 +359,23 @@ class MarketplaceSearchService:
             average_rating=float(row["average_rating"] or 0.0),
             total_reviews=int(row["total_reviews"] or 0),
             is_verified=bool(row["is_verified"]),
+            starting_price=row["starting_price"],
+            min_package_price=row["min_package_price"],
+            max_package_price=row["max_package_price"],
+            currency=row["currency"],
         )
 
     @staticmethod
     def _payload_to_result(payload: MarketplaceSearchResultPayload) -> SearchResultDTO:
-        items = [VendorListingDTO(**item) for item in payload.items]
+        converted_items = []
+        for item in payload.items:
+            converted = dict(item)
+            for field in ("starting_price", "min_package_price", "max_package_price"):
+                if converted.get(field) is not None:
+                    converted[field] = Decimal(str(converted[field]))
+            converted_items.append(VendorListingDTO(**converted))
         return SearchResultDTO(
-            items=items,
+            items=converted_items,
             total=payload.total,
             page=payload.page,
             page_size=payload.page_size,

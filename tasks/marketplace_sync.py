@@ -1,11 +1,55 @@
-import httpx
 import logging
-from django.conf import settings
+
+from celery import shared_task
+
+from django_app.governance.marketplace_outbox import (
+    deliver_marketplace_projection_outbox_event,
+    retry_due_marketplace_projection_outbox_events,
+)
+from django_app.governance.marketplace_reconciliation import reconcile_marketplace_projection
+from infrastructure.adapters.marketplace_projection import (
+    delete_vendor_from_marketplace,
+    sync_vendor_payload_to_marketplace,
+)
 
 logger = logging.getLogger(__name__)
 
-def _marketplace_sync_configured() -> bool:
-    return bool(settings.FASTAPI_INTERNAL_URL and settings.FASTAPI_INTERNAL_SHARED_SECRET)
+
+@shared_task(
+    bind=True,
+    max_retries=5,
+    retry_backoff=True,
+    retry_jitter=True,
+    name="tasks.marketplace_sync.deliver_marketplace_projection_outbox_event_task",
+)
+def deliver_marketplace_projection_outbox_event_task(self, event_id: str) -> bool:
+    try:
+        return deliver_marketplace_projection_outbox_event(event_id)
+    except Exception as exc:
+        logger.warning(
+            "marketplace_projection_outbox_retry_scheduled",
+            extra={"event_id": event_id, "attempt": int(getattr(self.request, "retries", 0) or 0) + 1},
+            exc_info=True,
+        )
+        raise self.retry(exc=exc)
+
+
+@shared_task(name="tasks.marketplace_sync.retry_due_marketplace_projection_outbox_events_task")
+def retry_due_marketplace_projection_outbox_events_task(batch_size: int | None = None) -> dict:
+    return retry_due_marketplace_projection_outbox_events(batch_size=batch_size)
+
+
+@shared_task(name="tasks.marketplace_sync.reconcile_marketplace_projection_task")
+def reconcile_marketplace_projection_task() -> dict:
+    result = reconcile_marketplace_projection()
+    return {
+        "django_approved_complete_count": result.django_approved_complete_count,
+        "fastapi_projection_count": result.fastapi_projection_count,
+        "stale_projection_count": result.stale_projection_count,
+        "deleted_stale_count": result.deleted_stale_count,
+        "upsert_enqueued_count": result.upsert_enqueued_count,
+        "dry_run": result.dry_run,
+    }
 
 
 def sync_vendor_listing_to_fastapi(
@@ -16,52 +60,27 @@ def sync_vendor_listing_to_fastapi(
     service_area: str,
     cover_image_url: str = None,
     approval_status: str = "approved",
+    is_verified: bool = True,
+    starting_price: str | None = None,
+    min_package_price: str | None = None,
+    max_package_price: str | None = None,
+    currency: str | None = None,
 ):
-    if not _marketplace_sync_configured():
-        logger.warning("[Marketplace Sync Skipped] FastAPI internal URL or shared secret is not configured.")
-        return {"status": "skipped"}
-
-    # In production, use internal service call or shared DB access
-    # For simplicity, call FastAPI internal endpoint (could use repository directly if shared)
-    payload = {
-        "vendor_id": vendor_id,
-        "business_name": business_name,
-        "category": category,
-        "description": description,
-        "service_area": service_area,
-        "cover_image_url": cover_image_url,
-        "approval_status": approval_status,
-        "is_approved": approval_status == "approved",
-    }
-    try:
-        response = httpx.post(
-            f"{settings.FASTAPI_INTERNAL_URL}/internal/listings",
-            json=payload,
-            timeout=10,
-            headers={"X-Internal-Secret": settings.FASTAPI_INTERNAL_SHARED_SECRET},
-        )
-        response.raise_for_status()
-        logger.info("[Marketplace Sync OK] vendor_id=%s", vendor_id)
-        return response.json()
-    except Exception as e:
-        logger.exception(f"[Marketplace Sync Failed] {str(e)}")
-        raise
+    return sync_vendor_payload_to_marketplace(
+        vendor_id=vendor_id,
+        business_name=business_name,
+        category=category,
+        description=description,
+        service_area=service_area,
+        cover_image_url=cover_image_url,
+        approval_status=approval_status,
+        is_verified=is_verified,
+        starting_price=starting_price,
+        min_package_price=min_package_price,
+        max_package_price=max_package_price,
+        currency=currency,
+    )
 
 
 def delete_vendor_listing_from_fastapi(vendor_id: str):
-    if not _marketplace_sync_configured():
-        logger.warning("[Marketplace Delete Skipped] FastAPI internal URL or shared secret is not configured.")
-        return {"status": "skipped"}
-
-    try:
-        response = httpx.delete(
-            f"{settings.FASTAPI_INTERNAL_URL}/internal/listings/{vendor_id}",
-            timeout=10,
-            headers={"X-Internal-Secret": settings.FASTAPI_INTERNAL_SHARED_SECRET},
-        )
-        response.raise_for_status()
-        logger.info("[Marketplace Delete OK] vendor_id=%s", vendor_id)
-        return response.json()
-    except Exception as e:
-        logger.exception(f"[Marketplace Delete Failed] {str(e)}")
-        raise
+    return delete_vendor_from_marketplace(vendor_id)

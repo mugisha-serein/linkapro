@@ -21,6 +21,22 @@ async def apply_marketplace_search_schema(connection: AsyncConnection) -> None:
     ))
     await connection.execute(text(
         "ALTER TABLE marketplace_vendorlisting "
+        "ADD COLUMN IF NOT EXISTS starting_price NUMERIC(12, 2)"
+    ))
+    await connection.execute(text(
+        "ALTER TABLE marketplace_vendorlisting "
+        "ADD COLUMN IF NOT EXISTS min_package_price NUMERIC(12, 2)"
+    ))
+    await connection.execute(text(
+        "ALTER TABLE marketplace_vendorlisting "
+        "ADD COLUMN IF NOT EXISTS max_package_price NUMERIC(12, 2)"
+    ))
+    await connection.execute(text(
+        "ALTER TABLE marketplace_vendorlisting "
+        "ADD COLUMN IF NOT EXISTS currency VARCHAR(10)"
+    ))
+    await connection.execute(text(
+        "ALTER TABLE marketplace_vendorlisting "
         "ADD COLUMN IF NOT EXISTS search_vector TSVECTOR "
         "GENERATED ALWAYS AS ("
         "to_tsvector('simple', "
@@ -50,6 +66,14 @@ async def apply_marketplace_search_schema(connection: AsyncConnection) -> None:
     await connection.execute(text(
         "CREATE INDEX IF NOT EXISTS ix_marketplace_vendorlisting_approval_status "
         "ON marketplace_vendorlisting (approval_status)"
+    ))
+    await connection.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_marketplace_vendorlisting_min_package_price "
+        "ON marketplace_vendorlisting (min_package_price)"
+    ))
+    await connection.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_marketplace_vendorlisting_max_package_price "
+        "ON marketplace_vendorlisting (max_package_price)"
     ))
     await connection.execute(text(
         "CREATE INDEX IF NOT EXISTS idx_marketplace_search_vector "

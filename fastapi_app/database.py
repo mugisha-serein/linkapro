@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 from sqlalchemy.orm import declarative_base
+from fastapi_app.config import get_database_engine_options, normalize_database_url
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / ".env")
@@ -20,24 +21,11 @@ if not DATABASE_URL:
         "DATABASE_URL is missing. Set FASTAPI_DATABASE_URL or DATABASE_URL in environment."
     )
 
-DATABASE_URL = DATABASE_URL.strip()
-
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
-elif DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-
-if "asyncpg" not in DATABASE_URL:
-    raise RuntimeError(
-        f"Invalid DB config: asyncpg required, got {DATABASE_URL}"
-    )
-
-# print("[FASTAPI DB]", DATABASE_URL)
+DATABASE_URL = normalize_database_url(DATABASE_URL)
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=False,
-    future=True,
+    **get_database_engine_options(DATABASE_URL),
 )
 
 AsyncSessionLocal = async_sessionmaker(

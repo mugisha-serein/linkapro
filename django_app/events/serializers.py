@@ -6,12 +6,26 @@ from application.events.commands import (
 )
 
 class CreateEventSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=200)
+    name = serializers.CharField(max_length=200, required=False)
+    title = serializers.CharField(max_length=200, required=False, write_only=True)
     event_type = serializers.ChoiceField(choices=["wedding", "travel", "corporate", "other"])
     event_date = serializers.DateField()
     venue = serializers.CharField(max_length=300, required=False, allow_blank=True)
+    location = serializers.CharField(max_length=300, required=False, allow_blank=True, write_only=True)
     expected_guests = serializers.IntegerField(min_value=0, default=0)
+    guest_count = serializers.IntegerField(min_value=0, required=False, write_only=True)
     total_budget = serializers.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    country = serializers.CharField(max_length=100, default="Rwanda")
+
+    def validate(self, attrs):
+        attrs["name"] = attrs.get("name") or attrs.get("title")
+        if not attrs["name"]:
+            raise serializers.ValidationError({"name": ["This field is required."]})
+        if "venue" not in attrs and "location" in attrs:
+            attrs["venue"] = attrs["location"]
+        if "guest_count" in attrs:
+            attrs["expected_guests"] = attrs["guest_count"]
+        return attrs
 
     def to_command(self, planner_id):
         return CreateEventCommand(
@@ -32,6 +46,7 @@ class UpdateEventSerializer(serializers.Serializer):
     venue = serializers.CharField(max_length=300, required=False, allow_blank=True)
     expected_guests = serializers.IntegerField(min_value=0, required=False)
     total_budget = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
+    country = serializers.CharField(max_length=100, required=False)
 
     def to_command(self, event_id):
         return UpdateEventCommand(

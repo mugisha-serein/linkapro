@@ -43,12 +43,12 @@ class RegisterSerializer(serializers.Serializer):
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
 
     def to_command(self) -> LoginUserCommand:
         return LoginUserCommand(
             email=Email(self.validated_data["email"]),
-            plain_password=PlainPassword(self.validated_data["password"]),
+            plain_password=self.validated_data["password"],
         )
     
 class TwoFactorLoginSerializer(serializers.Serializer):

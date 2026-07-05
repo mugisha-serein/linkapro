@@ -21,6 +21,7 @@ class UserDTO:
     has_password: Optional[bool] = None
     requires_password_setup: Optional[bool] = None
     two_factor_enabled: Optional[bool] = None
+    auth_token_version: int = 0
     is_authenticated: Optional[bool] = None
     onboarding_complete: Optional[bool] = None
 
@@ -39,6 +40,7 @@ class SessionBootstrapDTO:
     has_password: bool
     requires_password_setup: bool
     two_factor_enabled: bool
+    auth_token_version: int = 0
     created_at: Optional[str] = None
     last_login: Optional[str] = None
     is_authenticated: bool = True
@@ -58,6 +60,7 @@ class SessionBootstrapDTO:
             "has_password": self.has_password,
             "requires_password_setup": self.requires_password_setup,
             "two_factor_enabled": self.two_factor_enabled,
+            "auth_token_version": self.auth_token_version,
             "created_at": self.created_at,
             "last_login": self.last_login,
             "is_authenticated": self.is_authenticated,
@@ -83,6 +86,7 @@ class SessionBootstrapDTO:
             has_password=has_password,
             requires_password_setup=not has_password,
             two_factor_enabled=user.two_factor_enabled,
+            auth_token_version=getattr(user, "auth_token_version", 0),
             created_at=user.created_at.isoformat() if user.created_at else None,
             last_login=user.last_login.isoformat() if user.last_login else None,
             onboarding_complete=user.is_verified and has_password,

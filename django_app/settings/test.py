@@ -34,6 +34,7 @@ SIMPLE_JWT = {
 }
 PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
 EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
+TOKEN_ENV = os.environ.get("TOKEN_ENV", "test")
 
 # Celery always eager for tests (tasks run synchronously)
 CELERY_TASK_ALWAYS_EAGER = True
@@ -41,6 +42,7 @@ CELERY_TASK_EAGER_PROPAGATES = True
 
 # Skip broker connection entirely
 CELERY_BROKER_URL = "memory://"
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/15")
 
 # HashiCorp Vault
 VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://localhost:8200")

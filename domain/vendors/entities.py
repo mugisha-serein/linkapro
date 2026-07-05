@@ -1,10 +1,12 @@
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Optional, List
 
 from domain.shared.utils import utc_now
+from domain.vendors.package_rules import coerce_package_price
 
 
 class VendorStatus(str, Enum):
@@ -36,7 +38,12 @@ class VendorProfile:
     service_area: str  # e.g., "Kigali, Rwanda"
     contact_email: str
     contact_phone: str
+    custom_category: Optional[str] = None
     website: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    profile_image_public_id: Optional[str] = None
+    cover_image_url: Optional[str] = None
+    cover_image_public_id: Optional[str] = None
     status: VendorStatus = VendorStatus.DRAFT
     submitted_at: Optional[datetime] = None
     approved_at: Optional[datetime] = None
@@ -64,6 +71,8 @@ class VendorProfile:
                 errors[field_name] = ["This field is required."]
         if self.description and len(self.description.strip()) < 20:
             errors["description"] = ["Use at least 20 characters for your description."]
+        if self.category == ServiceCategory.OTHER and not (self.custom_category or "").strip():
+            errors["custom_category"] = ["Tell us what service you provide when choosing Other."]
         return errors
 
     @property
@@ -116,13 +125,41 @@ class PortfolioImage:
     secure_url: str          # Cloudinary URL
     caption: Optional[str] = None
     order: int = 0
+    media_type: str = "image"
+    upload_status: str = "uploaded"
+    quality_status: str = "passed"
+    visibility_status: str = "approved"
+    upload_error: Optional[str] = None
+    failure_reason: Optional[str] = None
+    rejection_reason: Optional[str] = None
+    original_filename: Optional[str] = None
+    mime_type: str = ""
+    file_size: int = 0
+    local_preview_url: Optional[str] = None
+    cloudinary_public_id: Optional[str] = None
+    cloudinary_secure_url: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration_seconds: Optional[int] = None
+    analyzer_score: Optional[int] = None
+    analyzer_summary: Optional[str] = None
+    is_active: bool = True
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
 
     def update_caption(self, caption: Optional[str]) -> None:
         self.caption = caption
 
     def reorder(self, new_order: int) -> None:
         self.order = new_order
+
+    def deactivate(self) -> None:
+        self.is_active = False
+        self.is_deleted = True
+        self.deleted_at = utc_now()
+        self.updated_at = utc_now()
 
 
 @dataclass
@@ -131,21 +168,44 @@ class ServicePackage:
     vendor_id: uuid.UUID
     name: str
     description: str
-    price: float               # in local currency
+    # Money must remain Decimal after serializer/database validation. Converting to float can introduce
+    # binary rounding drift and make package prices unsafe for approval, display, and future payment flows.
+    price: Decimal
     currency: str = "RWF"      # Rwandan Franc
+    package_tier: str = "standard"
+    approval_status: str = "waiting_approval"
+    rejection_reason: Optional[str] = None
     is_active: bool = True
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
+    last_approved_at: Optional[datetime] = None
+    last_vendor_public_edit_at: Optional[datetime] = None
+    next_vendor_edit_allowed_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
+    def __post_init__(self) -> None:
+        self.price = coerce_package_price(self.price)
+
     def update_details(self, name: Optional[str] = None, description: Optional[str] = None,
-                       price: Optional[float] = None) -> None:
-        if name: self.name = name
-        if description: self.description = description
-        if price is not None: self.price = price
+                       price: Optional[Decimal] = None, currency: Optional[str] = None,
+                       package_tier: Optional[str] = None) -> None:
+        if name is not None:
+            self.name = name
+        if description is not None:
+            self.description = description
+        if price is not None:
+            self.price = coerce_package_price(price)
+        if currency is not None:
+            self.currency = currency
+        if package_tier is not None:
+            self.package_tier = package_tier
         self.updated_at = utc_now()
 
     def deactivate(self) -> None:
         self.is_active = False
+        self.is_deleted = True
+        self.deleted_at = utc_now()
         self.updated_at = utc_now()
 
     def activate(self) -> None:

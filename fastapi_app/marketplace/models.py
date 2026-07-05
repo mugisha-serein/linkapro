@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, String, Float, Integer, DateTime, Text, ForeignKey, Index, Computed
+from sqlalchemy import Boolean, Column, String, Float, Integer, DateTime, Text, ForeignKey, Index, Computed, Numeric
 from sqlalchemy.dialects.postgresql import UUID, TSVECTOR
 from ..database import Base
 from sqlalchemy.sql import func
@@ -12,6 +12,8 @@ class VendorListingModel(Base):
         Index("ix_marketplace_vendorlisting_category", "category"),
         Index("ix_marketplace_vendorlisting_service_area", "service_area"),
         Index("ix_marketplace_vendorlisting_average_rating", "average_rating"),
+        Index("ix_marketplace_vendorlisting_min_package_price", "min_package_price"),
+        Index("ix_marketplace_vendorlisting_max_package_price", "max_package_price"),
         Index("idx_marketplace_search_vector", "search_vector", postgresql_using="gin"),
     )
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -28,6 +30,10 @@ class VendorListingModel(Base):
     is_verified = Column(Boolean, default=False)
     approval_status = Column(String(20), nullable=True, index=True)
     search_rank_score = Column(Float, default=0.0)
+    starting_price = Column(Numeric(12, 2), nullable=True)
+    min_package_price = Column(Numeric(12, 2), nullable=True)
+    max_package_price = Column(Numeric(12, 2), nullable=True)
+    currency = Column(String(10), nullable=True)
     search_vector = Column(
         TSVECTOR,
         Computed(

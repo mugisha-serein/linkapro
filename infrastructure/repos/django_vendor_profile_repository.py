@@ -1,14 +1,26 @@
-import uuid
 import logging
+import uuid
 from typing import Optional, List
+
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
 
 from domain.vendors.entities import VendorProfile as DomainProfile, VendorStatus, ServiceCategory
 from domain.vendors.interfaces import IVendorProfileRepository
 from django_app.vendors.models import VendorProfile as DjangoProfile
 from django_app.identity.models import User
+from django_app.governance.marketplace_outbox import enqueue_vendor_delete_projection, enqueue_vendor_projection
+from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def sync_or_delete_vendor_projection(vendor: DjangoProfile):
+    return enqueue_vendor_projection(vendor, reason="vendor_repository_saved")
+
+
+def delete_vendor_from_marketplace(vendor_id: uuid.UUID):
+    return enqueue_vendor_delete_projection(vendor_id, reason="vendor_repository_deleted")
 
 
 class DjangoVendorProfileRepository(IVendorProfileRepository):
@@ -36,59 +48,55 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
         except DjangoProfile.DoesNotExist:
             obj = DjangoProfile(id=domain.id)
 
-        obj.user = User.objects.get(id=domain.user_id)
+        obj.user = self._get_user(domain.user_id)
         obj.business_name = domain.business_name
         obj.category = domain.category.value
         obj.description = domain.description
         obj.service_area = domain.service_area
         obj.contact_email = domain.contact_email
         obj.contact_phone = domain.contact_phone
+        obj.custom_category = domain.custom_category
         obj.website = domain.website
+        obj.profile_image_url = domain.profile_image_url
+        obj.profile_image_public_id = domain.profile_image_public_id
+        obj.cover_image_url = domain.cover_image_url
+        obj.cover_image_public_id = domain.cover_image_public_id
         obj.status = domain.status.value
         obj.submitted_at = domain.submitted_at
         obj.approved_at = domain.approved_at
         obj.rejected_at = domain.rejected_at
         obj.rejection_reason = domain.rejection_reason
         obj.save()
-        if obj.status == DjangoProfile.Status.APPROVED:
-            self._sync_marketplace_projection(obj)
-        else:
-            self._delete_marketplace_projection(obj.id)
-        return self._to_domain(obj)
+        saved = self._to_domain(obj)
+        transaction.on_commit(lambda vendor_id=obj.id: self._enqueue_marketplace_projection(vendor_id))
+        return saved
 
     def delete(self, vendor_id: uuid.UUID) -> None:
         DjangoProfile.objects.filter(id=vendor_id).delete()
-        self._delete_marketplace_projection(vendor_id)
+        transaction.on_commit(lambda: self._enqueue_marketplace_delete(vendor_id))
 
-    def _sync_marketplace_projection(self, obj: DjangoProfile) -> None:
-        from tasks.marketplace_sync import sync_vendor_listing_to_fastapi
-
+    def _get_user(self, user_id: uuid.UUID):
         try:
-            sync_vendor_listing_to_fastapi(
-                str(obj.id),
-                obj.business_name,
-                obj.category,
-                obj.description,
-                obj.service_area,
-                None,
-                obj.status,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to sync vendor profile to FastAPI marketplace",
-                extra={"vendor_id": str(obj.id)},
-            )
+            return User.objects.get(id=user_id)
+        except User.DoesNotExist as exc:
+            raise RepositoryNotFoundError("User not found") from exc
 
-    def _delete_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
-        from tasks.marketplace_sync import delete_vendor_listing_from_fastapi
-
+    def _enqueue_marketplace_projection(self, vendor_id: uuid.UUID) -> None:
         try:
-            delete_vendor_listing_from_fastapi(str(vendor_id))
+            vendor = DjangoProfile.objects.get(id=vendor_id)
+        except DjangoProfile.DoesNotExist:
+            self._enqueue_marketplace_delete(vendor_id)
+            return
+        try:
+            sync_or_delete_vendor_projection(vendor)
         except Exception:
-            logger.exception(
-                "Failed to delete vendor projection from FastAPI marketplace",
-                extra={"vendor_id": str(vendor_id)},
-            )
+            logger.exception("Vendor marketplace projection outbox enqueue failed.", extra={"vendor_id": str(vendor_id)})
+
+    def _enqueue_marketplace_delete(self, vendor_id: uuid.UUID) -> None:
+        try:
+            delete_vendor_from_marketplace(vendor_id)
+        except Exception:
+            logger.exception("Vendor marketplace projection delete outbox enqueue failed.", extra={"vendor_id": str(vendor_id)})
 
     def _to_domain(self, model: DjangoProfile) -> DomainProfile:
         return DomainProfile(
@@ -100,7 +108,12 @@ class DjangoVendorProfileRepository(IVendorProfileRepository):
             service_area=model.service_area,
             contact_email=model.contact_email,
             contact_phone=model.contact_phone,
+            custom_category=model.custom_category,
             website=model.website,
+            profile_image_url=model.profile_image_url,
+            profile_image_public_id=model.profile_image_public_id,
+            cover_image_url=model.cover_image_url,
+            cover_image_public_id=model.cover_image_public_id,
             status=VendorStatus(model.status),
             submitted_at=model.submitted_at,
             approved_at=model.approved_at,

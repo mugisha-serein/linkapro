@@ -48,6 +48,8 @@ services:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
       DJANGO_DEBUG: ${DJANGO_DEBUG}
+      TOKEN_ENV: ${TOKEN_ENV}
+      ACCEPT_LEGACY_PAYMENT_ENV_TOKENS: ${ACCEPT_LEGACY_PAYMENT_ENV_TOKENS}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
@@ -60,6 +62,7 @@ services:
       FRONTEND_URL: ${FRONTEND_URL}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
+      PAYMENT_ENV: ${PAYMENT_ENV}
     depends_on:
       db:
         condition: service_healthy
@@ -78,7 +81,7 @@ services:
       context: .
       dockerfile: Dockerfile.django
     container_name: linkapro_celery_worker
-    command: celery -A tasks worker --loglevel=info
+    command: celery -A tasks.celery worker --loglevel=info
     volumes:
       - .:/app
       - static_volume:/app/static
@@ -87,6 +90,8 @@ services:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
       DJANGO_DEBUG: ${DJANGO_DEBUG}
+      TOKEN_ENV: ${TOKEN_ENV}
+      ACCEPT_LEGACY_PAYMENT_ENV_TOKENS: ${ACCEPT_LEGACY_PAYMENT_ENV_TOKENS}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
@@ -97,6 +102,7 @@ services:
       FASTAPI_INTERNAL_URL: ${FASTAPI_INTERNAL_URL}
       FASTAPI_INTERNAL_SHARED_SECRET: ${FASTAPI_INTERNAL_SHARED_SECRET}
       DATABASE_URL: ${DATABASE_URL}
+      PAYMENT_ENV: ${PAYMENT_ENV}
     depends_on:
       db:
         condition: service_healthy
@@ -109,7 +115,7 @@ services:
       context: .
       dockerfile: Dockerfile.django
     container_name: linkapro_celery_beat
-    command: celery -A tasks beat --loglevel=info
+    command: celery -A tasks.celery beat --loglevel=info
     volumes:
       - .:/app
       - static_volume:/app/static
@@ -118,6 +124,8 @@ services:
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
       DJANGO_DEBUG: ${DJANGO_DEBUG}
+      TOKEN_ENV: ${TOKEN_ENV}
+      ACCEPT_LEGACY_PAYMENT_ENV_TOKENS: ${ACCEPT_LEGACY_PAYMENT_ENV_TOKENS}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
@@ -128,6 +136,7 @@ services:
       FASTAPI_INTERNAL_URL: ${FASTAPI_INTERNAL_URL}
       FASTAPI_INTERNAL_SHARED_SECRET: ${FASTAPI_INTERNAL_SHARED_SECRET}
       DATABASE_URL: ${DATABASE_URL}
+      PAYMENT_ENV: ${PAYMENT_ENV}
     depends_on:
       db:
         condition: service_healthy

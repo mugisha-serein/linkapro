@@ -1,9 +1,9 @@
 import logging
 
 from celery import current_app
-from django.conf import settings
 import redis
 
+from django_app.common.redis_config import get_redis_client
 from payments.application.ports import IRetryScheduler
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ class CeleryRetryScheduler(IRetryScheduler):
     @property
     def redis_client(self) -> redis.Redis:
         if self._redis_client is None:
-            self._redis_client = redis.Redis.from_url(settings.REDIS_URL)
+            self._redis_client = get_redis_client()
         return self._redis_client
 
     def _retry_key(self, provider_reference: str) -> str:

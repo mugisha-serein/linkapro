@@ -3,12 +3,13 @@ from infrastructure.repos.django_portfolio_image_repository import DjangoPortfol
 from infrastructure.repos.django_service_package_repository import DjangoServicePackageRepository
 from infrastructure.repos.django_inquiry_repository import DjangoInquiryRepository
 from infrastructure.adapters.django_event_dispatcher import DjangoEventDispatcher
+from application.vendors.cooldown_handlers import VendorCooldownCommandHandlers
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
 
 
 def get_command_handlers() -> VendorCommandHandlers:
     """Return fully initialized VendorCommandHandlers with all dependencies."""
-    return VendorCommandHandlers(
+    return VendorCooldownCommandHandlers(
         vendor_repo=DjangoVendorProfileRepository(),
         image_repo=DjangoPortfolioImageRepository(),
         package_repo=DjangoServicePackageRepository(),

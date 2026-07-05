@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, List
 import uuid
 
@@ -12,6 +13,7 @@ class CreateVendorProfileCommand:
     service_area: str
     contact_email: str
     contact_phone: str
+    custom_category: Optional[str] = None
     website: Optional[str] = None
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class UpdateVendorProfileCommand:
     service_area: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
+    custom_category: Optional[str] = None
     website: Optional[str] = None
 
 @dataclass(frozen=True)
@@ -56,6 +59,8 @@ class AddPortfolioImageCommand:
 @dataclass(frozen=True)
 class DeletePortfolioImageCommand:
     image_id: uuid.UUID
+    deleted_by_id: Optional[uuid.UUID] = None
+    vendor_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class ReorderPortfolioImagesCommand:
@@ -67,23 +72,30 @@ class CreateServicePackageCommand:
     vendor_id: uuid.UUID
     name: str
     description: str
-    price: float
+    price: Decimal
     currency: str = "RWF"
+    package_tier: str = "standard"
 
 @dataclass(frozen=True)
 class UpdateServicePackageCommand:
     package_id: uuid.UUID
     name: Optional[str] = None
     description: Optional[str] = None
-    price: Optional[float] = None
+    price: Optional[Decimal] = None
+    currency: Optional[str] = None
+    package_tier: Optional[str] = None
+    vendor_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class DeactivateServicePackageCommand:
     package_id: uuid.UUID
+    deleted_by_id: Optional[uuid.UUID] = None
+    vendor_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class ActivateServicePackageCommand:
     package_id: uuid.UUID
+    vendor_id: Optional[uuid.UUID] = None
 
 @dataclass(frozen=True)
 class SendInquiryCommand:

@@ -1,0 +1,242 @@
+from __future__ import annotations
+
+import logging
+from datetime import timedelta
+from uuid import UUID
+
+from django.conf import settings
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+
+from django_app.vendors.models import ServicePackage, VendorProfile
+from infrastructure.adapters.marketplace_projection import (
+    delete_vendor_from_marketplace,
+    sync_vendor_payload_to_marketplace,
+)
+
+from .models import MarketplaceProjectionOutbox
+
+logger = logging.getLogger(__name__)
+MAX_DELIVERY_ATTEMPTS = 5
+DEFAULT_RETRY_BATCH_SIZE = 25
+
+
+def enqueue_vendor_projection(vendor: VendorProfile, *, reason: str | None = None) -> MarketplaceProjectionOutbox:
+    event_type, payload = _projection_event_for_vendor(vendor, reason=reason)
+    event = MarketplaceProjectionOutbox.objects.create(
+        event_type=event_type,
+        vendor_id=vendor.id,
+        payload=payload,
+    )
+    transaction.on_commit(lambda: _schedule_outbox_delivery(event.id))
+    logger.info(
+        "marketplace_projection_outbox_enqueued",
+        extra={"event_id": str(event.id), "vendor_id": str(vendor.id), "event_type": event.event_type},
+    )
+    return event
+
+
+def enqueue_vendor_projection_by_id(vendor_id: UUID | str, *, reason: str | None = None) -> MarketplaceProjectionOutbox:
+    vendor = VendorProfile.objects.get(id=vendor_id)
+    return enqueue_vendor_projection(vendor, reason=reason)
+
+
+def enqueue_vendor_delete_projection(vendor_id: UUID | str, *, reason: str | None = None) -> MarketplaceProjectionOutbox:
+    event = MarketplaceProjectionOutbox.objects.create(
+        event_type=MarketplaceProjectionOutbox.EventType.DELETE_VENDOR,
+        vendor_id=vendor_id,
+        payload={"vendor_id": str(vendor_id), "reason": reason or "vendor_deleted"},
+    )
+    transaction.on_commit(lambda: _schedule_outbox_delivery(event.id))
+    logger.info(
+        "marketplace_projection_delete_outbox_enqueued",
+        extra={"event_id": str(event.id), "vendor_id": str(vendor_id)},
+    )
+    return event
+
+
+def deliver_marketplace_projection_outbox_event(event_id: UUID | str) -> bool:
+    event = MarketplaceProjectionOutbox.objects.get(id=event_id)
+    if event.status == MarketplaceProjectionOutbox.Status.DELIVERED:
+        return True
+    if event.status == MarketplaceProjectionOutbox.Status.FAILED:
+        return False
+
+    event.status = MarketplaceProjectionOutbox.Status.PROCESSING
+    event.attempts += 1
+    event.last_error = None
+    event.save(update_fields=["status", "attempts", "last_error", "updated_at"])
+
+    try:
+        result = _deliver_event(event)
+    except Exception as exc:
+        _mark_delivery_failed_or_pending(event, exc)
+        raise
+
+    event.status = MarketplaceProjectionOutbox.Status.DELIVERED
+    event.delivered_at = timezone.now()
+    event.last_error = None
+    event.payload = {**event.payload, "delivery_result": result}
+    event.save(update_fields=["status", "delivered_at", "last_error", "payload", "updated_at"])
+    logger.info(
+        "marketplace_projection_outbox_delivered",
+        extra={"event_id": str(event.id), "vendor_id": str(event.vendor_id), "attempts": event.attempts},
+    )
+    return True
+
+
+def retry_due_marketplace_projection_outbox_events(*, batch_size: int | None = None) -> dict:
+    now = timezone.now()
+    limit = batch_size or int(
+        getattr(settings, "MARKETPLACE_PROJECTION_OUTBOX_RETRY_BATCH_SIZE", DEFAULT_RETRY_BATCH_SIZE)
+    )
+    event_ids = list(
+        MarketplaceProjectionOutbox.objects.filter(
+            status=MarketplaceProjectionOutbox.Status.PENDING,
+            attempts__lt=MAX_DELIVERY_ATTEMPTS,
+        )
+        .filter(Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now))
+        .order_by("next_attempt_at", "created_at")
+        .values_list("id", flat=True)[:limit]
+    )
+
+    delivered = 0
+    failed = 0
+    errors = 0
+    for event_id in event_ids:
+        try:
+            if deliver_marketplace_projection_outbox_event(event_id):
+                delivered += 1
+            else:
+                failed += 1
+        except Exception:
+            errors += 1
+            logger.warning(
+                "marketplace_projection_outbox_retry_failed",
+                extra={"event_id": str(event_id)},
+                exc_info=True,
+            )
+    return {
+        "processed": len(event_ids),
+        "delivered": delivered,
+        "failed": failed,
+        "errors": errors,
+    }
+
+
+def _deliver_event(event: MarketplaceProjectionOutbox) -> dict:
+    payload = event.payload
+    if event.event_type == MarketplaceProjectionOutbox.EventType.DELETE_VENDOR:
+        return delete_vendor_from_marketplace(event.vendor_id)
+    if event.event_type == MarketplaceProjectionOutbox.EventType.UPSERT_VENDOR:
+        return sync_vendor_payload_to_marketplace(
+            vendor_id=payload["vendor_id"],
+            business_name=payload["business_name"],
+            category=payload["category"],
+            description=payload["description"],
+            service_area=payload["service_area"],
+            cover_image_url=payload.get("cover_image_url"),
+            approval_status=payload.get("approval_status", VendorProfile.Status.APPROVED),
+            is_verified=payload.get("is_verified", True),
+            starting_price=payload.get("starting_price"),
+            min_package_price=payload.get("min_package_price"),
+            max_package_price=payload.get("max_package_price"),
+            currency=payload.get("currency"),
+        )
+    raise ValueError(f"Unsupported marketplace projection event type: {event.event_type}")
+
+
+def _mark_delivery_failed_or_pending(event: MarketplaceProjectionOutbox, exc: Exception) -> None:
+    error = f"{exc.__class__.__name__}: {exc}"
+    if event.attempts >= MAX_DELIVERY_ATTEMPTS:
+        event.status = MarketplaceProjectionOutbox.Status.FAILED
+    else:
+        event.status = MarketplaceProjectionOutbox.Status.PENDING
+        event.next_attempt_at = timezone.now() + timedelta(minutes=min(30, 2 ** event.attempts))
+    event.last_error = error[:4000]
+    event.save(update_fields=["status", "next_attempt_at", "last_error", "updated_at"])
+    logger.warning(
+        "marketplace_projection_outbox_delivery_failed",
+        extra={"event_id": str(event.id), "vendor_id": str(event.vendor_id), "attempts": event.attempts},
+        exc_info=True,
+    )
+
+
+def _projection_event_for_vendor(vendor: VendorProfile, *, reason: str | None = None) -> tuple[str, dict]:
+    if _is_vendor_listable(vendor):
+        return MarketplaceProjectionOutbox.EventType.UPSERT_VENDOR, _vendor_payload(vendor, reason=reason)
+    return MarketplaceProjectionOutbox.EventType.DELETE_VENDOR, {
+        "vendor_id": str(vendor.id),
+        "approval_status": vendor.status,
+        "reason": reason or "vendor_not_listable",
+    }
+
+
+def _is_vendor_listable(vendor: VendorProfile) -> bool:
+    return vendor.status == VendorProfile.Status.APPROVED and vendor.is_profile_complete
+
+
+def _safe_public_cover_image_url(vendor: VendorProfile) -> str | None:
+    url = (vendor.cover_image_url or "").strip()
+    if not url or not url.startswith("https://"):
+        return None
+    if url.startswith("/media/") or "vendor_portfolio_uploads" in url:
+        return None
+    return url
+
+
+def _vendor_payload(vendor: VendorProfile, *, reason: str | None = None) -> dict:
+    pricing = _approved_package_pricing(vendor)
+    return {
+        "vendor_id": str(vendor.id),
+        "business_name": vendor.business_name,
+        "category": vendor.category,
+        "custom_category": vendor.custom_category if vendor.category == VendorProfile.Category.OTHER else None,
+        "description": vendor.description,
+        "service_area": vendor.service_area,
+        "cover_image_url": _safe_public_cover_image_url(vendor),
+        "approval_status": VendorProfile.Status.APPROVED,
+        "is_approved": True,
+        "is_verified": True,
+        "reason": reason or "vendor_listable",
+        "source_updated_at": vendor.updated_at.isoformat() if vendor.updated_at else None,
+        **pricing,
+    }
+
+
+def _approved_package_pricing(vendor: VendorProfile) -> dict:
+    packages = list(
+        ServicePackage.objects.filter(
+            vendor=vendor,
+            approval_status=ServicePackage.ApprovalStatus.APPROVED,
+            is_active=True,
+        ).order_by("price", "created_at")
+    )
+    if not packages:
+        return {
+            "starting_price": None,
+            "min_package_price": None,
+            "max_package_price": None,
+            "currency": None,
+        }
+    prices = [package.price for package in packages]
+    currencies = [package.currency for package in packages if package.currency]
+    currency = currencies[0] if currencies and all(value == currencies[0] for value in currencies) else None
+    min_price = min(prices)
+    max_price = max(prices)
+    return {
+        "starting_price": str(min_price),
+        "min_package_price": str(min_price),
+        "max_package_price": str(max_price),
+        "currency": currency,
+    }
+
+
+def _schedule_outbox_delivery(event_id: UUID) -> None:
+    try:
+        from tasks.marketplace_sync import deliver_marketplace_projection_outbox_event_task
+
+        deliver_marketplace_projection_outbox_event_task.delay(str(event_id))
+    except Exception:
+        logger.warning("marketplace_projection_outbox_task_schedule_failed", extra={"event_id": str(event_id)}, exc_info=True)
