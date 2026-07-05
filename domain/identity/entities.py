@@ -58,6 +58,12 @@ class User:
     ) -> "User":
         if not role.can_self_register():
             raise ValueError("Role cannot self-register")
+        first_name = first_name.strip()
+        last_name = last_name.strip()
+        if not first_name:
+            raise ValueError("First name cannot be empty")
+        if not last_name:
+            raise ValueError("Last name cannot be empty")
         return cls(
             id=id,
             email=email,
@@ -82,6 +88,8 @@ class User:
         self.updated_at = utc_now()
 
     def deactivate(self) -> None:
+        if not self.is_active:
+            return
         self.is_active = False
         self.rotate_auth_token_version()
 
@@ -90,10 +98,14 @@ class User:
         self.updated_at = utc_now()
 
     def enable_two_factor(self) -> None:
+        if self.two_factor_enabled:
+            return
         self.two_factor_enabled = True
-        self.updated_at = utc_now()
+        self.rotate_auth_token_version()
 
     def disable_two_factor(self) -> None:
+        if not self.two_factor_enabled:
+            return
         self.two_factor_enabled = False
         self.rotate_auth_token_version()
 
@@ -113,10 +125,13 @@ class OAuthToken:
     created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
+        if not self.provider_user_id.strip():
+            raise ValueError("Provider user ID cannot be empty")
         if isinstance(self.access_token, str):
             self.access_token = OAuthAccessToken(self.access_token)
         if isinstance(self.refresh_token, str):
             self.refresh_token = OAuthRefreshToken(self.refresh_token)
+        self._validate_expires_at(self.expires_at)
 
     def update_tokens(
         self,
@@ -125,6 +140,7 @@ class OAuthToken:
         refresh_token: Optional[OAuthRefreshToken | str],
         expires_at: datetime,
     ) -> None:
+        self._validate_expires_at(expires_at)
         self.access_token = (
             access_token
             if isinstance(access_token, OAuthAccessToken)
@@ -136,6 +152,11 @@ class OAuthToken:
             else OAuthRefreshToken(refresh_token)
         )
         self.expires_at = expires_at
+
+    @staticmethod
+    def _validate_expires_at(expires_at: datetime) -> None:
+        if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+            raise ValueError("OAuth token expiry must be timezone-aware")
 
     def is_expired(self) -> bool:
         return utc_now() >= self.expires_at

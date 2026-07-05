@@ -22,11 +22,20 @@ class IUserRepository(ABC):
 
     @abstractmethod
     def delete(self, user_id: uuid.UUID) -> None:
-        """Permanently delete user data. Dangerous; prefer deactivate()."""
+        """
+        Permanently delete user data.
+
+        Dangerous: do not use for normal account removal. Prefer deactivate(),
+        anonymize(), or a scheduled deletion workflow.
+        """
 
     @abstractmethod
     def deactivate(self, user_id: uuid.UUID) -> None:
         """Deactivate a user without permanently deleting data."""
+
+    def anonymize(self, user_id: uuid.UUID) -> None:
+        """Anonymize user data when retention rules allow it."""
+        raise NotImplementedError
 
     @abstractmethod
     def set_totp_secret(self, user_id: uuid.UUID, secret: TOTPSecret) -> None: ...
