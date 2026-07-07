@@ -126,6 +126,24 @@ def test_production_settings_default_token_env_is_production():
     assert "ok" in result.stdout
 
 
+def test_production_settings_builds_celery_databases_from_redis_url():
+    result = _run_settings_snippet(
+        "\n".join(
+            [
+                "from django_app.settings import production as settings",
+                "assert settings.CELERY_BROKER_URL == 'redis://localhost:6379/0'",
+                "assert settings.CELERY_RESULT_BACKEND == 'redis://localhost:6379/1'",
+                "assert settings.CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP is True",
+                "print('ok')",
+            ]
+        ),
+        _production_env(REDIS_URL="redis://localhost:6379"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
 def test_production_settings_reject_empty_token_env():
     result = _import_settings(
         "django_app.settings.production",
@@ -191,6 +209,30 @@ def test_redis_url_does_not_set_celery_ssl_options():
             ]
         ),
         _production_env(REDIS_URL="redis://localhost:6379/0"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
+def test_celery_ssl_options_follow_final_celery_urls_not_redis_url():
+    result = _run_settings_snippet(
+        "\n".join(
+            [
+                "from django_app.settings import production as settings",
+                "assert settings.REDIS_URL.startswith('rediss://')",
+                "assert settings.CELERY_BROKER_URL.startswith('redis://')",
+                "assert settings.CELERY_RESULT_BACKEND.startswith('redis://')",
+                "assert not hasattr(settings, 'CELERY_BROKER_USE_SSL')",
+                "assert not hasattr(settings, 'CELERY_REDIS_BACKEND_USE_SSL')",
+                "print('ok')",
+            ]
+        ),
+        _production_env(
+            REDIS_URL="rediss://default:secret@example.redis:6379",
+            CELERY_BROKER_URL="redis://localhost:6379/0",
+            CELERY_RESULT_BACKEND="redis://localhost:6379/1",
+        ),
     )
 
     assert result.returncode == 0, result.stderr
