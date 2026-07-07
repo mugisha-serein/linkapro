@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Optional
 
-from domain.vendors.errors import PackageValidationError
+from domain.vendors.errors import PackageValidationError, VendorDomainError
 from domain.vendors.package_rules import coerce_package_price
 
 VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS = 15
