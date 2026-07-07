@@ -8,13 +8,13 @@ from django_app.identity.models import User
 pytestmark = pytest.mark.django_db
 
 
-def _vendor_user():
+def _user(email: str, role: str):
     return User.objects.create_user(
-        email="csrf-vendor@example.com",
+        email=email,
         password="pass123",
-        first_name="Vendor",
+        first_name="Test",
         last_name="User",
-        role="vendor",
+        role=role,
     )
 
 
@@ -29,15 +29,33 @@ def _profile_payload():
     }
 
 
-def test_vendor_profile_route_is_not_marked_csrf_exempt():
+def test_vendor_profile_route_uses_drf_csrf_exempt_view():
     resolved = resolve(reverse("vendor-profile"))
 
-    assert getattr(resolved.func, "csrf_exempt", False) is False
+    assert getattr(resolved.func, "csrf_exempt", False) is True
 
 
-def test_vendor_profile_create_requires_csrf_for_authenticated_browser_requests():
+def test_vendor_profile_create_allows_authenticated_vendor_without_csrf_cookie():
     client = APIClient(enforce_csrf_checks=True)
-    client.force_authenticate(user=_vendor_user())
+    client.force_authenticate(user=_user("csrf-vendor@example.com", "vendor"))
+
+    response = client.post(reverse("vendor-profile"), _profile_payload(), format="json")
+
+    assert response.status_code == 201
+    assert response.data["business_name"] == "CSRF Safe Studio"
+
+
+def test_vendor_profile_create_rejects_unauthenticated_request_without_csrf_cookie():
+    client = APIClient(enforce_csrf_checks=True)
+
+    response = client.post(reverse("vendor-profile"), _profile_payload(), format="json")
+
+    assert response.status_code in {401, 403}
+
+
+def test_vendor_profile_create_rejects_planner_without_csrf_cookie():
+    client = APIClient(enforce_csrf_checks=True)
+    client.force_authenticate(user=_user("csrf-planner@example.com", "planner"))
 
     response = client.post(reverse("vendor-profile"), _profile_payload(), format="json")
 
