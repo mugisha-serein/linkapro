@@ -54,12 +54,30 @@ def test_whitespace_only_changes_do_not_reset_approval():
         currency=" rwf ",
         package_tier=" Standard ",
     )
-    mark_vendor_package_public_edit(pkg, now=utc_now(), public_fields_changed=changed)
+    markers = mark_vendor_package_public_edit(pkg, now=utc_now(), public_fields_changed=changed)
 
     assert changed is False
+    assert markers == {}
     assert pkg.approval_status == "approved"
     assert pkg.is_active is True
     assert pkg.next_vendor_edit_allowed_at is None
+
+
+def test_real_changes_return_markers_without_mutating_package_after_cooldown():
+    now = utc_now()
+    pkg = package(last_approved_at=now - timedelta(days=16))
+    original = vars(pkg).copy()
+
+    markers = mark_vendor_package_public_edit(pkg, now=now, public_fields_changed=True)
+
+    assert markers == {
+        "approval_status": "waiting_approval",
+        "rejection_reason": None,
+        "is_active": False,
+        "last_vendor_public_edit_at": now,
+        "next_vendor_edit_allowed_at": now + timedelta(days=15),
+    }
+    assert vars(pkg) == original
 
 
 def test_real_changes_still_apply_existing_cooldown():

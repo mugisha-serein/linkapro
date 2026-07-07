@@ -128,10 +128,10 @@ class TestVendorProfile:
         assert exc_info.value.field_errors["status"] == ["Choose a valid status."]
 
     def test_submit_for_review_from_draft(self):
-        profile = valid_profile()
         frozen = datetime(2025, 1, 1, 12, 0, 0, tzinfo=utc_now().tzinfo)
 
         with freeze_time(frozen):
+            profile = valid_profile()
             profile.submit_for_review()
 
         assert profile.status == VendorStatus.PENDING_REVIEW
@@ -186,10 +186,10 @@ class TestVendorProfile:
         assert profile.__dict__ == original
 
     def test_reject_pending_profile(self):
-        profile = valid_profile(status=VendorStatus.PENDING_REVIEW, submitted_at=utc_now())
         frozen = datetime(2025, 1, 1, tzinfo=utc_now().tzinfo)
 
         with freeze_time(frozen):
+            profile = valid_profile(status=VendorStatus.PENDING_REVIEW, submitted_at=utc_now())
             profile.reject("Insufficient portfolio")
 
         assert profile.status == VendorStatus.REJECTED
@@ -372,7 +372,7 @@ class TestInquiry:
             client_email="PLANNER@EXAMPLE.COM",
             client_phone="+250 788 000 000",
             message="Please share availability.",
-            event_date=utc_now() + timedelta(days=30),
+            event_date=(utc_now() + timedelta(days=30)).date(),
         )
 
         assert inquiry.client_name == "Planner"

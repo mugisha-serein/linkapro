@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Optional
 
-from domain.vendors.errors import PackageValidationError
+from domain.vendors.errors import PackageValidationError, VendorDomainError
 from domain.vendors.package_rules import coerce_package_price
 from domain.vendors.validation import aware_utc_datetime, bounded_text, normalize_currency
 
@@ -14,26 +14,14 @@ VENDOR_PACKAGE_EDIT_COOLDOWN = timedelta(days=VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS)
 
 
 @dataclass
-class PackageEditCooldownError(ValueError):
+class PackageEditCooldownError(VendorDomainError):
     next_allowed_at: datetime
     message: str = "Package changes are allowed only once every 15 days after approval."
 
     code: str = "vendor_package_edit_cooldown_active"
 
     def __post_init__(self) -> None:
-        super().__init__(self.message)
-
-    def as_response_data(self) -> dict:
-        next_allowed = self.next_allowed_at.isoformat()
-        return {
-            "success": False,
-            "code": self.code,
-            "message": self.message,
-            "detail": f"You can update this package again after {next_allowed}.",
-            "field_errors": {},
-            "next_allowed_at": next_allowed,
-            "cooldown_days": VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS,
-        }
+        super().__init__(self.message, code=self.code)
 
 
 def package_public_fields_changed(
@@ -91,16 +79,22 @@ def ensure_vendor_package_edit_allowed(package, *, public_fields_changed: bool, 
         raise PackageEditCooldownError(next_allowed_at=next_allowed)
 
 
-def mark_vendor_package_public_edit(package, *, now: datetime, public_fields_changed: bool) -> None:
+def package_public_edit_markers(package, *, now: datetime, public_fields_changed: bool) -> dict:
     now = _normalize_timestamp(now, "now", required=True)
     if not public_fields_changed:
-        return
+        return {}
     effective_next_edit_allowed_at(package)
-    package.approval_status = "waiting_approval"
-    package.rejection_reason = None
-    package.is_active = False
-    package.last_vendor_public_edit_at = now
-    package.next_vendor_edit_allowed_at = now + VENDOR_PACKAGE_EDIT_COOLDOWN
+    return {
+        "approval_status": "waiting_approval",
+        "rejection_reason": None,
+        "is_active": False,
+        "last_vendor_public_edit_at": now,
+        "next_vendor_edit_allowed_at": now + VENDOR_PACKAGE_EDIT_COOLDOWN,
+    }
+
+
+def mark_vendor_package_public_edit(package, *, now: datetime, public_fields_changed: bool) -> dict:
+    return package_public_edit_markers(package, now=now, public_fields_changed=public_fields_changed)
 
 
 def _normalize_public_text(value: str) -> str:
