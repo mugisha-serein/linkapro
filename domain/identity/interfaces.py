@@ -5,6 +5,7 @@ import uuid
 
 from .entities import User, OAuthToken
 from .value_objects import Email, OAuthProvider, PlainPassword
+from .value_objects import Email, OAuthProvider, TOTPSecret
 
 
 class IUserRepository(ABC):
@@ -22,13 +23,29 @@ class IUserRepository(ABC):
 
     @abstractmethod
     def delete(self, user_id: uuid.UUID) -> None:
-        """Permanently delete user (use with caution)."""
+        """
+        Permanently delete user data.
+
+        Dangerous: do not use for normal account removal. Prefer deactivate(),
+        anonymize(), or a scheduled deletion workflow.
+        """
 
     @abstractmethod
-    def set_totp_secret(self, user_id: uuid.UUID, secret: str) -> None: ...
+    def deactivate(self, user_id: uuid.UUID) -> None:
+        """Deactivate a user without permanently deleting data."""
+
+    def anonymize(self, user_id: uuid.UUID) -> None:
+        """Anonymize user data when retention rules allow it."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_totp_secret(self, user_id: uuid.UUID, secret: TOTPSecret) -> None: ...
     
     @abstractmethod
-    def get_totp_secret(self, user_id: uuid.UUID) -> Optional[str]: ...
+    def get_totp_secret(self, user_id: uuid.UUID) -> Optional[TOTPSecret]: ...
+
+    @abstractmethod
+    def clear_totp_secret(self, user_id: uuid.UUID) -> None: ...
 
 
 class IOAuthTokenRepository(ABC):
