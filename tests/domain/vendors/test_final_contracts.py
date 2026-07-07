@@ -266,6 +266,8 @@ def test_pure_package_edit_policy_returns_markers_without_mutating_package():
 
     assert markers["approval_status"] == "waiting_approval"
     assert markers["is_active"] is False
+    with pytest.raises(TypeError):
+        markers["is_active"] = True
     assert package.__dict__ == original
 
 
@@ -315,7 +317,11 @@ def test_portfolio_mark_uploaded_requires_valid_remote_asset():
 
     image.mark_uploaded(public_id="asset", secure_url="https://example.com/image.jpg")
     assert image.upload_status == "uploaded"
+    assert image.quality_status == "pending_analysis"
     assert image.secure_url == "https://example.com/image.jpg"
+
+    image.mark_quality_passed()
+    assert image.quality_status == "passed"
 
 
 def test_portfolio_metadata_requires_strict_primitives_and_cloudinary_pair_match():

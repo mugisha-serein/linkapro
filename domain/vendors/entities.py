@@ -45,8 +45,12 @@ from domain.vendors.errors import (
 )
 from domain.vendors.package_rules import coerce_package_price
 from domain.vendors.package_rules import validate_service_package_rules
+from domain.vendors.package_edit_policy import mark_vendor_package_public_edit, package_public_fields_changed
 from domain.vendors.validation import (
+    MAX_PORTFOLIO_DIMENSION,
+    MAX_PORTFOLIO_FILE_SIZE,
     MAX_PORTFOLIO_ORDER,
+    MAX_VIDEO_DURATION_SECONDS,
     MIN_INQUIRY_MESSAGE_LENGTH,
     MIN_VENDOR_DESCRIPTION_LENGTH,
     TEXT_LIMITS,
@@ -57,6 +61,7 @@ from domain.vendors.validation import (
     normalize_event_date,
     normalize_phone,
     positive_decimal,
+    validate_new_event_date_bounds,
     validate_bool,
     validate_email,
     validate_int,
@@ -393,11 +398,15 @@ class VendorProfile(DomainAggregate):
             if self.rejected_at is not None:
                 add_error(errors, "rejected_at", "Pending vendors cannot have rejection metadata.")
         if self.status == VendorStatus.APPROVED:
+            if self.submitted_at is None:
+                add_error(errors, "submitted_at", "Approved vendors require submitted_at.")
             if self.approved_at is None:
                 add_error(errors, "approved_at", "Approved vendors require approved_at.")
             if self.rejected_at is not None:
                 add_error(errors, "rejected_at", "Approved vendors cannot have rejection metadata.")
         if self.status == VendorStatus.REJECTED:
+            if self.submitted_at is None:
+                add_error(errors, "submitted_at", "Rejected vendors require submitted_at.")
             if not self.rejection_reason:
                 add_error(errors, "rejection_reason", "Rejection reason is required.")
             if self.rejected_at is None:
@@ -405,6 +414,8 @@ class VendorProfile(DomainAggregate):
             if self.approved_at is not None:
                 add_error(errors, "approved_at", "Rejected vendors cannot have approval metadata.")
         if self.status == VendorStatus.SUSPENDED:
+            if self.submitted_at is None:
+                add_error(errors, "submitted_at", "Suspended vendors require submitted_at.")
             if self.approved_at is None:
                 add_error(errors, "approved_at", "Suspended vendors require previous approval metadata.")
             if self.rejected_at is not None:
@@ -417,6 +428,10 @@ class VendorProfile(DomainAggregate):
             add_error(errors, "approved_at", "Approval cannot happen before submission.")
         if self.rejected_at and self.submitted_at and self.rejected_at < self.submitted_at:
             add_error(errors, "rejected_at", "Rejection cannot happen before submission.")
+        for field_name in ("submitted_at", "approved_at", "rejected_at"):
+            value = getattr(self, field_name)
+            if value and self.updated_at and value > self.updated_at:
+                add_error(errors, field_name, "Lifecycle timestamp cannot be after updated_at.")
         if self.description and len(self.description) < MIN_VENDOR_DESCRIPTION_LENGTH:
             add_error(errors, "description", "Use at least 20 characters for your description.")
         if self.created_at and self.updated_at and self.updated_at < self.created_at:
@@ -605,9 +620,15 @@ class PortfolioImage(DomainAggregate):
         self.is_active = _normalize_bool(self.is_active, "is_active", errors)
         self.is_deleted = _normalize_bool(self.is_deleted, "is_deleted", errors)
         self.file_size = _normalize_int(self.file_size, "file_size", errors, minimum=0)
-        self.width = _normalize_optional_int(self.width, "width", errors, minimum=1)
-        self.height = _normalize_optional_int(self.height, "height", errors, minimum=1)
-        self.duration_seconds = _normalize_optional_int(self.duration_seconds, "duration_seconds", errors, minimum=0)
+        self.width = _normalize_optional_int(self.width, "width", errors, minimum=1, maximum=MAX_PORTFOLIO_DIMENSION)
+        self.height = _normalize_optional_int(self.height, "height", errors, minimum=1, maximum=MAX_PORTFOLIO_DIMENSION)
+        self.duration_seconds = _normalize_optional_int(
+            self.duration_seconds,
+            "duration_seconds",
+            errors,
+            minimum=0,
+            maximum=MAX_VIDEO_DURATION_SECONDS,
+        )
         self.analyzer_score = _normalize_optional_int(self.analyzer_score, "analyzer_score", errors, minimum=0, maximum=100)
         self.original_filename = _normalize_optional_text(self.original_filename, "original_filename", 255, errors)
         self.mime_type = _normalize_optional_text(self.mime_type, "mime_type", 100, errors) or ""
@@ -615,8 +636,17 @@ class PortfolioImage(DomainAggregate):
         self.analyzer_summary = _normalize_optional_text(self.analyzer_summary, "analyzer_summary", 2000, errors)
 
         self.order = _normalize_int(self.order, "order", errors, minimum=0, maximum=MAX_PORTFOLIO_ORDER)
+        if self.file_size > MAX_PORTFOLIO_FILE_SIZE:
+            add_error(errors, "file_size", f"File size must be no more than {MAX_PORTFOLIO_FILE_SIZE} bytes.")
         if self.mime_type and self.mime_type not in {"image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm", "video/quicktime"}:
             add_error(errors, "mime_type", "Unsupported portfolio media MIME type.")
+        if self.mime_type:
+            if self.media_type == PortfolioMediaType.IMAGE.value and not self.mime_type.startswith("image/"):
+                add_error(errors, "mime_type", "Image media must use an image MIME type.")
+            if self.media_type == PortfolioMediaType.VIDEO.value and not self.mime_type.startswith("video/"):
+                add_error(errors, "mime_type", "Video media must use a video MIME type.")
+        if self.media_type == PortfolioMediaType.IMAGE.value and self.duration_seconds:
+            add_error(errors, "duration_seconds", "Image media cannot have duration.")
         _validate_public_id_url_pair(
             errors,
             url=self.secure_url or None,
@@ -668,6 +698,17 @@ class PortfolioImage(DomainAggregate):
             secure_url=asset.secure_url,
             cloudinary_public_id=asset.public_id,
             cloudinary_secure_url=asset.secure_url,
+            quality_status=(
+                self.quality_status
+                if self.upload_status in {PortfolioUploadStatus.QUEUED.value, PortfolioUploadStatus.PROCESSING.value}
+                else PortfolioQualityStatus.PENDING_ANALYSIS.value
+            ),
+            visibility_status=(
+                self.visibility_status
+                if self.upload_status in {PortfolioUploadStatus.QUEUED.value, PortfolioUploadStatus.PROCESSING.value}
+                else PortfolioVisibilityStatus.PRIVATE.value
+            ),
+            rejection_reason=None,
             updated_at=utc_now(),
         )
         self._assign(candidate)
@@ -707,7 +748,6 @@ class PortfolioImage(DomainAggregate):
         *,
         public_id: str | None = None,
         secure_url: str | None = None,
-        quality_status: str = PortfolioQualityStatus.PASSED.value,
     ) -> None:
         self._ensure_mutable()
         if self.upload_status != PortfolioUploadStatus.PROCESSING.value:
@@ -722,13 +762,42 @@ class PortfolioImage(DomainAggregate):
             cloudinary_public_id=asset.public_id,
             cloudinary_secure_url=asset.secure_url,
             upload_status=PortfolioUploadStatus.UPLOADED.value,
-            quality_status=quality_status,
+            quality_status=PortfolioQualityStatus.PENDING_ANALYSIS.value,
             visibility_status=PortfolioVisibilityStatus.PRIVATE.value,
             upload_error=None,
             failure_reason=None,
             updated_at=utc_now(),
         )
         self._assign(candidate, PortfolioMediaUploaded(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
+
+    def mark_quality_passed(self) -> None:
+        self._ensure_mutable()
+        if self.upload_status != PortfolioUploadStatus.UPLOADED.value:
+            raise InvalidPortfolioTransition("Only uploaded media can pass quality review.")
+        candidate = replace(
+            self,
+            quality_status=PortfolioQualityStatus.PASSED.value,
+            visibility_status=PortfolioVisibilityStatus.PRIVATE.value,
+            upload_error=None,
+            failure_reason=None,
+            updated_at=utc_now(),
+        )
+        self._assign(candidate)
+
+    def mark_quality_failed(self, reason: str) -> None:
+        self._ensure_mutable()
+        if self.upload_status != PortfolioUploadStatus.UPLOADED.value:
+            raise InvalidPortfolioTransition("Only uploaded media can fail quality review.")
+        clean_reason = _validated_transition_reason(reason, "failure_reason", PortfolioValidationError)
+        candidate = replace(
+            self,
+            quality_status=PortfolioQualityStatus.FAILED.value,
+            visibility_status=PortfolioVisibilityStatus.PRIVATE.value,
+            upload_error=clean_reason,
+            failure_reason=clean_reason,
+            updated_at=utc_now(),
+        )
+        self._assign(candidate)
 
     def mark_failed(self, reason: str) -> None:
         self._ensure_mutable()
@@ -835,7 +904,16 @@ class PortfolioImage(DomainAggregate):
         self._ensure_mutable()
         if caption == self.caption:
             return
-        candidate = replace(self, caption=caption, updated_at=utc_now())
+        candidate = replace(
+            self,
+            caption=caption,
+            visibility_status=(
+                PortfolioVisibilityStatus.WAITING_APPROVAL.value
+                if self.visibility_status == PortfolioVisibilityStatus.APPROVED.value
+                else self.visibility_status
+            ),
+            updated_at=utc_now(),
+        )
         self._assign(candidate, PortfolioCaptionUpdated(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
 
     def _assign(self, candidate: "PortfolioImage", event=None) -> None:
@@ -1020,23 +1098,18 @@ class ServicePackage(DomainAggregate):
         next_price = self.price if price is None else price
         next_currency = self.currency if currency is None else currency
         next_tier = self.package_tier if package_tier is None else package_tier
-        try:
-            normalized_price = positive_decimal(next_price)
-        except ValueError as exc:
-            raise PackageValidationError(field_errors={"price": [str(exc)]}) from exc
-        try:
-            normalized_currency = normalize_currency(next_currency)
-        except ValueError as exc:
-            raise PackageValidationError(field_errors={"currency": [str(exc)]}) from exc
-        public_changed = (
-            next_name.strip() != self.name
-            or next_description.strip() != self.description
-            or normalized_price != self.price
-            or normalized_currency != self.currency
-            or str(next_tier).strip().lower() != self.package_tier
+        public_changed = package_public_fields_changed(
+            self,
+            name=next_name,
+            description=next_description,
+            price=next_price,
+            currency=next_currency,
+            package_tier=next_tier,
         )
         if not public_changed:
             return
+        now = utc_now()
+        markers = mark_vendor_package_public_edit(self, now=now, public_fields_changed=True)
         candidate = replace(
             self,
             name=next_name,
@@ -1044,14 +1117,8 @@ class ServicePackage(DomainAggregate):
             price=next_price,
             currency=next_currency,
             package_tier=next_tier,
-            approval_status=(
-                PackageApprovalStatus.WAITING_APPROVAL.value
-                if self.approval_status in {PackageApprovalStatus.APPROVED.value, PackageApprovalStatus.REJECTED.value}
-                else self.approval_status
-            ),
-            rejection_reason=None,
-            is_active=False,
-            updated_at=utc_now(),
+            updated_at=now,
+            **markers,
         )
         self._commit_candidate(
             candidate,
@@ -1189,6 +1256,10 @@ class Inquiry(DomainAggregate):
         client_phone: Optional[str] = None,
         event_date: Optional[date] = None,
     ) -> "Inquiry":
+        try:
+            checked_event_date = validate_new_event_date_bounds(normalize_event_date(event_date))
+        except ValueError as exc:
+            raise InquiryValidationError(field_errors={"event_date": [str(exc)]}) from exc
         inquiry = cls(
             id=uuid.uuid4(),
             vendor_id=vendor_id,
@@ -1196,7 +1267,7 @@ class Inquiry(DomainAggregate):
             client_email=client_email,
             message=message,
             client_phone=client_phone,
-            event_date=event_date,
+            event_date=checked_event_date,
         )
         inquiry._record(InquiryReceived(inquiry_id=inquiry.id, vendor_id=inquiry.vendor_id, occurred_at=inquiry.created_at))
         return inquiry

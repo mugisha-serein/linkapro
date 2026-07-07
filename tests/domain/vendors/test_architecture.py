@@ -16,6 +16,18 @@ FORBIDDEN_IMPORT_ROOTS = {
     "tasks",
 }
 
+PROTECTED_ASSIGNMENT_FIELDS = {
+    "approval_status",
+    "is_active",
+    "is_deleted",
+    "quality_status",
+    "rejection_reason",
+    "status",
+    "upload_status",
+    "version",
+    "visibility_status",
+}
+
 
 def test_vendor_domain_has_no_framework_or_infrastructure_imports():
     domain_root = Path(__file__).parents[3] / "domain" / "vendors"
@@ -62,3 +74,21 @@ def test_django_setup_smoke_for_admin_autodiscovery():
 
     django = importlib.import_module("django")
     django.setup()
+
+
+def test_vendor_domain_protected_state_is_mutated_only_by_entities():
+    domain_root = Path(__file__).parents[3] / "domain" / "vendors"
+    offenders: list[str] = []
+
+    for path in sorted(domain_root.rglob("*.py")):
+        if path.name == "entities.py":
+            continue
+        module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(module):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Attribute) and target.attr in PROTECTED_ASSIGNMENT_FIELDS:
+                    offenders.append(f"{path.relative_to(domain_root)} assigns {target.attr}")
+
+    assert offenders == []
