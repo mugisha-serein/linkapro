@@ -5,9 +5,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Optional
 
-from domain.vendors.errors import PackageValidationError
 from domain.vendors.package_rules import coerce_package_price
-from domain.vendors.validation import aware_utc_datetime, bounded_text, normalize_currency
 
 VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS = 15
 VENDOR_PACKAGE_EDIT_COOLDOWN = timedelta(days=VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS)
@@ -45,17 +43,15 @@ def package_public_fields_changed(
     currency: Optional[str] = None,
     package_tier: Optional[str] = None,
 ) -> bool:
-    if name is not None and _normalize_public_text(name) != _normalize_public_text(package.name):
+    if name is not None and name != package.name:
         return True
-    if description is not None and _normalize_public_text(description) != _normalize_public_text(package.description):
+    if description is not None and description != package.description:
         return True
     if price is not None and coerce_package_price(price) != package.price:
         return True
-    if currency is not None and normalize_currency(currency) != normalize_currency(package.currency):
+    if currency is not None and currency != package.currency:
         return True
-    if package_tier is not None and (
-        (package_tier or "").strip().lower() != (package.package_tier or "").strip().lower()
-    ):
+    if package_tier is not None and package_tier != package.package_tier:
         return True
     return False
 
@@ -63,27 +59,21 @@ def package_public_fields_changed(
 def approval_based_next_edit_allowed_at(package) -> Optional[datetime]:
     if package.approval_status != "approved":
         return None
-    approved_at = _normalize_timestamp(package.last_approved_at or package.updated_at, "last_approved_at")
+    approved_at = package.last_approved_at or package.updated_at
     if not approved_at:
         return None
     return approved_at + VENDOR_PACKAGE_EDIT_COOLDOWN
 
 
 def effective_next_edit_allowed_at(package) -> Optional[datetime]:
-    stored_next_allowed = _normalize_timestamp(package.next_vendor_edit_allowed_at, "next_vendor_edit_allowed_at")
+    stored_next_allowed = package.next_vendor_edit_allowed_at
     approval_next_allowed = approval_based_next_edit_allowed_at(package)
-    last_edit = _normalize_timestamp(package.last_vendor_public_edit_at, "last_vendor_public_edit_at")
-    if stored_next_allowed and last_edit and stored_next_allowed < last_edit:
-        raise PackageValidationError(
-            field_errors={"next_vendor_edit_allowed_at": ["Next edit time cannot be before the last edit."]}
-        )
     if stored_next_allowed and approval_next_allowed:
         return max(stored_next_allowed, approval_next_allowed)
     return stored_next_allowed or approval_next_allowed
 
 
 def ensure_vendor_package_edit_allowed(package, *, public_fields_changed: bool, now: datetime) -> None:
-    now = _normalize_timestamp(now, "now", required=True)
     if not public_fields_changed:
         return
     next_allowed = effective_next_edit_allowed_at(package)
@@ -92,23 +82,10 @@ def ensure_vendor_package_edit_allowed(package, *, public_fields_changed: bool, 
 
 
 def mark_vendor_package_public_edit(package, *, now: datetime, public_fields_changed: bool) -> None:
-    now = _normalize_timestamp(now, "now", required=True)
     if not public_fields_changed:
         return
-    effective_next_edit_allowed_at(package)
     package.approval_status = "waiting_approval"
     package.rejection_reason = None
     package.is_active = False
     package.last_vendor_public_edit_at = now
     package.next_vendor_edit_allowed_at = now + VENDOR_PACKAGE_EDIT_COOLDOWN
-
-
-def _normalize_public_text(value: str) -> str:
-    return bounded_text(value, field_name="public_field", max_length=5000).strip()
-
-
-def _normalize_timestamp(value, field_name: str, *, required: bool = False):
-    try:
-        return aware_utc_datetime(value, field_name=field_name, required=required)
-    except ValueError as exc:
-        raise PackageValidationError(field_errors={field_name: [str(exc)]}) from exc
