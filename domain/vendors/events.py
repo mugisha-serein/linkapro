@@ -1,14 +1,33 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 import uuid
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class VendorDomainEvent:
     occurred_at: datetime
+    aggregate_id: uuid.UUID
+    aggregate_version: int
+    event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.event_id, uuid.UUID):
+            raise TypeError("event_id must be a UUID.")
+        if not isinstance(self.aggregate_id, uuid.UUID):
+            raise TypeError("aggregate_id must be a UUID.")
+        if (
+            not isinstance(self.aggregate_version, int)
+            or isinstance(self.aggregate_version, bool)
+            or self.aggregate_version < 0
+        ):
+            raise ValueError("aggregate_version must be a nonnegative integer.")
+        if not isinstance(self.occurred_at, datetime):
+            raise TypeError("occurred_at must be a datetime.")
+        if self.occurred_at.tzinfo is None or self.occurred_at.utcoffset() is None:
+            raise ValueError("occurred_at must be timezone-aware.")
 
 
 @dataclass(frozen=True)

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import Callable, ClassVar, Optional
 
 from domain.shared.utils import utc_now
 from domain.vendors.events import (
@@ -41,6 +41,7 @@ from domain.vendors.errors import (
     InvalidVendorTransition,
     PackageValidationError,
     PortfolioValidationError,
+    ProtectedStateMutationError,
     VendorProfileValidationError,
 )
 from domain.vendors.package_rules import coerce_package_price
@@ -158,10 +159,28 @@ class MediaAsset:
 class DomainAggregate:
     version: int
     _events: list
+    _protected_fields: ClassVar[frozenset[str]] = frozenset()
+
+    def __setattr__(self, name: str, value) -> None:
+        if (
+            name in self._protected_fields
+            and getattr(self, "_state_locked", False)
+            and not getattr(self, "_allow_protected_assignment", False)
+        ):
+            raise ProtectedStateMutationError(
+                f"Direct assignment to {name} is not allowed.",
+                field_errors={name: ["Use a validated domain transition."]},
+            )
+        object.__setattr__(self, name, value)
 
     def _init_domain_state(self) -> None:
         if not hasattr(self, "_events") or self._events is None:
-            self._events = []
+            object.__setattr__(self, "_events", [])
+        object.__setattr__(self, "_state_locked", False)
+        object.__setattr__(self, "_allow_protected_assignment", False)
+
+    def _lock_state(self) -> None:
+        object.__setattr__(self, "_state_locked", True)
 
     def _record(self, event) -> None:
         self._events.append(event)
@@ -172,22 +191,38 @@ class DomainAggregate:
         return events
 
     def _bump_version(self) -> None:
-        self.version += 1
+        object.__setattr__(self, "version", self.version + 1)
 
-    def _commit_candidate(self, candidate, event=None) -> None:
-        candidate.validate_invariants()
+    def _commit_candidate(self, candidate, event_factory: Callable[[int], object] | None = None) -> None:
+        object.__setattr__(candidate, "_allow_protected_assignment", True)
+        try:
+            candidate.validate_invariants()
+        finally:
+            object.__setattr__(candidate, "_allow_protected_assignment", False)
         pending_events = list(self._events)
         for key, value in candidate.__dict__.items():
             if key != "_events":
-                setattr(self, key, value)
-        self._events = pending_events
+                object.__setattr__(self, key, value)
+        object.__setattr__(self, "_events", pending_events)
+        self._lock_state()
         self._bump_version()
-        if event is not None:
-            self._record(event)
+        if event_factory is not None:
+            self._record(event_factory(self.version))
 
 
 @dataclass
 class VendorProfile(DomainAggregate):
+    _protected_fields: ClassVar[frozenset[str]] = frozenset(
+        {
+            "status",
+            "submitted_at",
+            "approved_at",
+            "rejected_at",
+            "rejection_reason",
+            "version",
+        }
+    )
+
     id: uuid.UUID
     user_id: uuid.UUID
     business_name: str
@@ -215,6 +250,7 @@ class VendorProfile(DomainAggregate):
     def __post_init__(self) -> None:
         self._init_domain_state()
         self.validate_invariants()
+        self._lock_state()
 
     @classmethod
     def create_draft(
@@ -477,7 +513,13 @@ class VendorProfile(DomainAggregate):
         )
         self._commit_candidate(
             candidate,
-            VendorSubmittedForReview(vendor_id=self.id, user_id=self.user_id, occurred_at=now),
+            lambda version: VendorSubmittedForReview(
+                vendor_id=self.id,
+                user_id=self.user_id,
+                occurred_at=now,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
         )
 
     def approve(self) -> None:
@@ -492,7 +534,15 @@ class VendorProfile(DomainAggregate):
             rejection_reason=None,
             updated_at=now,
         )
-        self._commit_candidate(candidate, VendorApproved(vendor_id=self.id, occurred_at=now))
+        self._commit_candidate(
+            candidate,
+            lambda version: VendorApproved(
+                vendor_id=self.id,
+                occurred_at=now,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
     def reject(self, reason: str) -> None:
         if self.status != VendorStatus.PENDING_REVIEW:
@@ -509,7 +559,13 @@ class VendorProfile(DomainAggregate):
         )
         self._commit_candidate(
             candidate,
-            VendorRejected(vendor_id=self.id, reason=clean_reason, occurred_at=now),
+            lambda version: VendorRejected(
+                vendor_id=self.id,
+                reason=clean_reason,
+                occurred_at=now,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
         )
 
     def suspend(self, reason: str | None = None) -> None:
@@ -519,18 +575,47 @@ class VendorProfile(DomainAggregate):
             reason = _validated_transition_reason(reason, "reason", VendorProfileValidationError)
         now = utc_now()
         candidate = replace(self, status=VendorStatus.SUSPENDED, updated_at=now)
-        self._commit_candidate(candidate, VendorSuspended(vendor_id=self.id, reason=reason, occurred_at=now))
+        self._commit_candidate(
+            candidate,
+            lambda version: VendorSuspended(
+                vendor_id=self.id,
+                reason=reason,
+                occurred_at=now,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
     def reinstate(self) -> None:
         if self.status != VendorStatus.SUSPENDED:
             raise InvalidVendorTransition("Only suspended vendors can be reinstated")
         now = utc_now()
         candidate = replace(self, status=VendorStatus.APPROVED, updated_at=now)
-        self._commit_candidate(candidate, VendorReinstated(vendor_id=self.id, occurred_at=now))
+        self._commit_candidate(
+            candidate,
+            lambda version: VendorReinstated(
+                vendor_id=self.id,
+                occurred_at=now,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
 
 @dataclass
 class PortfolioImage(DomainAggregate):
+    _protected_fields: ClassVar[frozenset[str]] = frozenset(
+        {
+            "upload_status",
+            "quality_status",
+            "visibility_status",
+            "is_active",
+            "is_deleted",
+            "deleted_at",
+            "version",
+        }
+    )
+
     id: uuid.UUID
     vendor_id: uuid.UUID
     public_id: str = ""
@@ -566,6 +651,7 @@ class PortfolioImage(DomainAggregate):
     def __post_init__(self) -> None:
         self._init_domain_state()
         self.validate_invariants()
+        self._lock_state()
 
     def validate_invariants(self) -> None:
         errors: dict[str, list[str]] = {}
@@ -726,7 +812,16 @@ class PortfolioImage(DomainAggregate):
             failure_reason=None,
             updated_at=utc_now(),
         )
-        self._assign(candidate, PortfolioMediaQueued(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
+        self._assign(
+            candidate,
+            lambda version: PortfolioMediaQueued(
+                image_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
     def mark_processing(self) -> None:
         self._ensure_mutable()
@@ -740,7 +835,13 @@ class PortfolioImage(DomainAggregate):
         )
         self._assign(
             candidate,
-            PortfolioMediaProcessingStarted(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+            lambda version: PortfolioMediaProcessingStarted(
+                image_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
         )
 
     def mark_uploaded(
@@ -768,7 +869,16 @@ class PortfolioImage(DomainAggregate):
             failure_reason=None,
             updated_at=utc_now(),
         )
-        self._assign(candidate, PortfolioMediaUploaded(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
+        self._assign(
+            candidate,
+            lambda version: PortfolioMediaUploaded(
+                image_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
     def mark_quality_passed(self) -> None:
         self._ensure_mutable()
@@ -818,11 +928,13 @@ class PortfolioImage(DomainAggregate):
         )
         self._assign(
             candidate,
-            PortfolioMediaFailed(
+            lambda version: PortfolioMediaFailed(
                 image_id=self.id,
                 vendor_id=self.vendor_id,
                 reason=clean_reason,
                 occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
             ),
         )
 
@@ -843,7 +955,13 @@ class PortfolioImage(DomainAggregate):
         )
         self._assign(
             candidate,
-            PortfolioMediaSubmittedForApproval(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+            lambda version: PortfolioMediaSubmittedForApproval(
+                image_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
         )
 
     def approve(self) -> None:
@@ -856,7 +974,16 @@ class PortfolioImage(DomainAggregate):
             rejection_reason=None,
             updated_at=utc_now(),
         )
-        self._assign(candidate, PortfolioMediaApproved(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
+        self._assign(
+            candidate,
+            lambda version: PortfolioMediaApproved(
+                image_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
     def reject(self, reason: str) -> None:
         self._ensure_mutable()
@@ -871,11 +998,13 @@ class PortfolioImage(DomainAggregate):
         )
         self._assign(
             candidate,
-            PortfolioMediaRejected(
+            lambda version: PortfolioMediaRejected(
                 image_id=self.id,
                 vendor_id=self.vendor_id,
                 reason=clean_reason,
                 occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
             ),
         )
 
@@ -890,14 +1019,30 @@ class PortfolioImage(DomainAggregate):
             deleted_at=utc_now(),
             updated_at=utc_now(),
         )
-        self._assign(candidate, PortfolioMediaDeactivated(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
+        self._assign(
+            candidate,
+            lambda version: PortfolioMediaDeactivated(
+                image_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
     def reorder(self, new_order: int) -> None:
         self._ensure_mutable()
         candidate = replace(self, order=new_order, updated_at=utc_now())
         self._assign(
             candidate,
-            PortfolioMediaReordered(image_id=self.id, vendor_id=self.vendor_id, order=candidate.order, occurred_at=candidate.updated_at),
+            lambda version: PortfolioMediaReordered(
+                image_id=self.id,
+                vendor_id=self.vendor_id,
+                order=candidate.order,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
         )
 
     def update_caption(self, caption: Optional[str]) -> None:
@@ -914,10 +1059,19 @@ class PortfolioImage(DomainAggregate):
             ),
             updated_at=utc_now(),
         )
-        self._assign(candidate, PortfolioCaptionUpdated(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
+        self._assign(
+            candidate,
+            lambda version: PortfolioCaptionUpdated(
+                image_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
-    def _assign(self, candidate: "PortfolioImage", event=None) -> None:
-        self._commit_candidate(candidate, event)
+    def _assign(self, candidate: "PortfolioImage", event_factory: Callable[[int], object] | None = None) -> None:
+        self._commit_candidate(candidate, event_factory)
 
     def _ensure_mutable(self) -> None:
         if self.is_deleted:
@@ -926,6 +1080,17 @@ class PortfolioImage(DomainAggregate):
 
 @dataclass
 class ServicePackage(DomainAggregate):
+    _protected_fields: ClassVar[frozenset[str]] = frozenset(
+        {
+            "approval_status",
+            "rejection_reason",
+            "is_active",
+            "is_deleted",
+            "deleted_at",
+            "version",
+        }
+    )
+
     id: uuid.UUID
     vendor_id: uuid.UUID
     name: str
@@ -949,6 +1114,7 @@ class ServicePackage(DomainAggregate):
     def __post_init__(self) -> None:
         self._init_domain_state()
         self.validate_invariants()
+        self._lock_state()
 
     @classmethod
     def create(
@@ -972,7 +1138,15 @@ class ServicePackage(DomainAggregate):
             approval_status=PackageApprovalStatus.WAITING_APPROVAL.value,
             is_active=False,
         )
-        package._record(ServicePackageCreated(package_id=package.id, vendor_id=package.vendor_id, occurred_at=package.created_at))
+        package._record(
+            ServicePackageCreated(
+                package_id=package.id,
+                vendor_id=package.vendor_id,
+                occurred_at=package.created_at,
+                aggregate_id=package.id,
+                aggregate_version=package.version,
+            )
+        )
         return package
 
     @classmethod
@@ -1122,7 +1296,13 @@ class ServicePackage(DomainAggregate):
         )
         self._commit_candidate(
             candidate,
-            ServicePackageUpdated(package_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+            lambda version: ServicePackageUpdated(
+                package_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
         )
 
     def submit_for_approval(self) -> None:
@@ -1139,7 +1319,13 @@ class ServicePackage(DomainAggregate):
         )
         self._commit_candidate(
             candidate,
-            ServicePackageSubmittedForApproval(package_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+            lambda version: ServicePackageSubmittedForApproval(
+                package_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
         )
 
     def approve(self) -> None:
@@ -1156,7 +1342,16 @@ class ServicePackage(DomainAggregate):
             is_active=False,
             updated_at=now,
         )
-        self._commit_candidate(candidate, ServicePackageApproved(package_id=self.id, vendor_id=self.vendor_id, occurred_at=now))
+        self._commit_candidate(
+            candidate,
+            lambda version: ServicePackageApproved(
+                package_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=now,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
     def reject(self, reason: str) -> None:
         if self.is_deleted:
@@ -1173,11 +1368,13 @@ class ServicePackage(DomainAggregate):
         )
         self._commit_candidate(
             candidate,
-            ServicePackageRejected(
+            lambda version: ServicePackageRejected(
                 package_id=self.id,
                 vendor_id=self.vendor_id,
                 reason=clean_reason,
                 occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
             ),
         )
 
@@ -1195,7 +1392,13 @@ class ServicePackage(DomainAggregate):
         )
         self._commit_candidate(
             candidate,
-            ServicePackageSubmittedForApproval(package_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+            lambda version: ServicePackageSubmittedForApproval(
+                package_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
         )
 
     def deactivate(self) -> None:
@@ -1210,7 +1413,13 @@ class ServicePackage(DomainAggregate):
         )
         self._commit_candidate(
             candidate,
-            ServicePackageDeactivated(package_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+            lambda version: ServicePackageDeactivated(
+                package_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
         )
 
     def activate(self) -> None:
@@ -1223,12 +1432,20 @@ class ServicePackage(DomainAggregate):
         candidate = replace(self, is_active=True, updated_at=utc_now())
         self._commit_candidate(
             candidate,
-            ServicePackageActivated(package_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+            lambda version: ServicePackageActivated(
+                package_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=candidate.updated_at,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
         )
 
 
 @dataclass
 class Inquiry(DomainAggregate):
+    _protected_fields: ClassVar[frozenset[str]] = frozenset({"is_read", "version"})
+
     id: uuid.UUID
     vendor_id: uuid.UUID
     client_name: str
@@ -1244,6 +1461,7 @@ class Inquiry(DomainAggregate):
     def __post_init__(self) -> None:
         self._init_domain_state()
         self.validate_invariants()
+        self._lock_state()
 
     @classmethod
     def create(
@@ -1269,7 +1487,15 @@ class Inquiry(DomainAggregate):
             client_phone=client_phone,
             event_date=checked_event_date,
         )
-        inquiry._record(InquiryReceived(inquiry_id=inquiry.id, vendor_id=inquiry.vendor_id, occurred_at=inquiry.created_at))
+        inquiry._record(
+            InquiryReceived(
+                inquiry_id=inquiry.id,
+                vendor_id=inquiry.vendor_id,
+                occurred_at=inquiry.created_at,
+                aggregate_id=inquiry.id,
+                aggregate_version=inquiry.version,
+            )
+        )
         return inquiry
 
     def validate_invariants(self) -> None:
@@ -1303,7 +1529,16 @@ class Inquiry(DomainAggregate):
             return
         now = utc_now()
         candidate = replace(self, is_read=True)
-        self._commit_candidate(candidate, InquiryRead(inquiry_id=self.id, vendor_id=self.vendor_id, occurred_at=now))
+        self._commit_candidate(
+            candidate,
+            lambda version: InquiryRead(
+                inquiry_id=self.id,
+                vendor_id=self.vendor_id,
+                occurred_at=now,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
 def _normalize_uuid(value, field_name: str, errors: dict[str, list[str]]) -> uuid.UUID:
     try:

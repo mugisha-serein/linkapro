@@ -203,7 +203,8 @@ class TestVendorProfile:
         assert rejected.rejection_reason == "Insufficient portfolio"
 
     def test_blank_rejection_reason_rejected_and_atomic(self):
-        profile = valid_profile(status=VendorStatus.PENDING_REVIEW, submitted_at=utc_now())
+        now = utc_now()
+        profile = valid_profile(status=VendorStatus.PENDING_REVIEW, submitted_at=now, updated_at=now)
         original = profile.__dict__.copy()
 
         with pytest.raises(VendorProfileValidationError) as exc_info:
