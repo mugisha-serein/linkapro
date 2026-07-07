@@ -48,7 +48,6 @@ from domain.vendors.package_rules import validate_service_package_rules
 from domain.vendors.validation import (
     MAX_PORTFOLIO_ORDER,
     MIN_INQUIRY_MESSAGE_LENGTH,
-    MIN_PACKAGE_DESCRIPTION_LENGTH,
     MIN_VENDOR_DESCRIPTION_LENGTH,
     TEXT_LIMITS,
     add_error,
@@ -169,6 +168,17 @@ class DomainAggregate:
 
     def _bump_version(self) -> None:
         self.version += 1
+
+    def _commit_candidate(self, candidate, event=None) -> None:
+        candidate.validate_invariants()
+        pending_events = list(self._events)
+        for key, value in candidate.__dict__.items():
+            if key != "_events":
+                setattr(self, key, value)
+        self._events = pending_events
+        self._bump_version()
+        if event is not None:
+            self._record(event)
 
 
 @dataclass
@@ -368,17 +378,45 @@ class VendorProfile(DomainAggregate):
             url_field="cover_image_url",
             public_id_field="cover_image_public_id",
         )
-        if self.status == VendorStatus.PENDING_REVIEW and self.submitted_at is None:
-            self.submitted_at = self.updated_at
-        if self.status == VendorStatus.APPROVED and self.approved_at is None:
-            self.approved_at = self.updated_at
+        if self.status == VendorStatus.DRAFT:
+            if self.submitted_at is not None:
+                add_error(errors, "submitted_at", "Draft vendors cannot have submission metadata.")
+            if self.approved_at is not None:
+                add_error(errors, "approved_at", "Draft vendors cannot have approval metadata.")
+            if self.rejected_at is not None:
+                add_error(errors, "rejected_at", "Draft vendors cannot have rejection metadata.")
+        if self.status == VendorStatus.PENDING_REVIEW:
+            if self.submitted_at is None:
+                add_error(errors, "submitted_at", "Pending vendors require submitted_at.")
+            if self.approved_at is not None:
+                add_error(errors, "approved_at", "Pending vendors cannot have approval metadata.")
+            if self.rejected_at is not None:
+                add_error(errors, "rejected_at", "Pending vendors cannot have rejection metadata.")
+        if self.status == VendorStatus.APPROVED:
+            if self.approved_at is None:
+                add_error(errors, "approved_at", "Approved vendors require approved_at.")
+            if self.rejected_at is not None:
+                add_error(errors, "rejected_at", "Approved vendors cannot have rejection metadata.")
         if self.status == VendorStatus.REJECTED:
             if not self.rejection_reason:
                 add_error(errors, "rejection_reason", "Rejection reason is required.")
             if self.rejected_at is None:
-                self.rejected_at = self.updated_at
+                add_error(errors, "rejected_at", "Rejected vendors require rejected_at.")
+            if self.approved_at is not None:
+                add_error(errors, "approved_at", "Rejected vendors cannot have approval metadata.")
+        if self.status == VendorStatus.SUSPENDED:
+            if self.approved_at is None:
+                add_error(errors, "approved_at", "Suspended vendors require previous approval metadata.")
+            if self.rejected_at is not None:
+                add_error(errors, "rejected_at", "Suspended vendors cannot have rejection metadata.")
         if self.status != VendorStatus.REJECTED and self.rejection_reason:
             add_error(errors, "rejection_reason", "Only rejected vendors can have rejection metadata.")
+        if self.submitted_at and self.submitted_at < self.created_at:
+            add_error(errors, "submitted_at", "Submission cannot happen before creation.")
+        if self.approved_at and self.submitted_at and self.approved_at < self.submitted_at:
+            add_error(errors, "approved_at", "Approval cannot happen before submission.")
+        if self.rejected_at and self.submitted_at and self.rejected_at < self.submitted_at:
+            add_error(errors, "rejected_at", "Rejection cannot happen before submission.")
         if self.description and len(self.description) < MIN_VENDOR_DESCRIPTION_LENGTH:
             add_error(errors, "description", "Use at least 20 characters for your description.")
         if self.created_at and self.updated_at and self.updated_at < self.created_at:
@@ -413,64 +451,67 @@ class VendorProfile(DomainAggregate):
                 field_errors=completion_errors,
             )
         now = utc_now()
-        self.status = VendorStatus.PENDING_REVIEW
-        self.submitted_at = now
-        self.rejected_at = None
-        self.rejection_reason = None
-        self.updated_at = now
-        self.validate_invariants()
-        self._bump_version()
-        self._record(VendorSubmittedForReview(vendor_id=self.id, user_id=self.user_id, occurred_at=now))
+        candidate = replace(
+            self,
+            status=VendorStatus.PENDING_REVIEW,
+            submitted_at=now,
+            approved_at=None,
+            rejected_at=None,
+            rejection_reason=None,
+            updated_at=now,
+        )
+        self._commit_candidate(
+            candidate,
+            VendorSubmittedForReview(vendor_id=self.id, user_id=self.user_id, occurred_at=now),
+        )
 
     def approve(self) -> None:
         if self.status != VendorStatus.PENDING_REVIEW:
             raise InvalidVendorTransition("Only pending profiles can be approved")
         now = utc_now()
-        self.status = VendorStatus.APPROVED
-        self.approved_at = now
-        self.rejected_at = None
-        self.rejection_reason = None
-        self.updated_at = now
-        self.validate_invariants()
-        self._bump_version()
-        self._record(VendorApproved(vendor_id=self.id, occurred_at=now))
+        candidate = replace(
+            self,
+            status=VendorStatus.APPROVED,
+            approved_at=now,
+            rejected_at=None,
+            rejection_reason=None,
+            updated_at=now,
+        )
+        self._commit_candidate(candidate, VendorApproved(vendor_id=self.id, occurred_at=now))
 
     def reject(self, reason: str) -> None:
         if self.status != VendorStatus.PENDING_REVIEW:
             raise InvalidVendorTransition("Only pending profiles can be rejected")
         clean_reason = _validated_transition_reason(reason, "rejection_reason", VendorProfileValidationError)
         now = utc_now()
-        self.status = VendorStatus.REJECTED
-        self.rejected_at = now
-        self.rejection_reason = clean_reason
-        self.updated_at = now
-        self.validate_invariants()
-        self._bump_version()
-        self._record(VendorRejected(vendor_id=self.id, reason=clean_reason, occurred_at=now))
+        candidate = replace(
+            self,
+            status=VendorStatus.REJECTED,
+            approved_at=None,
+            rejected_at=now,
+            rejection_reason=clean_reason,
+            updated_at=now,
+        )
+        self._commit_candidate(
+            candidate,
+            VendorRejected(vendor_id=self.id, reason=clean_reason, occurred_at=now),
+        )
 
     def suspend(self, reason: str | None = None) -> None:
         if self.status != VendorStatus.APPROVED:
             raise InvalidVendorTransition("Only approved vendors can be suspended")
         if reason is not None:
-            _validated_transition_reason(reason, "reason", VendorProfileValidationError)
+            reason = _validated_transition_reason(reason, "reason", VendorProfileValidationError)
         now = utc_now()
-        self.status = VendorStatus.SUSPENDED
-        self.updated_at = now
-        self.validate_invariants()
-        self._bump_version()
-        self._record(VendorSuspended(vendor_id=self.id, reason=reason, occurred_at=now))
+        candidate = replace(self, status=VendorStatus.SUSPENDED, updated_at=now)
+        self._commit_candidate(candidate, VendorSuspended(vendor_id=self.id, reason=reason, occurred_at=now))
 
     def reinstate(self) -> None:
         if self.status != VendorStatus.SUSPENDED:
             raise InvalidVendorTransition("Only suspended vendors can be reinstated")
         now = utc_now()
-        self.status = VendorStatus.APPROVED
-        if self.approved_at is None:
-            self.approved_at = now
-        self.updated_at = now
-        self.validate_invariants()
-        self._bump_version()
-        self._record(VendorReinstated(vendor_id=self.id, occurred_at=now))
+        candidate = replace(self, status=VendorStatus.APPROVED, updated_at=now)
+        self._commit_candidate(candidate, VendorReinstated(vendor_id=self.id, occurred_at=now))
 
 
 @dataclass
@@ -573,8 +614,7 @@ class PortfolioImage(DomainAggregate):
         self.local_preview_url = _normalize_safe_url(self.local_preview_url, "local_preview_url", errors)
         self.analyzer_summary = _normalize_optional_text(self.analyzer_summary, "analyzer_summary", 2000, errors)
 
-        if not isinstance(self.order, int) or self.order < 0 or self.order > MAX_PORTFOLIO_ORDER:
-            add_error(errors, "order", f"Order must be between 0 and {MAX_PORTFOLIO_ORDER}.")
+        self.order = _normalize_int(self.order, "order", errors, minimum=0, maximum=MAX_PORTFOLIO_ORDER)
         if self.mime_type and self.mime_type not in {"image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm", "video/quicktime"}:
             add_error(errors, "mime_type", "Unsupported portfolio media MIME type.")
         _validate_public_id_url_pair(
@@ -614,7 +654,7 @@ class PortfolioImage(DomainAggregate):
         if self.is_deleted and self.visibility_status == PortfolioVisibilityStatus.APPROVED.value:
             add_error(errors, "visibility_status", "Deleted media cannot be public.")
         if self.is_deleted and self.deleted_at is None:
-            self.deleted_at = self.updated_at
+            add_error(errors, "deleted_at", "Deleted media require deleted_at.")
 
         if errors:
             raise PortfolioValidationError(field_errors=errors)
@@ -634,6 +674,8 @@ class PortfolioImage(DomainAggregate):
 
     def mark_queued(self) -> None:
         self._ensure_mutable()
+        if self.upload_status != PortfolioUploadStatus.STAGED.value:
+            raise InvalidPortfolioTransition("Only staged media can be queued.")
         candidate = replace(
             self,
             upload_status=PortfolioUploadStatus.QUEUED.value,
@@ -643,8 +685,7 @@ class PortfolioImage(DomainAggregate):
             failure_reason=None,
             updated_at=utc_now(),
         )
-        self._assign(candidate)
-        self._record(PortfolioMediaQueued(image_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._assign(candidate, PortfolioMediaQueued(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
 
     def mark_processing(self) -> None:
         self._ensure_mutable()
@@ -656,8 +697,10 @@ class PortfolioImage(DomainAggregate):
             visibility_status=PortfolioVisibilityStatus.PRIVATE.value,
             updated_at=utc_now(),
         )
-        self._assign(candidate)
-        self._record(PortfolioMediaProcessingStarted(image_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._assign(
+            candidate,
+            PortfolioMediaProcessingStarted(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+        )
 
     def mark_uploaded(
         self,
@@ -667,6 +710,8 @@ class PortfolioImage(DomainAggregate):
         quality_status: str = PortfolioQualityStatus.PASSED.value,
     ) -> None:
         self._ensure_mutable()
+        if self.upload_status != PortfolioUploadStatus.PROCESSING.value:
+            raise InvalidPortfolioTransition("Only processing media can be marked uploaded.")
         if public_id is None or secure_url is None:
             raise PortfolioValidationError(field_errors={"secure_url": ["Uploaded media requires a valid asset."]})
         asset = MediaAsset(public_id=public_id, secure_url=secure_url)
@@ -683,11 +728,15 @@ class PortfolioImage(DomainAggregate):
             failure_reason=None,
             updated_at=utc_now(),
         )
-        self._assign(candidate)
-        self._record(PortfolioMediaUploaded(image_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._assign(candidate, PortfolioMediaUploaded(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
 
     def mark_failed(self, reason: str) -> None:
         self._ensure_mutable()
+        if self.upload_status not in {
+            PortfolioUploadStatus.PROCESSING.value,
+            PortfolioUploadStatus.PROCESSING_DEFERRED.value,
+        }:
+            raise InvalidPortfolioTransition("Only processing media can fail.")
         clean_reason = _validated_transition_reason(reason, "failure_reason", PortfolioValidationError)
         candidate = replace(
             self,
@@ -698,14 +747,22 @@ class PortfolioImage(DomainAggregate):
             failure_reason=clean_reason,
             updated_at=utc_now(),
         )
-        self._assign(candidate)
-        self._record(PortfolioMediaFailed(image_id=self.id, vendor_id=self.vendor_id, reason=clean_reason, occurred_at=self.updated_at))
+        self._assign(
+            candidate,
+            PortfolioMediaFailed(
+                image_id=self.id,
+                vendor_id=self.vendor_id,
+                reason=clean_reason,
+                occurred_at=candidate.updated_at,
+            ),
+        )
 
     def submit_for_approval(self) -> None:
         self._ensure_mutable()
         if (
             self.upload_status != PortfolioUploadStatus.UPLOADED.value
             or self.quality_status != PortfolioQualityStatus.PASSED.value
+            or self.visibility_status != PortfolioVisibilityStatus.PRIVATE.value
             or not self.is_active
             or self.is_deleted
         ):
@@ -715,8 +772,10 @@ class PortfolioImage(DomainAggregate):
             visibility_status=PortfolioVisibilityStatus.WAITING_APPROVAL.value,
             updated_at=utc_now(),
         )
-        self._assign(candidate)
-        self._record(PortfolioMediaSubmittedForApproval(image_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._assign(
+            candidate,
+            PortfolioMediaSubmittedForApproval(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+        )
 
     def approve(self) -> None:
         self._ensure_mutable()
@@ -728,11 +787,12 @@ class PortfolioImage(DomainAggregate):
             rejection_reason=None,
             updated_at=utc_now(),
         )
-        self._assign(candidate)
-        self._record(PortfolioMediaApproved(image_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._assign(candidate, PortfolioMediaApproved(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
 
     def reject(self, reason: str) -> None:
         self._ensure_mutable()
+        if self.visibility_status != PortfolioVisibilityStatus.WAITING_APPROVAL.value:
+            raise InvalidPortfolioTransition("Only waiting portfolio media can be rejected.")
         clean_reason = _validated_transition_reason(reason, "rejection_reason", PortfolioValidationError)
         candidate = replace(
             self,
@@ -740,8 +800,15 @@ class PortfolioImage(DomainAggregate):
             rejection_reason=clean_reason,
             updated_at=utc_now(),
         )
-        self._assign(candidate)
-        self._record(PortfolioMediaRejected(image_id=self.id, vendor_id=self.vendor_id, reason=clean_reason, occurred_at=self.updated_at))
+        self._assign(
+            candidate,
+            PortfolioMediaRejected(
+                image_id=self.id,
+                vendor_id=self.vendor_id,
+                reason=clean_reason,
+                occurred_at=candidate.updated_at,
+            ),
+        )
 
     def deactivate(self) -> None:
         if self.is_deleted and not self.is_active:
@@ -754,27 +821,25 @@ class PortfolioImage(DomainAggregate):
             deleted_at=utc_now(),
             updated_at=utc_now(),
         )
-        self._assign(candidate)
-        self._record(PortfolioMediaDeactivated(image_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._assign(candidate, PortfolioMediaDeactivated(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
 
     def reorder(self, new_order: int) -> None:
         self._ensure_mutable()
         candidate = replace(self, order=new_order, updated_at=utc_now())
-        self._assign(candidate)
-        self._record(PortfolioMediaReordered(image_id=self.id, vendor_id=self.vendor_id, order=self.order, occurred_at=self.updated_at))
+        self._assign(
+            candidate,
+            PortfolioMediaReordered(image_id=self.id, vendor_id=self.vendor_id, order=candidate.order, occurred_at=candidate.updated_at),
+        )
 
     def update_caption(self, caption: Optional[str]) -> None:
         self._ensure_mutable()
         if caption == self.caption:
             return
         candidate = replace(self, caption=caption, updated_at=utc_now())
-        self._assign(candidate)
-        self._record(PortfolioCaptionUpdated(image_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._assign(candidate, PortfolioCaptionUpdated(image_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at))
 
-    def _assign(self, candidate: "PortfolioImage") -> None:
-        candidate.validate_invariants()
-        self.__dict__.update(candidate.__dict__)
-        self._bump_version()
+    def _assign(self, candidate: "PortfolioImage", event=None) -> None:
+        self._commit_candidate(candidate, event)
 
     def _ensure_mutable(self) -> None:
         if self.is_deleted:
@@ -872,7 +937,6 @@ class ServicePackage(DomainAggregate):
             "description",
             TEXT_LIMITS["package_description"],
             errors,
-            min_length=MIN_PACKAGE_DESCRIPTION_LENGTH,
         )
         self.price = _normalize_price(self.price, errors)
         self.currency = _normalize_currency_value(self.currency, errors)
@@ -910,12 +974,16 @@ class ServicePackage(DomainAggregate):
         if self.is_deleted and self.is_active:
             add_error(errors, "is_active", "Deleted packages must be inactive.")
         if self.is_deleted and self.deleted_at is None:
-            self.deleted_at = self.updated_at
+            add_error(errors, "deleted_at", "Deleted packages require deleted_at.")
+        if self.approval_status == PackageApprovalStatus.APPROVED.value and self.last_approved_at is None:
+            add_error(errors, "last_approved_at", "Approved packages require last_approved_at.")
         if self.approval_status == PackageApprovalStatus.WAITING_APPROVAL.value and self.is_active:
             add_error(errors, "is_active", "Waiting approval packages cannot be active.")
         if self.approval_status == PackageApprovalStatus.REJECTED.value:
             if self.is_active:
                 add_error(errors, "is_active", "Rejected packages cannot be active.")
+            if not self.rejection_reason:
+                add_error(errors, "rejection_reason", "Rejected packages require rejection_reason.")
         if self.approval_status != PackageApprovalStatus.REJECTED.value and self.rejection_reason:
             add_error(errors, "rejection_reason", "Only rejected packages can have rejection metadata.")
         if self.last_vendor_public_edit_at and self.next_vendor_edit_allowed_at:
@@ -945,16 +1013,26 @@ class ServicePackage(DomainAggregate):
         currency: Optional[str] = None,
         package_tier: Optional[str] = None,
     ) -> None:
+        if self.is_deleted:
+            raise InvalidPackageTransition("Deleted packages cannot be edited.")
         next_name = self.name if name is None else name
         next_description = self.description if description is None else description
         next_price = self.price if price is None else price
         next_currency = self.currency if currency is None else currency
         next_tier = self.package_tier if package_tier is None else package_tier
+        try:
+            normalized_price = positive_decimal(next_price)
+        except ValueError as exc:
+            raise PackageValidationError(field_errors={"price": [str(exc)]}) from exc
+        try:
+            normalized_currency = normalize_currency(next_currency)
+        except ValueError as exc:
+            raise PackageValidationError(field_errors={"currency": [str(exc)]}) from exc
         public_changed = (
             next_name.strip() != self.name
             or next_description.strip() != self.description
-            or positive_decimal(next_price) != self.price
-            or normalize_currency(next_currency) != self.currency
+            or normalized_price != self.price
+            or normalized_currency != self.currency
             or str(next_tier).strip().lower() != self.package_tier
         )
         if not public_changed:
@@ -975,10 +1053,10 @@ class ServicePackage(DomainAggregate):
             is_active=False,
             updated_at=utc_now(),
         )
-        candidate.validate_invariants()
-        self.__dict__.update(candidate.__dict__)
-        self._bump_version()
-        self._record(ServicePackageUpdated(package_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._commit_candidate(
+            candidate,
+            ServicePackageUpdated(package_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+        )
 
     def submit_for_approval(self) -> None:
         if self.is_deleted:
@@ -992,10 +1070,10 @@ class ServicePackage(DomainAggregate):
             is_active=False,
             updated_at=utc_now(),
         )
-        candidate.validate_invariants()
-        self.__dict__.update(candidate.__dict__)
-        self._bump_version()
-        self._record(ServicePackageSubmittedForApproval(package_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._commit_candidate(
+            candidate,
+            ServicePackageSubmittedForApproval(package_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+        )
 
     def approve(self) -> None:
         if self.is_deleted:
@@ -1011,14 +1089,13 @@ class ServicePackage(DomainAggregate):
             is_active=False,
             updated_at=now,
         )
-        candidate.validate_invariants()
-        self.__dict__.update(candidate.__dict__)
-        self._bump_version()
-        self._record(ServicePackageApproved(package_id=self.id, vendor_id=self.vendor_id, occurred_at=now))
+        self._commit_candidate(candidate, ServicePackageApproved(package_id=self.id, vendor_id=self.vendor_id, occurred_at=now))
 
     def reject(self, reason: str) -> None:
         if self.is_deleted:
             raise InvalidPackageTransition("Deleted packages cannot be rejected.")
+        if self.approval_status != PackageApprovalStatus.WAITING_APPROVAL.value:
+            raise InvalidPackageTransition("Only waiting packages can be rejected.")
         clean_reason = _validated_transition_reason(reason, "rejection_reason", PackageValidationError)
         candidate = replace(
             self,
@@ -1027,10 +1104,15 @@ class ServicePackage(DomainAggregate):
             is_active=False,
             updated_at=utc_now(),
         )
-        candidate.validate_invariants()
-        self.__dict__.update(candidate.__dict__)
-        self._bump_version()
-        self._record(ServicePackageRejected(package_id=self.id, vendor_id=self.vendor_id, reason=clean_reason, occurred_at=self.updated_at))
+        self._commit_candidate(
+            candidate,
+            ServicePackageRejected(
+                package_id=self.id,
+                vendor_id=self.vendor_id,
+                reason=clean_reason,
+                occurred_at=candidate.updated_at,
+            ),
+        )
 
     def restore_to_waiting_approval(self) -> None:
         if self.is_deleted:
@@ -1044,10 +1126,10 @@ class ServicePackage(DomainAggregate):
             is_active=False,
             updated_at=utc_now(),
         )
-        candidate.validate_invariants()
-        self.__dict__.update(candidate.__dict__)
-        self._bump_version()
-        self._record(ServicePackageSubmittedForApproval(package_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._commit_candidate(
+            candidate,
+            ServicePackageSubmittedForApproval(package_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+        )
 
     def deactivate(self) -> None:
         if self.is_deleted and not self.is_active:
@@ -1059,10 +1141,10 @@ class ServicePackage(DomainAggregate):
             deleted_at=utc_now(),
             updated_at=utc_now(),
         )
-        candidate.validate_invariants()
-        self.__dict__.update(candidate.__dict__)
-        self._bump_version()
-        self._record(ServicePackageDeactivated(package_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._commit_candidate(
+            candidate,
+            ServicePackageDeactivated(package_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+        )
 
     def activate(self) -> None:
         if self.is_deleted:
@@ -1072,10 +1154,10 @@ class ServicePackage(DomainAggregate):
         if self.is_active:
             return
         candidate = replace(self, is_active=True, updated_at=utc_now())
-        candidate.validate_invariants()
-        self.__dict__.update(candidate.__dict__)
-        self._bump_version()
-        self._record(ServicePackageActivated(package_id=self.id, vendor_id=self.vendor_id, occurred_at=self.updated_at))
+        self._commit_candidate(
+            candidate,
+            ServicePackageActivated(package_id=self.id, vendor_id=self.vendor_id, occurred_at=candidate.updated_at),
+        )
 
 
 @dataclass
@@ -1148,9 +1230,9 @@ class Inquiry(DomainAggregate):
     def mark_read(self) -> None:
         if self.is_read:
             return
-        self.is_read = True
-        self._bump_version()
-        self._record(InquiryRead(inquiry_id=self.id, vendor_id=self.vendor_id, occurred_at=utc_now()))
+        now = utc_now()
+        candidate = replace(self, is_read=True)
+        self._commit_candidate(candidate, InquiryRead(inquiry_id=self.id, vendor_id=self.vendor_id, occurred_at=now))
 
 def _normalize_uuid(value, field_name: str, errors: dict[str, list[str]]) -> uuid.UUID:
     try:

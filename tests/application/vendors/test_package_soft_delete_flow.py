@@ -6,6 +6,7 @@ import pytest
 
 from application.vendors.commands import DeactivateServicePackageCommand
 from application.vendors.handlers import VendorCommandHandlers
+from domain.shared.utils import utc_now
 from domain.vendors.entities import ServicePackage
 
 
@@ -32,6 +33,7 @@ def handlers(mock_repos):
 
 
 def _service_package(vendor_id, *, is_active=True, is_deleted=False):
+    now = utc_now()
     return ServicePackage(
         id=uuid.uuid4(),
         vendor_id=vendor_id,
@@ -43,6 +45,8 @@ def _service_package(vendor_id, *, is_active=True, is_deleted=False):
         approval_status="approved",
         is_active=is_active,
         is_deleted=is_deleted,
+        last_approved_at=now,
+        deleted_at=now if is_deleted else None,
     )
 
 

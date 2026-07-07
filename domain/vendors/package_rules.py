@@ -17,7 +17,7 @@ PACKAGE_TIER_LABELS = {
 }
 
 PACKAGE_TIER_RULES = {
-    "standard": {"min_price": Decimal("1"), "min_description_length": 10},
+    "standard": {"min_price": Decimal("1"), "min_description_length": 30},
     "premier": {"min_price": Decimal("50000"), "min_description_length": 50},
     "gold": {"min_price": Decimal("100000"), "min_description_length": 80},
 }

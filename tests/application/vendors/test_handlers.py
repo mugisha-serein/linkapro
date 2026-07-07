@@ -67,6 +67,7 @@ def _portfolio_image(vendor_id, *, order=0):
 
 
 def _vendor_profile(vendor_id):
+    now = utc_now()
     return VendorProfile(
         id=vendor_id,
         user_id=uuid.uuid4(),
@@ -77,18 +78,27 @@ def _vendor_profile(vendor_id):
         contact_email="metrics@example.com",
         contact_phone="+250700000000",
         status=VendorStatus.APPROVED,
+        submitted_at=now,
+        approved_at=now,
     )
 
 
 def _service_package(vendor_id, *, status="approved", active=True):
+    now = utc_now()
+    lifecycle = {}
+    if status == "approved":
+        lifecycle["last_approved_at"] = now
+    if status == "rejected":
+        lifecycle["rejection_reason"] = "Needs more detail"
     return ServicePackage(
         id=uuid.uuid4(),
         vendor_id=vendor_id,
         name="Package",
-        description="Useful vendor package",
+        description="Useful vendor package with clear event deliverables.",
         price=5000.0,
         approval_status=status,
         is_active=active,
+        **lifecycle,
     )
 
 
@@ -113,7 +123,7 @@ class TestVendorProfileCommands:
             user_id=uuid.uuid4(),
             business_name="Test Biz",
             category="photography",
-            description="We do photos",
+            description="We do professional event photography.",
             service_area="Kigali",
             contact_email="biz@example.com",
             contact_phone="123",
@@ -129,7 +139,7 @@ class TestVendorProfileCommands:
             user_id=uuid.uuid4(),
             business_name="Existing",
             category=ServiceCategory.PHOTOGRAPHY,
-            description="Existing vendor profile",
+            description="Existing vendor profile with complete details.",
             service_area="Kigali",
             contact_email="existing@example.com",
             contact_phone="+250700000000",
@@ -140,10 +150,10 @@ class TestVendorProfileCommands:
             user_id=existing.user_id,
             business_name="Test Biz",
             category="photography",
-            description="...",
-            service_area="...",
-            contact_email="...",
-            contact_phone="...",
+            description="Complete duplicate vendor profile details.",
+            service_area="Kigali",
+            contact_email="duplicate@example.com",
+            contact_phone="+250700000000",
         )
         with pytest.raises(ValueError, match="already has a vendor profile"):
             handlers.create_profile(cmd)
@@ -154,7 +164,7 @@ class TestVendorProfileCommands:
             user_id=uuid.uuid4(),
             business_name="Test",
             category=ServiceCategory.CATERING,
-            description="Food",
+            description="Food and event catering services.",
             service_area="Kigali",
             contact_email="test@example.com",
             contact_phone="123",
@@ -175,11 +185,12 @@ class TestVendorProfileCommands:
             user_id=uuid.uuid4(),
             business_name="Test",
             category=ServiceCategory.CATERING,
-            description="Food",
+            description="Food and event catering services.",
             service_area="Kigali",
             contact_email="test@example.com",
             contact_phone="123",
             status=VendorStatus.PENDING_REVIEW,
+            submitted_at=utc_now(),
         )
         mock_repos["vendor_repo"].get_by_id.return_value = profile
         mock_repos["vendor_repo"].save.side_effect = lambda p: p
@@ -196,11 +207,12 @@ class TestVendorProfileCommands:
             user_id=uuid.uuid4(),
             business_name="Test",
             category=ServiceCategory.CATERING,
-            description="Food",
+            description="Food and event catering services.",
             service_area="Kigali",
             contact_email="test@example.com",
             contact_phone="123",
             status=VendorStatus.PENDING_REVIEW,
+            submitted_at=utc_now(),
         )
         mock_repos["vendor_repo"].get_by_id.return_value = profile
         mock_repos["vendor_repo"].save.side_effect = lambda p: p
@@ -324,7 +336,7 @@ class TestServicePackageCommands:
             id=uuid.uuid4(),
             vendor_id=uuid.uuid4(),
             name="Deluxe",
-            description="All inclusive",
+            description="All inclusive package with clear deliverables.",
             price=5000.0,
         )
         mock_repos["package_repo"].get_by_id.return_value = package
@@ -344,7 +356,7 @@ class TestServicePackageCommands:
             id=uuid.uuid4(),
             vendor_id=uuid.uuid4(),
             name="Deluxe",
-            description="All inclusive",
+            description="All inclusive package with clear deliverables.",
             price=5000.0,
         )
         mock_repos["package_repo"].get_by_id.return_value = package
@@ -363,7 +375,7 @@ class TestServicePackageCommands:
             id=uuid.uuid4(),
             vendor_id=uuid.uuid4(),
             name="Deluxe",
-            description="All inclusive",
+            description="All inclusive package with clear deliverables.",
             price=5000.0,
         )
         mock_repos["package_repo"].get_by_id.return_value = package

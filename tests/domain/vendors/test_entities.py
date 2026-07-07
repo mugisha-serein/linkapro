@@ -26,6 +26,7 @@ from domain.vendors.errors import (
 
 
 def valid_profile(**overrides):
+    now = utc_now()
     data = {
         "id": uuid.uuid4(),
         "user_id": uuid.uuid4(),
@@ -37,6 +38,13 @@ def valid_profile(**overrides):
         "contact_phone": "+250788123456",
     }
     data.update(overrides)
+    status = data.get("status")
+    if status == VendorStatus.PENDING_REVIEW and data.get("submitted_at") is None:
+        data.update({"created_at": now, "updated_at": now, "submitted_at": now})
+    if status == VendorStatus.APPROVED and data.get("approved_at") is None:
+        data.update({"created_at": now, "updated_at": now, "submitted_at": now, "approved_at": now})
+    if status == VendorStatus.SUSPENDED and data.get("approved_at") is None:
+        data.update({"created_at": now, "updated_at": now, "submitted_at": now, "approved_at": now})
     return VendorProfile(**data)
 
 
@@ -45,7 +53,7 @@ def valid_package(**overrides):
         "id": uuid.uuid4(),
         "vendor_id": uuid.uuid4(),
         "name": "Standard package",
-        "description": "Clear package",
+        "description": "Clear standard event package with defined deliverables.",
         "price": Decimal("1000.00"),
         "currency": "RWF",
         "package_tier": "standard",
@@ -53,6 +61,12 @@ def valid_package(**overrides):
         "is_active": False,
     }
     data.update(overrides)
+    if data.get("approval_status") == "approved" and data.get("last_approved_at") is None:
+        data["last_approved_at"] = utc_now()
+    if data.get("approval_status") == "rejected" and not data.get("rejection_reason"):
+        data["rejection_reason"] = "Needs more detail"
+    if data.get("is_deleted") is True and data.get("deleted_at") is None:
+        data["deleted_at"] = utc_now()
     return ServicePackage(**data)
 
 
@@ -164,7 +178,6 @@ class TestVendorProfile:
         profile = valid_profile(
             status=VendorStatus.PENDING_REVIEW,
             submitted_at=utc_now(),
-            rejected_at=utc_now() - timedelta(days=1),
             rejection_reason=None,
         )
 
@@ -297,7 +310,11 @@ class TestPortfolioImage:
             valid_portfolio(is_active=False)
 
     def test_failed_upload_becomes_private(self):
-        image = valid_portfolio(visibility_status="waiting_approval")
+        image = valid_portfolio(
+            upload_status="processing",
+            quality_status="pending_analysis",
+            visibility_status="private",
+        )
 
         image.mark_failed("Virus scan failed")
 
