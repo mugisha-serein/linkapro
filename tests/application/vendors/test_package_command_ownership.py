@@ -30,7 +30,7 @@ def package_for(vendor_id):
         id=uuid.uuid4(),
         vendor_id=vendor_id,
         name="Owned Package",
-        description="Package owned by one vendor.",
+        description="Package owned by one vendor with clear deliverables.",
         price="100000.00",
         approval_status="waiting_approval",
         is_active=False,

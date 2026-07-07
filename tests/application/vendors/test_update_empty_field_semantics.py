@@ -6,6 +6,7 @@ import pytest
 
 from application.vendors.commands import UpdateServicePackageCommand, UpdateVendorProfileCommand
 from application.vendors.handlers import VendorCommandHandlers
+from domain.shared.utils import utc_now
 from domain.vendors.entities import ServiceCategory, ServicePackage, VendorProfile, VendorStatus
 from domain.vendors.package_rules import PackageValidationError
 
@@ -37,7 +38,7 @@ def _vendor_profile():
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
         business_name="Vendor",
-        category=ServiceCategory.CATERING,
+        category=ServiceCategory.OTHER,
         description="Reliable event catering and planning support.",
         service_area="Kigali",
         contact_email="vendor@example.com",
@@ -58,6 +59,7 @@ def _service_package(vendor_id):
         currency="RWF",
         package_tier="standard",
         approval_status="approved",
+        last_approved_at=utc_now(),
     )
 
 

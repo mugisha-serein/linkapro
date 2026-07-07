@@ -20,8 +20,11 @@ from domain.vendors import (
     PortfolioValidationError,
     ServiceCategory,
     ServicePackage,
+    ServicePackageActivated,
+    ServicePackageApproved,
     ServicePackageCreated,
     ServicePackageUpdated,
+    VendorApproved,
     VendorProfile,
     VendorProfileValidationError,
     VendorSubmittedForReview,
@@ -50,7 +53,7 @@ def package_data(**overrides):
         "id": uuid.uuid4(),
         "vendor_id": uuid.uuid4(),
         "name": "Standard package",
-        "description": "Clear event package",
+        "description": "Clear standard event package with defined deliverables.",
         "price": Decimal("1000.00"),
         "currency": "RWF",
         "package_tier": "standard",
@@ -115,17 +118,64 @@ def test_vendor_transition_records_event_only_after_success():
     assert profile.pull_events() == []
 
 
+def test_consecutive_vendor_events_are_preserved_until_pulled():
+    profile = VendorProfile(**profile_data())
+
+    profile.submit_for_review()
+    profile.approve()
+
+    events = profile.pull_events()
+    assert [type(event) for event in events] == [VendorSubmittedForReview, VendorApproved]
+    assert profile.pull_events() == []
+
+
 def test_service_package_create_defaults_to_inactive_and_records_event():
     package = ServicePackage.create(
         vendor_id=uuid.uuid4(),
         name="Standard package",
-        description="Clear event package",
+        description="Clear standard event package with defined deliverables.",
         price=Decimal("1000.00"),
     )
 
     assert package.is_active is False
     assert package.approval_status == "waiting_approval"
     assert isinstance(package.pull_events()[0], ServicePackageCreated)
+
+
+def test_failed_package_mutation_preserves_pending_events_and_state():
+    package = ServicePackage.create(
+        vendor_id=uuid.uuid4(),
+        name="Standard package",
+        description="Clear standard event package with defined deliverables.",
+        price=Decimal("1000.00"),
+    )
+    original = {key: value for key, value in package.__dict__.items() if key != "_events"}
+    pending_events = list(package._events)
+
+    with pytest.raises(PackageValidationError):
+        package.update_details(price=Decimal("10.123"))
+
+    assert {key: value for key, value in package.__dict__.items() if key != "_events"} == original
+    assert package._events == pending_events
+
+
+def test_consecutive_package_events_are_preserved_until_pulled():
+    package = ServicePackage.create(
+        vendor_id=uuid.uuid4(),
+        name="Standard package",
+        description="Clear standard event package with defined deliverables.",
+        price=Decimal("1000.00"),
+    )
+
+    package.approve()
+    package.activate()
+
+    events = package.pull_events()
+    assert [type(event) for event in events] == [
+        ServicePackageCreated,
+        ServicePackageApproved,
+        ServicePackageActivated,
+    ]
 
 
 def test_service_package_rehydrate_requires_approved_timestamp():
@@ -142,7 +192,7 @@ def test_service_package_noop_update_preserves_version_timestamp_and_events():
 
     package.update_details(
         name=" Standard package ",
-        description=" Clear event package ",
+        description=" Clear standard event package with defined deliverables. ",
         price=Decimal("1000.00"),
         currency="rwf",
         package_tier="Standard",
@@ -162,7 +212,7 @@ def test_approved_or_rejected_package_public_change_returns_to_waiting_inactive(
         )
     )
 
-    approved.update_details(description="Updated clear event package")
+    approved.update_details(description="Updated clear standard event package with defined deliverables.")
 
     assert approved.approval_status == "waiting_approval"
     assert approved.is_active is False
@@ -196,6 +246,9 @@ def test_deleted_package_rejects_later_activation():
 
     with pytest.raises(InvalidPackageTransition):
         package.activate()
+
+    with pytest.raises(InvalidPackageTransition):
+        package.update_details(name="Changed package")
 
 
 def test_pure_package_edit_policy_returns_markers_without_mutating_package():
@@ -238,8 +291,24 @@ def test_portfolio_defaults_and_deleted_media_are_closed_to_mutation():
         image.update_caption("New caption")
 
 
+def test_invalid_portfolio_state_transitions_are_rejected():
+    image = PortfolioImage(id=uuid.uuid4(), vendor_id=uuid.uuid4())
+
+    with pytest.raises(InvalidPortfolioTransition):
+        image.mark_uploaded(public_id="asset", secure_url="https://example.com/image.jpg")
+
+    with pytest.raises(InvalidPortfolioTransition):
+        image.reject("Not waiting")
+
+    image.mark_queued()
+    with pytest.raises(InvalidPortfolioTransition):
+        image.mark_queued()
+
+
 def test_portfolio_mark_uploaded_requires_valid_remote_asset():
     image = PortfolioImage(id=uuid.uuid4(), vendor_id=uuid.uuid4())
+    image.mark_queued()
+    image.mark_processing()
 
     with pytest.raises(PortfolioValidationError):
         image.mark_uploaded()
@@ -259,6 +328,13 @@ def test_portfolio_metadata_requires_strict_primitives_and_cloudinary_pair_match
         PortfolioImage(**portfolio_data(cloudinary_public_id="different"))
 
     assert "cloudinary_public_id" in mismatch.value.field_errors
+
+
+def test_portfolio_deleted_rehydration_requires_deleted_timestamp():
+    with pytest.raises(PortfolioValidationError) as exc_info:
+        PortfolioImage(**portfolio_data(is_deleted=True, is_active=False, visibility_status="private"))
+
+    assert "deleted_at" in exc_info.value.field_errors
 
 
 def test_inquiry_event_date_is_date_only_with_bounds_and_events():

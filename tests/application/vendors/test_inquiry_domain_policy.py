@@ -1,10 +1,12 @@
 import uuid
+from datetime import timedelta
 from unittest.mock import Mock
 
 import pytest
 
 from application.vendors.commands import SendInquiryCommand
 from application.vendors.handlers import VendorCommandHandlers
+from domain.shared.utils import utc_now
 from domain.vendors.entities import ServiceCategory, VendorProfile, VendorStatus
 from domain.vendors.inquiry_policy import VendorInquiryPolicyError
 
@@ -32,16 +34,42 @@ def handlers(mock_repos):
 
 
 def _profile(status):
+<<<<<<< HEAD
+    now = utc_now()
+    rejection_fields = {}
+    lifecycle_fields = {}
+    if status == VendorStatus.PENDING_REVIEW:
+        lifecycle_fields["created_at"] = now - timedelta(days=1)
+        lifecycle_fields["updated_at"] = now
+        lifecycle_fields["submitted_at"] = now
+    if status in {VendorStatus.APPROVED, VendorStatus.SUSPENDED}:
+        lifecycle_fields["created_at"] = now - timedelta(days=2)
+        lifecycle_fields["updated_at"] = now
+        lifecycle_fields["submitted_at"] = now - timedelta(days=1)
+        lifecycle_fields["approved_at"] = now
+    if status == VendorStatus.REJECTED:
+        lifecycle_fields["created_at"] = now - timedelta(days=2)
+        lifecycle_fields["updated_at"] = now
+        lifecycle_fields["submitted_at"] = now - timedelta(days=1)
+        lifecycle_fields["rejected_at"] = now
+        rejection_fields["rejection_reason"] = "Policy issue"
+=======
+>>>>>>> origin/main
     return VendorProfile(
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
         business_name="Vendor",
         category=ServiceCategory.CATERING,
-        description="Food service",
+        description="Food service with complete event support.",
         service_area="Kigali",
         contact_email="vendor@example.com",
         contact_phone="+250700000000",
         status=status,
+<<<<<<< HEAD
+        **lifecycle_fields,
+        **rejection_fields,
+=======
+>>>>>>> origin/main
     )
 
 
