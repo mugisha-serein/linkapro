@@ -64,7 +64,7 @@ class VendorProfileSerializer(serializers.Serializer):
         return attrs
 
 class SubmitForReviewSerializer(serializers.Serializer):
-    pass  # No fields needed
+    pass
 
 class PortfolioImageSerializer(serializers.Serializer):
     caption = serializers.CharField(required=False, allow_blank=True)
@@ -79,7 +79,7 @@ class ServicePackageSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=200)
     description = serializers.CharField()
     price = serializers.DecimalField(max_digits=12, decimal_places=2)
-    currency = serializers.CharField(max_length=3, default="RWF")
+    currency = serializers.ChoiceField(choices=["RWF"], default="RWF")
     package_tier = serializers.ChoiceField(choices=["standard", "premier", "gold"])
 
 class InquirySerializer(serializers.Serializer):

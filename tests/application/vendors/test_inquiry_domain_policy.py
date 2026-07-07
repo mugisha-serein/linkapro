@@ -34,7 +34,6 @@ def handlers(mock_repos):
 
 
 def _profile(status):
-<<<<<<< HEAD
     now = utc_now()
     rejection_fields = {}
     lifecycle_fields = {}
@@ -53,8 +52,6 @@ def _profile(status):
         lifecycle_fields["submitted_at"] = now - timedelta(days=1)
         lifecycle_fields["rejected_at"] = now
         rejection_fields["rejection_reason"] = "Policy issue"
-=======
->>>>>>> origin/main
     return VendorProfile(
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
@@ -65,11 +62,8 @@ def _profile(status):
         contact_email="vendor@example.com",
         contact_phone="+250700000000",
         status=status,
-<<<<<<< HEAD
         **lifecycle_fields,
         **rejection_fields,
-=======
->>>>>>> origin/main
     )
 
 

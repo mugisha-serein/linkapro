@@ -139,17 +139,10 @@ class TestVendorProfileCommands:
             user_id=uuid.uuid4(),
             business_name="Existing",
             category=ServiceCategory.PHOTOGRAPHY,
-<<<<<<< HEAD
             description="Existing vendor profile with complete details.",
             service_area="Kigali",
             contact_email="existing@example.com",
             contact_phone="+250700000000",
-=======
-            description="...",
-            service_area="...",
-            contact_email="...",
-            contact_phone="...",
->>>>>>> origin/main
         )
         mock_repos["vendor_repo"].get_by_user_id.return_value = existing
 
@@ -322,12 +315,12 @@ class TestPortfolioCommands:
 
 class TestServicePackageCommands:
     def test_create_service_package(self, handlers, mock_repos):
-        mock_repos["package_repo"].save.side_effect = lambda pkg: pkg
+        mock_repos["package_repo"].add.side_effect = lambda pkg: pkg
 
         cmd = CreateServicePackageCommand(
             vendor_id=uuid.uuid4(),
             name="Deluxe",
-            description="All inclusive",
+            description="All inclusive package with clear deliverables.",
             price=5000.0,
             currency="RWF",
         )
@@ -336,7 +329,7 @@ class TestServicePackageCommands:
         assert result.name == "Deluxe"
         assert result.price == 5000.0
         assert result.is_active is False
-        mock_repos["package_repo"].save.assert_called_once()
+        mock_repos["package_repo"].add.assert_called_once()
 
     def test_update_service_package_rejects_wrong_vendor(self, handlers, mock_repos):
         package = ServicePackage(

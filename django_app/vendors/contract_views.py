@@ -1,6 +1,7 @@
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
+from django.db import IntegrityError
 from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
@@ -12,6 +13,7 @@ from domain.vendors.package_edit_policy import (
     effective_next_edit_allowed_at,
 )
 from domain.vendors.package_rules import PackageValidationError
+from domain.vendors.errors import ConcurrentVendorUpdate, VendorDomainError
 
 from .document_upload_views import VendorVerificationDocumentView as BaseVendorVerificationDocumentView
 from .models import ServicePackage as ServicePackageModel
@@ -19,6 +21,7 @@ from .serializers import ServicePackageSerializer
 from .services import get_command_handlers
 from .views import (
     _get_current_vendor_profile,
+    _stable_package_integrity_response,
     PortfolioImageView as BasePortfolioImageView,
     ServicePackageActivateView as BaseServicePackageActivateView,
     ServicePackageDetailView as BaseServicePackageDetailView,
@@ -108,6 +111,9 @@ def _augment_package_response(response: Response) -> Response:
         for payload in response.data:
             _augment_package_payload(payload)
     elif isinstance(response.data, dict):
+        if isinstance(response.data.get("results"), list):
+            for payload in response.data["results"]:
+                _augment_package_payload(payload)
         _augment_package_payload(response.data)
         if isinstance(response.data.get("package"), dict):
             _augment_package_payload(response.data["package"])
@@ -169,8 +175,12 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
             response = Response(BaseServicePackageListView._serialize_package(None, updated))
         except PackageEditCooldownError as exc:
             response = Response(exc.as_response_data(), status=status.HTTP_429_TOO_MANY_REQUESTS)
+        except ConcurrentVendorUpdate as exc:
+            response = _stable_package_integrity_response(exc)
         except PackageValidationError as exc:
             raise DRFValidationError(exc.errors)
+        except (IntegrityError, VendorDomainError) as exc:
+            response = _stable_package_integrity_response(exc, status_code=status.HTTP_400_BAD_REQUEST)
         except ValueError:
             response = Response({"detail": PACKAGE_NOT_FOUND_MESSAGE}, status=status.HTTP_404_NOT_FOUND)
         response = _augment_package_response(response)
