@@ -1,3 +1,5 @@
+import os
+
 from .base import *
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
@@ -53,7 +55,28 @@ EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "apikey")
 EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
 SERVER_EMAIL = os.environ.get("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
 
+try:
+    REDIS_URL = os.environ["REDIS_URL"].rstrip("/")
+except KeyError as exc:
+    raise ImproperlyConfigured("REDIS_URL must start with redis:// or rediss://") from exc
 REDIS_URL = validate_redis_url(REDIS_URL, required=True)
+
+CELERY_BROKER_URL = os.getenv(
+    "CELERY_BROKER_URL",
+    f"{REDIS_URL}/0",
+)
+CELERY_RESULT_BACKEND = os.getenv(
+    "CELERY_RESULT_BACKEND",
+    f"{REDIS_URL}/1",
+)
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+globals().pop("CELERY_BROKER_USE_SSL", None)
+globals().pop("CELERY_REDIS_BACKEND_USE_SSL", None)
+if redis_uses_tls(CELERY_BROKER_URL):
+    CELERY_BROKER_USE_SSL = redis_ssl_options(CELERY_BROKER_URL)
+if redis_uses_tls(CELERY_RESULT_BACKEND):
+    CELERY_REDIS_BACKEND_USE_SSL = redis_ssl_options(CELERY_RESULT_BACKEND)
 
 # Celery settings
 CELERY_ACCEPT_CONTENT = ['json']
