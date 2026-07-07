@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 class VendorDomainError(ValueError):
     default_code = "vendor_domain_error"
 
