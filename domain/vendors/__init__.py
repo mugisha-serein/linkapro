@@ -22,6 +22,7 @@ from domain.vendors.errors import (
     InvalidVendorTransition,
     PackageValidationError,
     PortfolioValidationError,
+    ProtectedStateMutationError,
     VendorDomainError,
     VendorProfileValidationError,
 )
@@ -113,6 +114,7 @@ __all__ = [
     "PortfolioUploadStatus",
     "PortfolioValidationError",
     "PortfolioVisibilityStatus",
+    "ProtectedStateMutationError",
     "ServiceCategory",
     "ServicePackage",
     "ServicePackageActivated",
