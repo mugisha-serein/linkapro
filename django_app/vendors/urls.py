@@ -1,5 +1,4 @@
 from django.urls import path
-from .csrf_views import VendorProfileView
 from .contract_views import (
     PortfolioImageView,
     ServicePackageActivateView,
@@ -9,6 +8,7 @@ from .contract_views import (
     VendorVerificationDocumentView,
 )
 from .views import (
+    VendorProfileView,
     VendorSubmitForReviewView,
     PortfolioImageReorderView,
     InquiryListView,
