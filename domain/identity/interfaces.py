@@ -4,7 +4,6 @@ from typing import Optional
 import uuid
 
 from .entities import User, OAuthToken
-from .value_objects import Email, OAuthProvider, PlainPassword
 from .value_objects import Email, OAuthProvider, TOTPSecret
 
 
@@ -68,29 +67,3 @@ class IOAuthTokenRepository(ABC):
     @abstractmethod
     def delete_for_user(self, user_id: uuid.UUID, provider: OAuthProvider) -> None:
         """Remove linked provider for user."""
-
-
-class IPasswordBlocklist(ABC):
-    @abstractmethod
-    def is_common_password(self, password: PlainPassword) -> bool:
-        """Return whether the password is in a common-password blocklist."""
-
-    @abstractmethod
-    def is_compromised_password(self, password: PlainPassword) -> bool:
-        """Return whether the password is known to have been compromised."""
-
-    @abstractmethod
-    def is_context_specific_password(
-        self,
-        password: PlainPassword,
-        *,
-        email: Email | None = None,
-        service_name: str | None = None,
-    ) -> bool:
-        """Return whether the password is derived from account or service context."""
-
-
-class IPasswordReuseChecker(ABC):
-    @abstractmethod
-    def is_reused_password(self, password: PlainPassword) -> bool:
-        """Return whether the password matches the current or recent passwords."""
