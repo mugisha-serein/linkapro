@@ -3,7 +3,7 @@ from typing import Optional
 from django.core.exceptions import ObjectDoesNotExist
 
 from domain.identity.entities import OAuthToken as DomainToken
-from domain.identity.value_objects import OAuthProvider
+from domain.identity.value_objects import OAuthAccessToken, OAuthProvider, OAuthRefreshToken
 from domain.identity.interfaces import IOAuthTokenRepository
 from django_app.identity.models import OAuthToken as DjangoToken, User as DjangoUser
 
@@ -28,8 +28,12 @@ class DjangoOAuthTokenRepository(IOAuthTokenRepository):
         django_token.user = DjangoUser.objects.get(id=domain_token.user_id)
         django_token.provider = domain_token.provider.value
         django_token.provider_user_id = domain_token.provider_user_id
-        django_token.access_token = domain_token.access_token
-        django_token.refresh_token = domain_token.refresh_token
+        django_token.access_token = domain_token.access_token.raw_value
+        django_token.refresh_token = (
+            domain_token.refresh_token.raw_value
+            if domain_token.refresh_token
+            else None
+        )
         django_token.expires_at = domain_token.expires_at
         django_token.created_at = domain_token.created_at
         django_token.save()
@@ -54,8 +58,8 @@ class DjangoOAuthTokenRepository(IOAuthTokenRepository):
             user_id=model.user_id,
             provider=OAuthProvider(model.provider),
             provider_user_id=model.provider_user_id,
-            access_token=model.access_token,
-            refresh_token=model.refresh_token,
+            access_token=OAuthAccessToken(model.access_token),
+            refresh_token=OAuthRefreshToken(model.refresh_token) if model.refresh_token else None,
             expires_at=model.expires_at,
             created_at=model.created_at,
         )

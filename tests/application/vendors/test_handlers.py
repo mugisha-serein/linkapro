@@ -139,10 +139,17 @@ class TestVendorProfileCommands:
             user_id=uuid.uuid4(),
             business_name="Existing",
             category=ServiceCategory.PHOTOGRAPHY,
+<<<<<<< HEAD
             description="Existing vendor profile with complete details.",
             service_area="Kigali",
             contact_email="existing@example.com",
             contact_phone="+250700000000",
+=======
+            description="...",
+            service_area="...",
+            contact_email="...",
+            contact_phone="...",
+>>>>>>> origin/main
         )
         mock_repos["vendor_repo"].get_by_user_id.return_value = existing
 
@@ -320,7 +327,7 @@ class TestServicePackageCommands:
         cmd = CreateServicePackageCommand(
             vendor_id=uuid.uuid4(),
             name="Deluxe",
-            description="All inclusive package with clear deliverables.",
+            description="All inclusive",
             price=5000.0,
             currency="RWF",
         )

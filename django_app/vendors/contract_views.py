@@ -1,4 +1,6 @@
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
@@ -113,6 +115,7 @@ def _augment_package_response(response: Response) -> Response:
 
 
 class VendorProfileStatusView(BaseVendorProfileStatusView):
+    @method_decorator(ensure_csrf_cookie)
     def get(self, request):
         response = super().get(request)
         return _add_success_contract(
