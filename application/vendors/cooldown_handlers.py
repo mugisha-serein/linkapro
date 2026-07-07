@@ -23,6 +23,7 @@ class VendorCooldownCommandHandlers(VendorCommandHandlers):
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
         self._assert_package_owned(package, cmd.vendor_id)
+        expected_version = package.version
 
         changed = package_public_fields_changed(
             package,
@@ -43,5 +44,7 @@ class VendorCooldownCommandHandlers(VendorCommandHandlers):
             package_tier=package.package_tier,
         )
         mark_vendor_package_public_edit(package, now=now, public_fields_changed=changed)
-        saved = self.package_repo.save(package)
+        if package.version == expected_version:
+            return self._to_package_dto(package)
+        saved = self.package_repo.save(package, expected_version=expected_version)
         return self._to_package_dto(saved)

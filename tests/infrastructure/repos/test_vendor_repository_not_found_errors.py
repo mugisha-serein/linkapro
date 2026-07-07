@@ -92,7 +92,7 @@ def test_service_package_repository_translates_missing_vendor(monkeypatch):
     )
 
     with pytest.raises(RepositoryNotFoundError, match="Vendor not found"):
-        DjangoServicePackageRepository().save(package)
+        DjangoServicePackageRepository().save(package, expected_version=package.version)
 
     model.save.assert_not_called()
 

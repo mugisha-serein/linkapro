@@ -10,7 +10,7 @@ from domain.vendors.inquiry_policy import ensure_vendor_can_receive_inquiry
 from domain.vendors.package_rules import validate_service_package_rules
 from domain.vendors.interfaces import (
     IVendorProfileRepository, IPortfolioImageRepository,
-    IServicePackageRepository, IInquiryRepository
+    IServicePackageRepository, IInquiryRepository, Page, PageRequest
 )
 from domain.vendors.events import (
     VendorSubmittedForReview, VendorApproved, VendorRejected,
@@ -190,12 +190,13 @@ class VendorCommandHandlers:
             price=package.price,
             package_tier=package.package_tier,
         )
-        saved = self.package_repo.save(package)
+        saved = self.package_repo.add(package)
         return self._to_package_dto(saved)
 
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
         self._assert_package_owned(package, cmd.vendor_id)
+        expected_version = package.version
         package.update_details(cmd.name, cmd.description, cmd.price, cmd.currency, cmd.package_tier)
         validate_service_package_rules(
             name=package.name,
@@ -203,7 +204,9 @@ class VendorCommandHandlers:
             price=package.price,
             package_tier=package.package_tier,
         )
-        saved = self.package_repo.save(package)
+        if package.version == expected_version:
+            return self._to_package_dto(package)
+        saved = self.package_repo.save(package, expected_version=expected_version)
         return self._to_package_dto(saved)
 
     def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
@@ -217,8 +220,11 @@ class VendorCommandHandlers:
     def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
         package = self.package_repo.get_by_id(cmd.package_id)
         self._assert_package_owned(package, cmd.vendor_id)
+        expected_version = package.version
         package.activate()
-        saved = self.package_repo.save(package)
+        if package.version == expected_version:
+            return self._to_package_dto(package)
+        saved = self.package_repo.save(package, expected_version=expected_version)
         return self._to_package_dto(saved)
 
     def send_inquiry(self, cmd: SendInquiryCommand) -> InquiryDTO:
@@ -334,11 +340,13 @@ class VendorQueryHandlers:
     def __init__(self, vendor_repo: IVendorProfileRepository,
                  image_repo: IPortfolioImageRepository,
                  package_repo: IServicePackageRepository,
-                 inquiry_repo: IInquiryRepository):
+                 inquiry_repo: IInquiryRepository,
+                 read_repo=None):
         self.vendor_repo = vendor_repo
         self.image_repo = image_repo
         self.package_repo = package_repo
         self.inquiry_repo = inquiry_repo
+        self.read_repo = read_repo
 
     def get_vendor(self, vendor_id: uuid.UUID) -> Optional[VendorProfileDTO]:
         p = self.vendor_repo.get_by_id(vendor_id)
@@ -356,9 +364,21 @@ class VendorQueryHandlers:
         images = self.image_repo.list_by_vendor(vendor_id)
         return [VendorCommandHandlers._to_image_dto(i) for i in images]
 
-    def list_service_packages(self, vendor_id: uuid.UUID) -> List[ServicePackageDTO]:
-        packages = self.package_repo.list_by_vendor(vendor_id)
-        return [VendorCommandHandlers._to_package_dto(p) for p in packages]
+    def list_service_packages(self, vendor_id: uuid.UUID, page: PageRequest | None = None):
+        page = page or PageRequest()
+        if self.read_repo is not None:
+            return self.read_repo.list_service_packages(vendor_id, page)
+        packages = self.package_repo.list_by_vendor(vendor_id, page)
+        if hasattr(packages, "items"):
+            return Page(
+                items=[VendorCommandHandlers._to_package_dto(p) for p in packages.items],
+                total=packages.total,
+                limit=packages.limit,
+                offset=packages.offset,
+                next_cursor=packages.next_cursor,
+            )
+        items = [VendorCommandHandlers._to_package_dto(p) for p in packages[: page.limit]]
+        return Page(items=items, total=len(packages), limit=page.limit, offset=page.offset)
 
     def list_inquiries(self, vendor_id: uuid.UUID) -> List[InquiryDTO]:
         inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
@@ -412,8 +432,10 @@ class VendorQueryHandlers:
         }
 
     def get_recent_activity(self, vendor_id: uuid.UUID, limit: int = 10) -> List[dict]:
+        inquiry_page = self.inquiry_repo.list_by_vendor(vendor_id)
+        inquiry_items = inquiry_page.items if hasattr(inquiry_page, "items") else inquiry_page
         inquiries = sorted(
-            self.inquiry_repo.list_by_vendor(vendor_id),
+            inquiry_items,
             key=lambda inquiry: inquiry.created_at,
             reverse=True,
         )[:limit]
@@ -433,10 +455,16 @@ class VendorQueryHandlers:
         return activity
 
     def _vendor_metrics(self, vendor_id: uuid.UUID) -> dict:
+        if self.read_repo is not None:
+            return self.read_repo.vendor_metrics(vendor_id)
+
         profile = self.vendor_repo.get_by_id(vendor_id)
         inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
-        packages = self.package_repo.list_by_vendor(vendor_id)
+        package_page = self.package_repo.list_by_vendor(vendor_id, PageRequest(limit=100, offset=0))
+        packages = package_page.items if hasattr(package_page, "items") else package_page
         images = self.image_repo.list_by_vendor(vendor_id)
+        inquiries = inquiries.items if hasattr(inquiries, "items") else inquiries
+        images = images.items if hasattr(images, "items") else images
         now = utc_now()
 
         total_inquiries = len(inquiries)

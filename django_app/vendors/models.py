@@ -1,6 +1,7 @@
 from datetime import timedelta
 import uuid
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 from django_app.common.models import SoftDeleteModel
 from django_app.identity.models import User
@@ -167,7 +168,7 @@ class ServicePackage(SoftDeleteModel):
     name = models.CharField(max_length=200)
     description = models.TextField()
     price = models.DecimalField(max_digits=12, decimal_places=2)
-    currency = models.CharField(max_length=3, default="RWF")
+    currency = models.CharField(max_length=3, default="RWF", choices=[("RWF", "RWF")])
     package_tier = models.CharField(max_length=20, choices=PackageTier.choices, default=PackageTier.STANDARD)
     approval_status = models.CharField(
         max_length=30,
@@ -175,12 +176,53 @@ class ServicePackage(SoftDeleteModel):
         default=ApprovalStatus.WAITING_APPROVAL,
     )
     rejection_reason = models.TextField(blank=True, null=True)
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=False)
     last_approved_at = models.DateTimeField(null=True, blank=True)
     last_vendor_public_edit_at = models.DateTimeField(null=True, blank=True)
     next_vendor_edit_allowed_at = models.DateTimeField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=Q(currency="RWF"), name="vendors_servicepackage_currency_rwf"),
+            models.CheckConstraint(
+                condition=Q(is_deleted=False) | Q(is_active=False),
+                name="vendors_servicepackage_deleted_inactive",
+            ),
+            models.CheckConstraint(
+                condition=Q(is_deleted=False) | Q(deleted_at__isnull=False),
+                name="vendors_servicepackage_deleted_at_required",
+            ),
+            models.CheckConstraint(
+                condition=~Q(approval_status="waiting_approval") | Q(is_active=False),
+                name="vendors_servicepackage_waiting_inactive",
+            ),
+            models.CheckConstraint(
+                condition=~Q(approval_status="approved") | Q(last_approved_at__isnull=False),
+                name="vendors_servicepackage_approved_at_required",
+            ),
+            models.CheckConstraint(
+                condition=~Q(approval_status="rejected") | Q(is_active=False),
+                name="vendors_servicepackage_rejected_inactive",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~Q(approval_status="rejected")
+                    | (Q(rejection_reason__isnull=False) & ~Q(rejection_reason=""))
+                ),
+                name="vendors_servicepackage_rejected_reason_required",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(approval_status="rejected")
+                    | Q(rejection_reason__isnull=True)
+                    | Q(rejection_reason="")
+                ),
+                name="vendors_servicepackage_rejection_only_rejected",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.name} - {self.vendor.business_name}"

@@ -8,7 +8,7 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Max, Prefetch
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -55,6 +55,8 @@ from application.vendors.onboarding_policy import (
     vendor_field_errors,
 )
 from domain.vendors.package_rules import PackageValidationError
+from domain.vendors.errors import ConcurrentVendorUpdate, VendorDomainError
+from domain.vendors.interfaces import PageRequest
 from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
 
 
@@ -76,6 +78,8 @@ PORTFOLIO_MEDIA_INVALID_MESSAGE = "Upload a valid portfolio image or highlight v
 VENDOR_PROFILE_IMAGE_INVALID_CODE = "vendor_profile_image_invalid"
 VENDOR_COVER_IMAGE_INVALID_CODE = "vendor_cover_image_invalid"
 VENDOR_PROFILE_MEDIA_UPLOAD_FAILED_CODE = "vendor_profile_media_upload_failed"
+VENDOR_PACKAGE_INTEGRITY_CODE = "vendor_package_integrity_error"
+VENDOR_PACKAGE_PAGINATION_CODE = "vendor_package_pagination_invalid"
 
 
 def _get_public_marketplace_stats(vendor_id) -> dict:
@@ -198,6 +202,37 @@ def _validation_error_response(errors, *, profile: VendorProfileDTO | None = Non
         },
         status=status.HTTP_400_BAD_REQUEST,
     )
+
+
+def _stable_package_integrity_response(exc: Exception, *, status_code=status.HTTP_409_CONFLICT) -> Response:
+    field_errors = getattr(exc, "field_errors", {}) or {}
+    code = getattr(exc, "code", VENDOR_PACKAGE_INTEGRITY_CODE)
+    return Response(
+        {
+            "code": code,
+            "message": "Service package could not be saved.",
+            "detail": "Service package could not be saved.",
+            "field_errors": field_errors,
+        },
+        status=status_code,
+    )
+
+
+def _page_request_from_query(request) -> tuple[PageRequest | None, Response | None]:
+    try:
+        limit = int(request.query_params.get("limit", "50"))
+        offset = int(request.query_params.get("offset", "0"))
+        return PageRequest(limit=limit, offset=offset), None
+    except (TypeError, ValueError):
+        return None, Response(
+            {
+                "code": VENDOR_PACKAGE_PAGINATION_CODE,
+                "message": "Package pagination parameters are invalid.",
+                "detail": "Use integer limit 1-100 and offset 0-10000.",
+                "field_errors": {"pagination": ["Use integer limit 1-100 and offset 0-10000."]},
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
 
 def _has_submitted_verification_document(vendor_id) -> bool:
@@ -936,9 +971,21 @@ class ServicePackageListView(APIView):
         if error_response:
             return error_response
         query_handlers = get_query_handlers()
+        page_request, pagination_error = _page_request_from_query(request)
+        if pagination_error:
+            return pagination_error
 
-        packages = query_handlers.list_service_packages(profile.id)
-        return Response([self._serialize_package(pkg) for pkg in packages])
+        page = query_handlers.list_service_packages(profile.id, page_request)
+        next_offset = page.offset + page.limit if page.offset + page.limit < page.total else None
+        return Response(
+            {
+                "count": page.total,
+                "limit": page.limit,
+                "offset": page.offset,
+                "next_offset": next_offset,
+                "results": [self._serialize_package(pkg) for pkg in page.items],
+            }
+        )
 
     def post(self, request):
         """Create a new service package."""
@@ -964,6 +1011,8 @@ class ServicePackageListView(APIView):
             package = command_handlers.create_service_package(cmd)
         except PackageValidationError as exc:
             raise DRFValidationError(exc.errors)
+        except IntegrityError as exc:
+            return _stable_package_integrity_response(exc)
         return Response(self._serialize_package(package), status=status.HTTP_201_CREATED)
 
     def _serialize_package(self, dto: ServicePackageDTO) -> dict:
@@ -1019,6 +1068,10 @@ class ServicePackageDetailView(APIView):
             updated = command_handlers.update_service_package(cmd)
         except PackageValidationError as exc:
             raise DRFValidationError(exc.errors)
+        except ConcurrentVendorUpdate as exc:
+            return _stable_package_integrity_response(exc)
+        except (IntegrityError, VendorDomainError) as exc:
+            return _stable_package_integrity_response(exc, status_code=status.HTTP_400_BAD_REQUEST)
         return Response(ServicePackageListView._serialize_package(None, updated))
 
     def delete(self, request, package_id):
