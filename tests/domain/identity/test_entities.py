@@ -4,6 +4,13 @@ from dataclasses import fields
 from datetime import datetime, UTC, timedelta
 from freezegun import freeze_time
 
+from domain.identity.entities import User, OAuthToken, UserRole
+from domain.identity.events import UserPasswordChanged
+from domain.identity.value_objects import (
+    ApprovedPasswordChange,
+    Email,
+    PasswordHash,
+    OAuthProvider,
 from domain.identity.entities import AccountStatus, User, OAuthToken, UserRole
 from domain.identity.events import (
     UserDeactivated,
@@ -97,7 +104,7 @@ class TestUserEntity:
             User(**kwargs)
 
     @freeze_time("2025-01-01 12:00:00")
-    def test_change_password_updates_hash_and_timestamp(self):
+    def test_change_password_updates_hash_timestamp_and_token_version(self):
         user = User(
             id=uuid.uuid4(),
             email=Email("test@example.com"),
@@ -105,6 +112,7 @@ class TestUserEntity:
             first_name="John",
             last_name="Doe",
             role=UserRole.PLANNER,
+            auth_token_version=7,
             created_at=datetime(2024, 1, 1, tzinfo=UTC),
             updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
@@ -113,6 +121,9 @@ class TestUserEntity:
         user.change_password(new_hash)
         assert user.password_hash == new_hash
         assert user.updated_at == datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
+        assert user.auth_token_version == 8
+
+    def test_change_password_accepts_approved_password_change(self):
         assert user.auth_token_version == original_version + 1
 
     def test_change_password_records_domain_event(self):
@@ -124,6 +135,47 @@ class TestUserEntity:
             last_name="Doe",
             role=UserRole.PLANNER,
         )
+        approved = ApprovedPasswordChange(
+            new_password_hash=PasswordHash("new_hashed"),
+            blocklist_checked=True,
+            reuse_checked=True,
+        )
+
+        user.change_password(approved)
+
+        assert user.password_hash == PasswordHash("new_hashed")
+
+    def test_change_password_records_exactly_one_password_changed_event(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("old_hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+        )
+
+        user.change_password(PasswordHash("new_hash"))
+
+        assert len(user.domain_events) == 1
+        assert isinstance(user.domain_events[0], UserPasswordChanged)
+        assert user.domain_events[0].user_id == user.id
+
+    def test_change_password_event_does_not_include_password_or_hash_values(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("old_hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+        )
+
+        user.change_password(PasswordHash("new_hash"))
+
+        event_text = repr(user.domain_events[0])
+        assert "old_hash" not in event_text
+        assert "new_hash" not in event_text
         user.change_password(PasswordHash("new"))
         events = user.pull_events()
         assert len(events) == 1

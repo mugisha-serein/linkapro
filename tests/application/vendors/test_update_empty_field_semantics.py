@@ -94,8 +94,8 @@ def test_update_service_package_rejects_blank_name_instead_of_ignoring_it(handle
     with pytest.raises(PackageValidationError) as exc_info:
         handlers.update_service_package(
             UpdateServicePackageCommand(package_id=package.id, vendor_id=vendor_id, name="")
-        )
+    )
 
     assert exc_info.value.errors["name"] == ["Package name is required."]
-    assert package.name == ""
+    assert package.name == "Standard package"
     mock_repos["package_repo"].save.assert_not_called()
