@@ -24,6 +24,9 @@ def delete_vendor_from_marketplace(vendor_id: uuid.UUID):
 
 
 class DjangoVendorProfileRepository(IVendorProfileRepository):
+    def add(self, domain: DomainProfile) -> DomainProfile:
+        return self.save(domain)
+
     def get_by_id(self, vendor_id: uuid.UUID) -> Optional[DomainProfile]:
         try:
             obj = DjangoProfile.objects.select_related("user").get(id=vendor_id)

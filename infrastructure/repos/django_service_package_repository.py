@@ -10,9 +10,19 @@ from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 
 class DjangoServicePackageRepository(IServicePackageRepository):
+    def add(self, domain: DomainPackage) -> DomainPackage:
+        return self.save(domain)
+
     def get_by_id(self, package_id: uuid.UUID) -> Optional[DomainPackage]:
         try:
             obj = DjangoPackage.objects.select_related("vendor").get(id=package_id)
+            return self._to_domain(obj)
+        except ObjectDoesNotExist:
+            return None
+
+    def get_for_vendor(self, vendor_id: uuid.UUID, package_id: uuid.UUID) -> Optional[DomainPackage]:
+        try:
+            obj = DjangoPackage.objects.select_related("vendor").get(id=package_id, vendor_id=vendor_id)
             return self._to_domain(obj)
         except ObjectDoesNotExist:
             return None
@@ -47,6 +57,24 @@ class DjangoServicePackageRepository(IServicePackageRepository):
     def delete(self, package_id: uuid.UUID, deleted_by_id: Optional[uuid.UUID] = None) -> Optional[DomainPackage]:
         try:
             obj = DjangoPackage.all_objects.get(id=package_id)
+        except DjangoPackage.DoesNotExist:
+            return None
+
+        obj.is_active = False
+        obj.is_deleted = True
+        obj.deleted_at = timezone.now()
+        obj.deleted_by_id = deleted_by_id
+        obj.save(update_fields=["is_active", "is_deleted", "deleted_at", "deleted_by", "updated_at"])
+        return self._to_domain(obj)
+
+    def delete_for_vendor(
+        self,
+        vendor_id: uuid.UUID,
+        package_id: uuid.UUID,
+        deleted_by_id: Optional[uuid.UUID] = None,
+    ) -> Optional[DomainPackage]:
+        try:
+            obj = DjangoPackage.all_objects.get(id=package_id, vendor_id=vendor_id)
         except DjangoPackage.DoesNotExist:
             return None
 

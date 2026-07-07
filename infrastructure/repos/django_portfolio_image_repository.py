@@ -10,9 +10,19 @@ from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 
 class DjangoPortfolioImageRepository(IPortfolioImageRepository):
+    def add(self, domain: DomainImage) -> DomainImage:
+        return self.save(domain)
+
     def get_by_id(self, image_id: uuid.UUID) -> Optional[DomainImage]:
         try:
             obj = DjangoImage.objects.select_related("vendor").get(id=image_id)
+            return self._to_domain(obj)
+        except ObjectDoesNotExist:
+            return None
+
+    def get_for_vendor(self, vendor_id: uuid.UUID, image_id: uuid.UUID) -> Optional[DomainImage]:
+        try:
+            obj = DjangoImage.objects.select_related("vendor").get(id=image_id, vendor_id=vendor_id)
             return self._to_domain(obj)
         except ObjectDoesNotExist:
             return None
@@ -59,6 +69,23 @@ class DjangoPortfolioImageRepository(IPortfolioImageRepository):
     def delete(self, image_id: uuid.UUID, deleted_by_id: Optional[uuid.UUID] = None) -> None:
         try:
             obj = DjangoImage.all_objects.get(id=image_id)
+        except DjangoImage.DoesNotExist:
+            return
+
+        obj.is_active = False
+        obj.is_deleted = True
+        obj.deleted_at = timezone.now()
+        obj.deleted_by_id = deleted_by_id
+        obj.save(update_fields=["is_active", "is_deleted", "deleted_at", "deleted_by", "updated_at"])
+
+    def delete_for_vendor(
+        self,
+        vendor_id: uuid.UUID,
+        image_id: uuid.UUID,
+        deleted_by_id: Optional[uuid.UUID] = None,
+    ) -> None:
+        try:
+            obj = DjangoImage.all_objects.get(id=image_id, vendor_id=vendor_id)
         except DjangoImage.DoesNotExist:
             return
 

@@ -9,9 +9,19 @@ from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 
 class DjangoInquiryRepository(IInquiryRepository):
+    def add(self, domain: DomainInquiry) -> DomainInquiry:
+        return self.save(domain)
+
     def get_by_id(self, inquiry_id: uuid.UUID) -> Optional[DomainInquiry]:
         try:
             obj = DjangoInquiry.objects.select_related("vendor").get(id=inquiry_id)
+            return self._to_domain(obj)
+        except ObjectDoesNotExist:
+            return None
+
+    def get_for_vendor(self, vendor_id: uuid.UUID, inquiry_id: uuid.UUID) -> Optional[DomainInquiry]:
+        try:
+            obj = DjangoInquiry.objects.select_related("vendor").get(id=inquiry_id, vendor_id=vendor_id)
             return self._to_domain(obj)
         except ObjectDoesNotExist:
             return None
@@ -38,6 +48,9 @@ class DjangoInquiryRepository(IInquiryRepository):
 
     def delete(self, inquiry_id: uuid.UUID) -> None:
         DjangoInquiry.objects.filter(id=inquiry_id).delete()
+
+    def delete_for_vendor(self, vendor_id: uuid.UUID, inquiry_id: uuid.UUID) -> None:
+        DjangoInquiry.objects.filter(id=inquiry_id, vendor_id=vendor_id).delete()
 
     def _get_vendor(self, vendor_id: uuid.UUID):
         try:
