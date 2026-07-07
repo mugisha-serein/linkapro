@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Optional
 
 from domain.shared.utils import utc_now
+from .value_objects import ApprovedPasswordChange, Email, PasswordHash, OAuthProvider
 from .value_objects import (
     Email,
     OAuthAccessToken,
@@ -51,6 +52,7 @@ class User:
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     last_login: Optional[datetime] = None
+    domain_events: List[object] = field(default_factory=list, init=False, repr=False)
     _events: list[object] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -141,8 +143,26 @@ class User:
         self.auth_token_version += 1
         self.updated_at = utc_now()
 
-    def change_password(self, new_password_hash: PasswordHash) -> None:
+    def change_password(
+        self, password_change: PasswordHash | ApprovedPasswordChange
+    ) -> None:
         """Update password hash and record change."""
+        new_password_hash = (
+            password_change.new_password_hash
+            if isinstance(password_change, ApprovedPasswordChange)
+            else password_change
+        )
+        changed_at = utc_now()
+        self.password_hash = new_password_hash
+        self.auth_token_version += 1
+        self.updated_at = changed_at
+        self._record_password_changed(changed_at)
+
+    def _record_password_changed(self, occurred_at: datetime) -> None:
+        from .events import UserPasswordChanged
+
+        self.domain_events.append(
+            UserPasswordChanged(user_id=self.id, occurred_at=occurred_at)
         from .events import UserPasswordChanged
 
         self.password_hash = new_password_hash

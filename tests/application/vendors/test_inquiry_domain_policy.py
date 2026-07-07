@@ -32,6 +32,9 @@ def handlers(mock_repos):
 
 
 def _profile(status):
+    rejection_fields = {}
+    if status == VendorStatus.REJECTED:
+        rejection_fields["rejection_reason"] = "Policy issue"
     return VendorProfile(
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
@@ -42,6 +45,7 @@ def _profile(status):
         contact_email="vendor@example.com",
         contact_phone="+250700000000",
         status=status,
+        **rejection_fields,
     )
 
 
