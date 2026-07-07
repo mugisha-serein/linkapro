@@ -2,7 +2,6 @@
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 
 class InvalidEmailError(ValueError):
@@ -53,18 +52,53 @@ class PlainPassword:
     """Plain-text password used only during registration/password change. Never stored."""
     value: str
 
+    MAX_LENGTH = 128
+
     def __post_init__(self) -> None:
-        if len(self.value) < 8:
-            raise WeakPasswordError("Password must be at least 8 characters long")
-        if not re.search(r"[A-Z]", self.value):
-            raise WeakPasswordError("Password must contain at least one uppercase letter")
-        if not re.search(r"[a-z]", self.value):
-            raise WeakPasswordError("Password must contain at least one lowercase letter")
-        if not re.search(r"\d", self.value):
-            raise WeakPasswordError("Password must contain at least one digit")
+        if not self.value:
+            raise WeakPasswordError("Password cannot be empty")
+        if len(self.value) > self.MAX_LENGTH:
+            raise WeakPasswordError("Password cannot be longer than 128 characters")
+        if any(self._is_unsafe_control_character(char) for char in self.value):
+            raise WeakPasswordError("Password cannot contain unsafe control characters")
+
+    @staticmethod
+    def _is_unsafe_control_character(char: str) -> bool:
+        return ord(char) < 32 or ord(char) == 127
+
+    def reveal_for_password_hashing(self) -> str:
+        """Return the raw password only for the explicit password-hashing purpose."""
+        return self.value
 
     def __str__(self) -> str:
         return "******"  # Never expose plain password
+
+    def __repr__(self) -> str:
+        return "PlainPassword(value='******')"
+
+
+@dataclass(frozen=True, repr=False)
+class ApprovedPasswordChange:
+    """A password hash that has passed the domain password-change checks."""
+    new_password_hash: PasswordHash
+    blocklist_checked: bool
+    reuse_checked: bool
+    reuse_check_required: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.blocklist_checked:
+            raise ValueError("Password blocklist check must be completed")
+        if self.reuse_check_required and not self.reuse_checked:
+            raise ValueError("Password reuse check must be completed")
+
+    def __repr__(self) -> str:
+        return (
+            "ApprovedPasswordChange("
+            "new_password_hash='******', "
+            f"blocklist_checked={self.blocklist_checked}, "
+            f"reuse_checked={self.reuse_checked}, "
+            f"reuse_check_required={self.reuse_check_required})"
+        )
     
 @dataclass(frozen=True)
 class TOTPSecret:
