@@ -20,6 +20,7 @@ from .commands import (
     ActivateServicePackageCommand,
     AddPortfolioImageCommand,
     ApproveVendorCommand,
+    AuthenticatedActor,
     CreateServicePackageCommand,
     CreateVendorProfileCommand,
     DeactivateServicePackageCommand,
@@ -37,7 +38,13 @@ from .commands import (
 )
 from .dtos import InquiryDTO, PageDTO, PortfolioImageDTO, ServicePackageDTO, VendorProfileDTO
 from .errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
-from .ports import PortfolioOrderAllocator, PortfolioReorderUnitOfWork, VendorIdempotencyPort, VendorReadPort
+from .ports import (
+    PortfolioOrderAllocator,
+    PortfolioReorderUnitOfWork,
+    VendorAuthorizationPort,
+    VendorIdempotencyPort,
+    VendorReadPort,
+)
 
 
 class VendorCommandHandlers:
@@ -49,6 +56,7 @@ class VendorCommandHandlers:
         inquiry_repo: IInquiryRepository,
         event_dispatcher,
         *,
+        authorization_port: VendorAuthorizationPort | None = None,
         idempotency_port: VendorIdempotencyPort | None = None,
         reorder_uow: PortfolioReorderUnitOfWork | None = None,
         order_allocator: PortfolioOrderAllocator | None = None,
@@ -58,17 +66,18 @@ class VendorCommandHandlers:
         self.package_repo = package_repo
         self.inquiry_repo = inquiry_repo
         self.event_dispatcher = event_dispatcher
+        self.authorization_port = authorization_port
         self.idempotency_port = idempotency_port
         self.reorder_uow = reorder_uow
         self.order_allocator = order_allocator
 
     def create_profile(self, cmd: CreateVendorProfileCommand) -> VendorProfileDTO:
         def operation() -> VendorProfileDTO:
-            existing = self.vendor_repo.get_by_user_id(cmd.user_id)
+            existing = self.vendor_repo.get_by_user_id(cmd.actor.user_id)
             if existing:
                 raise VendorConflict("User already has a vendor profile.", code="vendor_profile_exists")
             profile = VendorProfile.create_draft(
-                user_id=cmd.user_id,
+                user_id=cmd.actor.user_id,
                 business_name=cmd.business_name,
                 category=cmd.category,
                 description=cmd.description,
@@ -82,9 +91,10 @@ class VendorCommandHandlers:
             self._dispatch_pending_events(profile)
             return self._to_profile_dto(saved)
 
-        return self._run_idempotent("vendor_profile.create", cmd.user_id, cmd.idempotency_key, cmd, operation)
+        return self._run_idempotent("vendor_profile.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def update_profile(self, cmd: UpdateVendorProfileCommand) -> VendorProfileDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
@@ -106,6 +116,7 @@ class VendorCommandHandlers:
         return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def submit_for_review(self, cmd: SubmitVendorForReviewCommand) -> VendorProfileDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
@@ -141,6 +152,8 @@ class VendorCommandHandlers:
         return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def add_portfolio_image(self, cmd: AddPortfolioImageCommand) -> PortfolioImageDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
+
         def operation() -> PortfolioImageDTO:
             allocator = self.order_allocator or self.image_repo
             if not hasattr(allocator, "allocate_next_order"):
@@ -158,9 +171,10 @@ class VendorCommandHandlers:
             self._dispatch_pending_events(image)
             return self._to_image_dto(saved)
 
-        return self._run_idempotent("portfolio_image.add", cmd.vendor_id, cmd.idempotency_key, cmd, operation)
+        return self._run_idempotent("portfolio_image.add", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def delete_portfolio_image(self, cmd: DeletePortfolioImageCommand) -> None:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         image = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.image_id)
         if not image:
             raise VendorResourceNotFound("Image not found.")
@@ -173,6 +187,7 @@ class VendorCommandHandlers:
         self._dispatch_pending_events(image)
 
     def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> PageDTO[PortfolioImageDTO]:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         if self.reorder_uow is None:
             raise VendorOperationForbidden("Portfolio reorder requires a unit of work.")
         page = self.reorder_uow.list_vendor_images(cmd.vendor_id, PageRequest(limit=100, offset=0))
@@ -205,6 +220,8 @@ class VendorCommandHandlers:
         return PageDTO(items=ordered, total=page.total, limit=page.limit, offset=page.offset, next_cursor=page.next_cursor)
 
     def create_service_package(self, cmd: CreateServicePackageCommand) -> ServicePackageDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
+
         def operation() -> ServicePackageDTO:
             package = ServicePackage.create(
                 vendor_id=cmd.vendor_id,
@@ -218,9 +235,10 @@ class VendorCommandHandlers:
             self._dispatch_pending_events(package)
             return self._to_package_dto(saved)
 
-        return self._run_idempotent("service_package.create", cmd.vendor_id, cmd.idempotency_key, cmd, operation)
+        return self._run_idempotent("service_package.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
         self._assert_expected_version(package.version, cmd.expected_version)
         original_version = package.version
@@ -228,6 +246,7 @@ class VendorCommandHandlers:
         return self._save_if_changed(self.package_repo, package, original_version, self._to_package_dto)
 
     def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
         self._assert_expected_version(package.version, cmd.expected_version)
         original_version = package.version
@@ -235,6 +254,7 @@ class VendorCommandHandlers:
         return self._save_if_changed(self.package_repo, package, original_version, self._to_package_dto)
 
     def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
         self._assert_expected_version(package.version, cmd.expected_version)
         original_version = package.version
@@ -260,6 +280,7 @@ class VendorCommandHandlers:
         return self._run_idempotent("vendor_inquiry.send", cmd.vendor_id, cmd.idempotency_key, cmd, operation)
 
     def mark_inquiry_read(self, cmd: MarkInquiryReadCommand) -> InquiryDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         inquiry = self.inquiry_repo.get_for_vendor(cmd.vendor_id, cmd.inquiry_id)
         if not inquiry:
             raise VendorResourceNotFound("Inquiry not found.")
@@ -290,6 +311,11 @@ class VendorCommandHandlers:
     def _dispatch_pending_events(self, aggregate) -> None:
         for event in aggregate.pull_events():
             self.event_dispatcher.dispatch(event)
+
+    def _assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None:
+        if self.authorization_port is None:
+            raise InvalidVendorCommand(field_errors={"authorization_port": ["Vendor authorization is required."]})
+        self.authorization_port.assert_actor_owns_vendor(actor, vendor_id)
 
     @staticmethod
     def _assert_expected_version(actual_version: int, expected_version: int) -> None:

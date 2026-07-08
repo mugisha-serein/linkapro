@@ -12,9 +12,12 @@ from application.vendors.commands import (
     ActivateServicePackageCommand,
     AddPortfolioImageCommand,
     ApproveVendorCommand,
+    AuthenticatedActor,
     CreateServicePackageCommand,
     CreateVendorProfileCommand,
+    DeactivateServicePackageCommand,
     DeletePortfolioImageCommand,
+    MarkInquiryReadCommand,
     ReorderPortfolioImagesCommand,
     ResourceVersion,
     SendInquiryCommand,
@@ -23,7 +26,7 @@ from application.vendors.commands import (
     UpdateVendorProfileCommand,
 )
 from application.vendors.dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
-from application.vendors.errors import InvalidVendorCommand, VendorConflict, VendorResourceNotFound
+from application.vendors.errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
 from domain.shared.utils import utc_now
 from domain.vendors.entities import (
@@ -43,6 +46,10 @@ from domain.vendors.events import (
     VendorProfileUpdated,
 )
 from domain.vendors.interfaces import Page, PageRequest
+
+
+def _actor(user_id: uuid.UUID | None = None) -> AuthenticatedActor:
+    return AuthenticatedActor(user_id=user_id or uuid.uuid4())
 
 
 def _profile(*, status=VendorStatus.DRAFT, version=0) -> VendorProfile:
@@ -123,6 +130,7 @@ class VendorRepo:
         self.profiles = {profile.id: profile for profile in profiles}
         self.add_calls = []
         self.save_calls = []
+        self.get_by_id_calls = []
         self.fail_on_save = False
 
     def add(self, profile):
@@ -138,6 +146,7 @@ class VendorRepo:
         return profile
 
     def get_by_id(self, vendor_id):
+        self.get_by_id_calls.append(vendor_id)
         return self.profiles.get(vendor_id)
 
     def get_by_user_id(self, user_id):
@@ -153,6 +162,7 @@ class ImageRepo:
         self.images = {image.id: image for image in images}
         self.add_calls = []
         self.save_calls = []
+        self.get_for_vendor_calls = []
 
     def add(self, image):
         self.add_calls.append(image)
@@ -165,6 +175,7 @@ class ImageRepo:
         return image
 
     def get_for_vendor(self, vendor_id, image_id):
+        self.get_for_vendor_calls.append((vendor_id, image_id))
         image = self.images.get(image_id)
         return image if image and image.vendor_id == vendor_id else None
 
@@ -178,6 +189,7 @@ class PackageRepo:
         self.packages = {package.id: package for package in packages}
         self.add_calls = []
         self.save_calls = []
+        self.get_for_vendor_calls = []
 
     def add(self, package):
         self.add_calls.append(package)
@@ -190,6 +202,7 @@ class PackageRepo:
         return package
 
     def get_for_vendor(self, vendor_id, package_id):
+        self.get_for_vendor_calls.append((vendor_id, package_id))
         package = self.packages.get(package_id)
         return package if package and package.vendor_id == vendor_id else None
 
@@ -199,6 +212,7 @@ class InquiryRepo:
         self.inquiries = {inquiry.id: inquiry for inquiry in inquiries}
         self.add_calls = []
         self.save_calls = []
+        self.get_for_vendor_calls = []
 
     def add(self, inquiry):
         self.add_calls.append(inquiry)
@@ -211,6 +225,7 @@ class InquiryRepo:
         return inquiry
 
     def get_for_vendor(self, vendor_id, inquiry_id):
+        self.get_for_vendor_calls.append((vendor_id, inquiry_id))
         inquiry = self.inquiries.get(inquiry_id)
         return inquiry if inquiry and inquiry.vendor_id == vendor_id else None
 
@@ -263,13 +278,26 @@ class IdempotencyPort:
         return result
 
 
+class AuthorizationPort:
+    def __init__(self, denied_vendor_ids=()):
+        self.denied_vendor_ids = set(denied_vendor_ids)
+        self.calls = []
+
+    def assert_actor_owns_vendor(self, actor, vendor_id):
+        self.calls.append((actor, vendor_id))
+        if vendor_id in self.denied_vendor_ids:
+            raise VendorOperationForbidden("Actor does not own this vendor.")
+
+
 class ReorderUow:
     def __init__(self, images):
         self.images = tuple(images)
         self.persist_calls = []
+        self.list_calls = []
         self.fail = False
 
     def list_vendor_images(self, vendor_id, page):
+        self.list_calls.append((vendor_id, page))
         items = [image for image in self.images if image.vendor_id == vendor_id]
         return Page(items=items, total=len(items), limit=page.limit, offset=page.offset)
 
@@ -281,6 +309,7 @@ class ReorderUow:
 
 
 def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_repo=None, dispatcher=None, **kwargs):
+    kwargs.setdefault("authorization_port", AuthorizationPort())
     return VendorCommandHandlers(
         vendor_repo=vendor_repo or VendorRepo(),
         image_repo=image_repo or ImageRepo(),
@@ -295,8 +324,9 @@ def test_creation_uses_add_not_save_and_idempotency_replays_result():
     idem = IdempotencyPort()
     vendor_repo = VendorRepo()
     handler = _handlers(vendor_repo=vendor_repo, idempotency_port=idem)
+    actor = _actor()
     cmd = CreateVendorProfileCommand(
-        user_id=uuid.uuid4(),
+        actor=actor,
         business_name="New Vendor",
         category="catering",
         description="Reliable event catering and planning support.",
@@ -317,7 +347,9 @@ def test_creation_uses_add_not_save_and_idempotency_replays_result():
 def test_idempotency_payload_conflict_raises_vendor_conflict():
     idem = IdempotencyPort()
     handler = _handlers(idempotency_port=idem)
+    actor = _actor()
     base = CreateServicePackageCommand(
+        actor=actor,
         vendor_id=uuid.uuid4(),
         name="Standard",
         description="Clear package details for a full event.",
@@ -325,6 +357,7 @@ def test_idempotency_payload_conflict_raises_vendor_conflict():
         idempotency_key="pkg-key",
     )
     changed = CreateServicePackageCommand(
+        actor=actor,
         vendor_id=base.vendor_id,
         name="Different",
         description="Clear package details for a full event.",
@@ -338,16 +371,118 @@ def test_idempotency_payload_conflict_raises_vendor_conflict():
         handler.create_service_package(changed)
 
 
+def test_vendor_owned_commands_require_authenticated_actor_context():
+    vendor_owned_commands = (
+        CreateVendorProfileCommand,
+        UpdateVendorProfileCommand,
+        SubmitVendorForReviewCommand,
+        AddPortfolioImageCommand,
+        DeletePortfolioImageCommand,
+        ReorderPortfolioImagesCommand,
+        CreateServicePackageCommand,
+        UpdateServicePackageCommand,
+        DeactivateServicePackageCommand,
+        ActivateServicePackageCommand,
+        MarkInquiryReadCommand,
+    )
+
+    for command_type in vendor_owned_commands:
+        assert "actor" in command_type.__dataclass_fields__
+
+    with pytest.raises(InvalidVendorCommand):
+        UpdateVendorProfileCommand(actor=uuid.uuid4(), vendor_id=uuid.uuid4(), expected_version=1)
+
+
+def test_authorization_denial_happens_before_vendor_owned_aggregate_loads_or_writes():
+    vendor_id = uuid.uuid4()
+    actor = _actor()
+    profile = _profile(version=1)
+    profile.id = vendor_id
+    image = _image(vendor_id, version=1)
+    package = _package(vendor_id, version=1)
+    inquiry = _inquiry(vendor_id, version=1)
+    vendor_repo = VendorRepo([profile])
+    image_repo = ImageRepo([image])
+    package_repo = PackageRepo([package])
+    inquiry_repo = InquiryRepo([inquiry])
+    uow = ReorderUow([image])
+    auth = AuthorizationPort(denied_vendor_ids={vendor_id})
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        image_repo=image_repo,
+        package_repo=package_repo,
+        inquiry_repo=inquiry_repo,
+        reorder_uow=uow,
+        authorization_port=auth,
+    )
+
+    with pytest.raises(VendorOperationForbidden):
+        handler.update_profile(
+            UpdateVendorProfileCommand(actor=actor, vendor_id=vendor_id, expected_version=1, business_name="Blocked")
+        )
+    with pytest.raises(VendorOperationForbidden):
+        handler.add_portfolio_image(
+            AddPortfolioImageCommand(
+                actor=actor,
+                vendor_id=vendor_id,
+                public_id="asset",
+                secure_url="https://example.com/a.jpg",
+            )
+        )
+    with pytest.raises(VendorOperationForbidden):
+        handler.delete_portfolio_image(
+            DeletePortfolioImageCommand(actor=actor, vendor_id=vendor_id, image_id=image.id, expected_version=1)
+        )
+    with pytest.raises(VendorOperationForbidden):
+        handler.reorder_portfolio_images(
+            ReorderPortfolioImagesCommand(
+                actor=actor,
+                vendor_id=vendor_id,
+                image_ids_in_order=(image.id,),
+                expected_versions=(ResourceVersion(image.id, 1),),
+            )
+        )
+    with pytest.raises(VendorOperationForbidden):
+        handler.create_service_package(
+            CreateServicePackageCommand(
+                actor=actor,
+                vendor_id=vendor_id,
+                name="Blocked",
+                description="Blocked package details for this event.",
+                price=Decimal("5000"),
+            )
+        )
+    with pytest.raises(VendorOperationForbidden):
+        handler.update_service_package(
+            UpdateServicePackageCommand(actor=actor, vendor_id=vendor_id, package_id=package.id, expected_version=1)
+        )
+    with pytest.raises(VendorOperationForbidden):
+        handler.mark_inquiry_read(
+            MarkInquiryReadCommand(actor=actor, vendor_id=vendor_id, inquiry_id=inquiry.id, expected_version=1)
+        )
+
+    assert vendor_repo.get_by_id_calls == []
+    assert image_repo.get_for_vendor_calls == []
+    assert image_repo.add_calls == []
+    assert package_repo.get_for_vendor_calls == []
+    assert package_repo.add_calls == []
+    assert inquiry_repo.get_for_vendor_calls == []
+    assert uow.list_calls == []
+    assert len(auth.calls) == 7
+
+
 def test_expected_version_is_required_and_stale_commands_fail_before_mutation():
     profile = _profile(version=4)
     repo = VendorRepo([profile])
     handler = _handlers(vendor_repo=repo)
 
     with pytest.raises(InvalidVendorCommand):
-        UpdateVendorProfileCommand(vendor_id=profile.id, expected_version=True, business_name="Bad")
+        UpdateVendorProfileCommand(actor=_actor(), vendor_id=profile.id, expected_version=True, business_name="Bad")
 
     with pytest.raises(VendorConflict):
-        handler.update_profile(UpdateVendorProfileCommand(vendor_id=profile.id, expected_version=3, business_name="New"))
+        handler.update_profile(
+            UpdateVendorProfileCommand(actor=_actor(), vendor_id=profile.id, expected_version=3, business_name="New")
+        )
 
     assert profile.business_name == "Vendor"
     assert repo.save_calls == []
@@ -361,6 +496,7 @@ def test_profile_update_uses_domain_transition_saves_expected_version_and_dispat
 
     result = handler.update_profile(
         UpdateVendorProfileCommand(
+            actor=_actor(),
             vendor_id=profile.id,
             expected_version=2,
             business_name="Updated Vendor",
@@ -385,6 +521,7 @@ def test_noop_update_does_not_save_or_dispatch():
 
     result = handler.update_profile(
         UpdateVendorProfileCommand(
+            actor=_actor(),
             vendor_id=profile.id,
             expected_version=2,
             business_name=" Vendor ",
@@ -405,7 +542,9 @@ def test_failed_persistence_dispatches_no_events():
     handler = _handlers(vendor_repo=repo, dispatcher=dispatcher)
 
     with pytest.raises(RuntimeError):
-        handler.update_profile(UpdateVendorProfileCommand(vendor_id=profile.id, expected_version=1, business_name="New"))
+        handler.update_profile(
+            UpdateVendorProfileCommand(actor=_actor(), vendor_id=profile.id, expected_version=1, business_name="New")
+        )
 
     assert dispatcher.events == []
 
@@ -418,7 +557,7 @@ def test_profile_validation_failure_is_atomic():
 
     with pytest.raises(Exception):
         _handlers(vendor_repo=repo, dispatcher=dispatcher).update_profile(
-            UpdateVendorProfileCommand(vendor_id=profile.id, expected_version=1, contact_email="not-email")
+            UpdateVendorProfileCommand(actor=_actor(), vendor_id=profile.id, expected_version=1, contact_email="not-email")
         )
 
     assert profile.__dict__ == original
@@ -451,6 +590,7 @@ def test_service_package_update_uses_owned_lookup_and_single_domain_path():
 
     result = handler.update_service_package(
         UpdateServicePackageCommand(
+            actor=_actor(),
             vendor_id=vendor_id,
             package_id=package.id,
             expected_version=5,
@@ -464,6 +604,7 @@ def test_service_package_update_uses_owned_lookup_and_single_domain_path():
     with pytest.raises(VendorResourceNotFound):
         handler.update_service_package(
             UpdateServicePackageCommand(
+                actor=_actor(),
                 vendor_id=uuid.uuid4(),
                 package_id=package.id,
                 expected_version=6,
@@ -484,6 +625,7 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
 
     package_result = handler.create_service_package(
         CreateServicePackageCommand(
+            actor=_actor(),
             vendor_id=vendor_id,
             name="Standard",
             description="Clear package details for a full event.",
@@ -528,10 +670,14 @@ def test_delete_and_activate_vendor_owned_commands_require_vendor_id_and_version
     handler = _handlers(image_repo=image_repo, package_repo=package_repo, dispatcher=dispatcher)
 
     with pytest.raises(InvalidVendorCommand):
-        DeletePortfolioImageCommand(vendor_id=None, image_id=image.id, expected_version=1)
+        DeletePortfolioImageCommand(actor=_actor(), vendor_id=None, image_id=image.id, expected_version=1)
 
-    handler.delete_portfolio_image(DeletePortfolioImageCommand(vendor_id=vendor_id, image_id=image.id, expected_version=1))
-    handler.activate_package(ActivateServicePackageCommand(vendor_id=vendor_id, package_id=package.id, expected_version=2))
+    handler.delete_portfolio_image(
+        DeletePortfolioImageCommand(actor=_actor(), vendor_id=vendor_id, image_id=image.id, expected_version=1)
+    )
+    handler.activate_package(
+        ActivateServicePackageCommand(actor=_actor(), vendor_id=vendor_id, package_id=package.id, expected_version=2)
+    )
 
     assert image_repo.save_calls[0][1] == 1
     assert package_repo.save_calls[0][1] == 2
@@ -547,6 +693,7 @@ def test_reorder_uses_unit_of_work_and_dispatches_after_success():
 
     result = handler.reorder_portfolio_images(
         ReorderPortfolioImagesCommand(
+            actor=_actor(),
             vendor_id=vendor_id,
             image_ids_in_order=(second.id, first.id),
             expected_versions=(
@@ -573,6 +720,7 @@ def test_reorder_failure_dispatches_no_events():
     with pytest.raises(RuntimeError):
         handler.reorder_portfolio_images(
             ReorderPortfolioImagesCommand(
+                actor=_actor(),
                 vendor_id=vendor_id,
                 image_ids_in_order=(second.id, first.id),
                 expected_versions=(ResourceVersion(second.id, 2), ResourceVersion(first.id, 1)),
@@ -591,6 +739,7 @@ def test_reorder_rejects_duplicate_missing_or_foreign_ids_before_persisting():
     with pytest.raises(InvalidVendorCommand):
         handler.reorder_portfolio_images(
             ReorderPortfolioImagesCommand(
+                actor=_actor(),
                 vendor_id=vendor_id,
                 image_ids_in_order=(first.id, first.id),
                 expected_versions=(ResourceVersion(first.id, 1),),
@@ -599,6 +748,7 @@ def test_reorder_rejects_duplicate_missing_or_foreign_ids_before_persisting():
     with pytest.raises(VendorResourceNotFound):
         handler.reorder_portfolio_images(
             ReorderPortfolioImagesCommand(
+                actor=_actor(),
                 vendor_id=vendor_id,
                 image_ids_in_order=(uuid.uuid4(),),
                 expected_versions=(ResourceVersion(first.id, 1),),
