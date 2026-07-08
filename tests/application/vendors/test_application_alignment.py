@@ -28,6 +28,15 @@ from application.vendors.commands import (
 from application.vendors.dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 from application.vendors.errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
+from application.vendors.queries import (
+    GetVendorAnalyticsQuery,
+    GetVendorDashboardSummaryQuery,
+    GetVendorQuery,
+    ListInquiriesQuery,
+    ListPortfolioImagesQuery,
+    ListRecentVendorActivityQuery,
+    ListServicePackagesQuery,
+)
 from domain.shared.utils import utc_now
 from domain.vendors.entities import (
     Inquiry,
@@ -163,6 +172,7 @@ class ImageRepo:
         self.add_calls = []
         self.save_calls = []
         self.get_for_vendor_calls = []
+        self.list_by_vendor_calls = []
 
     def add(self, image):
         self.add_calls.append(image)
@@ -180,6 +190,7 @@ class ImageRepo:
         return image if image and image.vendor_id == vendor_id else None
 
     def list_by_vendor(self, vendor_id, page):
+        self.list_by_vendor_calls.append((vendor_id, page))
         items = [image for image in self.images.values() if image.vendor_id == vendor_id]
         return Page(items=items[: page.limit], total=len(items), limit=page.limit, offset=page.offset)
 
@@ -213,6 +224,7 @@ class InquiryRepo:
         self.add_calls = []
         self.save_calls = []
         self.get_for_vendor_calls = []
+        self.list_by_vendor_calls = []
 
     def add(self, inquiry):
         self.add_calls.append(inquiry)
@@ -230,6 +242,7 @@ class InquiryRepo:
         return inquiry if inquiry and inquiry.vendor_id == vendor_id else None
 
     def list_by_vendor(self, vendor_id, page):
+        self.list_by_vendor_calls.append((vendor_id, page))
         items = [inquiry for inquiry in self.inquiries.values() if inquiry.vendor_id == vendor_id]
         return Page(items=items[: page.limit], total=len(items), limit=page.limit, offset=page.offset)
 
@@ -287,6 +300,11 @@ class AuthorizationPort:
         self.calls.append((actor, vendor_id))
         if vendor_id in self.denied_vendor_ids:
             raise VendorOperationForbidden("Actor does not own this vendor.")
+
+    def assert_actor_can_access_vendor(self, actor, vendor_id):
+        self.calls.append((actor, vendor_id))
+        if vendor_id in self.denied_vendor_ids:
+            raise VendorOperationForbidden("Actor cannot access this vendor.")
 
 
 class ReorderUow:
@@ -761,9 +779,12 @@ def test_reorder_rejects_duplicate_missing_or_foreign_ids_before_persisting():
 def test_page_results_are_mapped_to_page_dto_and_read_port_is_mandatory():
     vendor_id = uuid.uuid4()
     profile = _profile(status=VendorStatus.PENDING_REVIEW)
+    profile.id = vendor_id
     image = _image(vendor_id)
     inquiry = _inquiry(vendor_id)
     read_port = ReadPort()
+    auth = AuthorizationPort()
+    actor = _actor()
     package_dto = ServicePackageDTO(
         id=uuid.uuid4(),
         vendor_id=vendor_id,
@@ -782,17 +803,72 @@ def test_page_results_are_mapped_to_page_dto_and_read_port_is_mandatory():
     read_port.package_page = PageDTO(items=(package_dto,), total=1, limit=5, offset=0)
 
     with pytest.raises(InvalidVendorCommand):
-        VendorQueryHandlers(VendorRepo(), ImageRepo(), InquiryRepo(), None)
+        VendorQueryHandlers(VendorRepo(), ImageRepo(), InquiryRepo(), None, auth)
+    with pytest.raises(InvalidVendorCommand):
+        VendorQueryHandlers(VendorRepo(), ImageRepo(), InquiryRepo(), read_port, None)
 
-    query = VendorQueryHandlers(VendorRepo([profile]), ImageRepo([image]), InquiryRepo([inquiry]), read_port)
+    query = VendorQueryHandlers(VendorRepo([profile]), ImageRepo([image]), InquiryRepo([inquiry]), read_port, auth)
 
     assert query.list_pending_approvals(PageRequest(limit=5)).items[0].id == profile.id
-    assert query.list_portfolio_images(vendor_id, PageRequest(limit=5)).items[0].id == image.id
-    assert query.list_inquiries(vendor_id, PageRequest(limit=5)).items[0].id == inquiry.id
-    assert query.list_service_packages(vendor_id, PageRequest(limit=5)).items == (package_dto,)
-    assert query.get_dashboard_summary(vendor_id) == read_port.summary
-    assert query.get_analytics(vendor_id) == read_port.analytics_payload
-    assert query.get_recent_activity(vendor_id).items == read_port.activity.items
+    assert query.get_vendor(GetVendorQuery(actor=actor, vendor_id=vendor_id)).id == vendor_id
+    assert (
+        query.list_portfolio_images(
+            ListPortfolioImagesQuery(actor=actor, vendor_id=vendor_id, page=PageRequest(limit=5))
+        ).items[0].id
+        == image.id
+    )
+    assert (
+        query.list_inquiries(ListInquiriesQuery(actor=actor, vendor_id=vendor_id, page=PageRequest(limit=5))).items[0].id
+        == inquiry.id
+    )
+    assert (
+        query.list_service_packages(
+            ListServicePackagesQuery(actor=actor, vendor_id=vendor_id, page=PageRequest(limit=5))
+        ).items
+        == (package_dto,)
+    )
+    assert query.get_dashboard_summary(GetVendorDashboardSummaryQuery(actor=actor, vendor_id=vendor_id)) == read_port.summary
+    assert query.get_analytics(GetVendorAnalyticsQuery(actor=actor, vendor_id=vendor_id)) == read_port.analytics_payload
+    assert (
+        query.get_recent_activity(ListRecentVendorActivityQuery(actor=actor, vendor_id=vendor_id)).items
+        == read_port.activity.items
+    )
+
+
+def test_private_vendor_queries_authorize_before_repository_or_read_port_calls():
+    vendor_id = uuid.uuid4()
+    actor = _actor()
+    profile = _profile()
+    profile.id = vendor_id
+    image = _image(vendor_id)
+    inquiry = _inquiry(vendor_id)
+    vendor_repo = VendorRepo([profile])
+    image_repo = ImageRepo([image])
+    inquiry_repo = InquiryRepo([inquiry])
+    read_port = ReadPort()
+    auth = AuthorizationPort(denied_vendor_ids={vendor_id})
+    query = VendorQueryHandlers(vendor_repo, image_repo, inquiry_repo, read_port, auth)
+
+    with pytest.raises(VendorOperationForbidden):
+        query.get_vendor(GetVendorQuery(actor=actor, vendor_id=vendor_id))
+    with pytest.raises(VendorOperationForbidden):
+        query.list_portfolio_images(ListPortfolioImagesQuery(actor=actor, vendor_id=vendor_id))
+    with pytest.raises(VendorOperationForbidden):
+        query.list_inquiries(ListInquiriesQuery(actor=actor, vendor_id=vendor_id))
+    with pytest.raises(VendorOperationForbidden):
+        query.list_service_packages(ListServicePackagesQuery(actor=actor, vendor_id=vendor_id))
+    with pytest.raises(VendorOperationForbidden):
+        query.get_dashboard_summary(GetVendorDashboardSummaryQuery(actor=actor, vendor_id=vendor_id))
+    with pytest.raises(VendorOperationForbidden):
+        query.get_analytics(GetVendorAnalyticsQuery(actor=actor, vendor_id=vendor_id))
+    with pytest.raises(VendorOperationForbidden):
+        query.get_recent_activity(ListRecentVendorActivityQuery(actor=actor, vendor_id=vendor_id))
+
+    assert vendor_repo.get_by_id_calls == []
+    assert image_repo.list_by_vendor_calls == []
+    assert inquiry_repo.list_by_vendor_calls == []
+    assert read_port.calls == []
+    assert auth.calls == [(actor, vendor_id)] * 7
 
 
 def test_portfolio_image_dto_has_no_unsafe_lifecycle_defaults():

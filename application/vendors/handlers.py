@@ -45,6 +45,15 @@ from .ports import (
     VendorIdempotencyPort,
     VendorReadPort,
 )
+from .queries import (
+    GetVendorAnalyticsQuery,
+    GetVendorDashboardSummaryQuery,
+    GetVendorQuery,
+    ListInquiriesQuery,
+    ListPortfolioImagesQuery,
+    ListRecentVendorActivityQuery,
+    ListServicePackagesQuery,
+)
 
 
 class VendorCommandHandlers:
@@ -450,16 +459,21 @@ class VendorQueryHandlers:
         image_repo: IPortfolioImageRepository,
         inquiry_repo: IInquiryRepository,
         read_repo: VendorReadPort,
+        authorization_port: VendorAuthorizationPort,
     ):
         if read_repo is None:
             raise InvalidVendorCommand(field_errors={"read_repo": ["Vendor read port is required."]})
+        if authorization_port is None:
+            raise InvalidVendorCommand(field_errors={"authorization_port": ["Vendor authorization is required."]})
         self.vendor_repo = vendor_repo
         self.image_repo = image_repo
         self.inquiry_repo = inquiry_repo
         self.read_repo = read_repo
+        self.authorization_port = authorization_port
 
-    def get_vendor(self, vendor_id: uuid.UUID) -> VendorProfileDTO | None:
-        profile = self.vendor_repo.get_by_id(vendor_id)
+    def get_vendor(self, query: GetVendorQuery) -> VendorProfileDTO | None:
+        self._assert_actor_can_access_vendor(query)
+        profile = self.vendor_repo.get_by_id(query.vendor_id)
         return VendorCommandHandlers._to_profile_dto(profile) if profile else None
 
     def get_vendor_by_user(self, user_id: uuid.UUID) -> VendorProfileDTO | None:
@@ -471,25 +485,45 @@ class VendorQueryHandlers:
         profiles = self.vendor_repo.list_by_status(VendorStatus.PENDING_REVIEW, requested_page)
         return self._map_page(profiles, VendorCommandHandlers._to_profile_dto)
 
-    def list_portfolio_images(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> PageDTO[PortfolioImageDTO]:
-        images = self.image_repo.list_by_vendor(vendor_id, page or PageRequest())
+    def list_portfolio_images(self, query: ListPortfolioImagesQuery) -> PageDTO[PortfolioImageDTO]:
+        self._assert_actor_can_access_vendor(query)
+        images = self.image_repo.list_by_vendor(query.vendor_id, query.page or PageRequest())
         return self._map_page(images, VendorCommandHandlers._to_image_dto)
 
-    def list_service_packages(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> PageDTO[ServicePackageDTO]:
-        return self.read_repo.list_service_packages(vendor_id, page or PageRequest())
+    def list_service_packages(self, query: ListServicePackagesQuery) -> PageDTO[ServicePackageDTO]:
+        self._assert_actor_can_access_vendor(query)
+        return self.read_repo.list_service_packages(query.vendor_id, query.page or PageRequest())
 
-    def list_inquiries(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> PageDTO[InquiryDTO]:
-        inquiries = self.inquiry_repo.list_by_vendor(vendor_id, page or PageRequest())
+    def list_inquiries(self, query: ListInquiriesQuery) -> PageDTO[InquiryDTO]:
+        self._assert_actor_can_access_vendor(query)
+        inquiries = self.inquiry_repo.list_by_vendor(query.vendor_id, query.page or PageRequest())
         return self._map_page(inquiries, VendorCommandHandlers._to_inquiry_dto)
 
-    def get_dashboard_summary(self, vendor_id: uuid.UUID) -> dict:
-        return self.read_repo.dashboard_summary(vendor_id)
+    def get_dashboard_summary(self, query: GetVendorDashboardSummaryQuery) -> dict:
+        self._assert_actor_can_access_vendor(query)
+        return self.read_repo.dashboard_summary(query.vendor_id)
 
-    def get_analytics(self, vendor_id: uuid.UUID) -> dict:
-        return self.read_repo.analytics(vendor_id)
+    def get_analytics(self, query: GetVendorAnalyticsQuery) -> dict:
+        self._assert_actor_can_access_vendor(query)
+        return self.read_repo.analytics(query.vendor_id)
 
-    def get_recent_activity(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> PageDTO[dict]:
-        return self.read_repo.recent_activity(vendor_id, page or PageRequest(limit=10, offset=0))
+    def get_recent_activity(self, query: ListRecentVendorActivityQuery) -> PageDTO[dict]:
+        self._assert_actor_can_access_vendor(query)
+        return self.read_repo.recent_activity(query.vendor_id, query.page or PageRequest(limit=10, offset=0))
+
+    def _assert_actor_can_access_vendor(
+        self,
+        query: (
+            GetVendorQuery
+            | ListPortfolioImagesQuery
+            | ListServicePackagesQuery
+            | ListInquiriesQuery
+            | GetVendorDashboardSummaryQuery
+            | GetVendorAnalyticsQuery
+            | ListRecentVendorActivityQuery
+        ),
+    ) -> None:
+        self.authorization_port.assert_actor_can_access_vendor(query.actor, query.vendor_id)
 
     @staticmethod
     def _map_page(page: Page, mapper: Callable) -> PageDTO:
