@@ -4,6 +4,7 @@ from typing import Callable, Protocol, Sequence, TypeVar
 import uuid
 
 from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
+from domain.vendors.events import VendorDomainEvent
 from domain.vendors.interfaces import Page, PageRequest
 
 from .commands import AuthenticatedActor, ModeratorActor
@@ -11,6 +12,7 @@ from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 
 T = TypeVar("T")
 VendorAggregateT = TypeVar("VendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
+CreatedVendorAggregateT = TypeVar("CreatedVendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
 
 
 class VendorIdempotencyPort(Protocol):
@@ -43,6 +45,12 @@ class VendorReadPort(Protocol):
     def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[dict]: ...
 
 
+class VendorEventDispatcher(Protocol):
+    """Persists a vendor domain event for publication."""
+
+    def dispatch(self, event: VendorDomainEvent) -> None: ...
+
+
 class VendorAggregateUnitOfWork(Protocol):
     """Atomically persists one vendor aggregate with its pending domain events."""
 
@@ -54,6 +62,12 @@ class VendorAggregateUnitOfWork(Protocol):
         *,
         expected_version: int,
     ) -> VendorAggregateT: ...
+
+
+class VendorCreationUnitOfWork(Protocol):
+    """Atomically adds one newly created vendor aggregate with its pending creation events."""
+
+    def add_with_pending_events(self, aggregate: CreatedVendorAggregateT) -> CreatedVendorAggregateT: ...
 
 
 class PortfolioReorderUnitOfWork(Protocol):
