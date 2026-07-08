@@ -76,6 +76,16 @@ def _profile(*, status=VendorStatus.DRAFT, version=0) -> VendorProfile:
         kwargs.update(created_at=now, updated_at=now, submitted_at=now)
     if status == VendorStatus.APPROVED:
         kwargs.update(created_at=now, updated_at=now, submitted_at=now, approved_at=now)
+    if status == VendorStatus.REJECTED:
+        kwargs.update(
+            created_at=now,
+            updated_at=now,
+            submitted_at=now,
+            rejected_at=now,
+            rejection_reason="Needs more complete verification details.",
+        )
+    if status == VendorStatus.SUSPENDED:
+        kwargs.update(created_at=now, updated_at=now, submitted_at=now, approved_at=now)
     return VendorProfile(
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
@@ -377,11 +387,13 @@ def test_creation_uses_add_not_save_and_idempotency_replays_result():
 
 def test_idempotency_payload_conflict_raises_vendor_conflict():
     idem = IdempotencyPort()
-    handler = _handlers(idempotency_port=idem)
     actor = _actor()
+    profile = _profile(status=VendorStatus.APPROVED)
+    vendor_repo = VendorRepo([profile])
+    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=idem)
     base = CreateServicePackageCommand(
         actor=actor,
-        vendor_id=uuid.uuid4(),
+        vendor_id=profile.id,
         name="Standard",
         description="Clear package details for a full event.",
         price=Decimal("5000"),
@@ -723,6 +735,62 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
     assert len(inquiry_repo.add_calls) == 1
     assert inquiry_result.event_date == date.today() + timedelta(days=40)
     assert [type(event) for event in dispatcher.events] == [ServicePackageCreated, InquiryReceived]
+
+
+def test_create_service_package_loads_vendor_and_returns_stable_missing_vendor_error():
+    vendor_id = uuid.uuid4()
+    vendor_repo = VendorRepo()
+    package_repo = PackageRepo()
+    dispatcher = EventDispatcher()
+    handler = _handlers(vendor_repo=vendor_repo, package_repo=package_repo, dispatcher=dispatcher)
+
+    with pytest.raises(VendorResourceNotFound) as exc_info:
+        handler.create_service_package(
+            CreateServicePackageCommand(
+                actor=_actor(),
+                vendor_id=vendor_id,
+                name="Standard",
+                description="Clear package details for a full event.",
+                price=Decimal("5000"),
+            )
+        )
+
+    assert exc_info.value.code == "vendor_not_found"
+    assert vendor_repo.get_by_id_calls == [vendor_id]
+    assert package_repo.add_calls == []
+    assert dispatcher.events == []
+
+
+def test_create_service_package_policy_forbids_unapproved_vendor_statuses_before_package_creation():
+    forbidden_statuses = (
+        VendorStatus.DRAFT,
+        VendorStatus.PENDING_REVIEW,
+        VendorStatus.REJECTED,
+        VendorStatus.SUSPENDED,
+    )
+
+    for status in forbidden_statuses:
+        profile = _profile(status=status)
+        vendor_repo = VendorRepo([profile])
+        package_repo = PackageRepo()
+        dispatcher = EventDispatcher()
+        handler = _handlers(vendor_repo=vendor_repo, package_repo=package_repo, dispatcher=dispatcher)
+
+        with pytest.raises(VendorOperationForbidden) as exc_info:
+            handler.create_service_package(
+                CreateServicePackageCommand(
+                    actor=_actor(),
+                    vendor_id=profile.id,
+                    name="Standard",
+                    description="Clear package details for a full event.",
+                    price=Decimal("5000"),
+                )
+            )
+
+        assert exc_info.value.code == "vendor_service_package_creation_forbidden"
+        assert vendor_repo.get_by_id_calls == [profile.id]
+        assert package_repo.add_calls == []
+        assert dispatcher.events == []
 
 
 def test_inquiry_command_rejects_datetime_event_date():

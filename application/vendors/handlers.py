@@ -55,6 +55,7 @@ from .queries import (
     ListRecentVendorActivityQuery,
     ListServicePackagesQuery,
 )
+from .service_package_policy import ensure_vendor_can_create_service_package
 
 
 class VendorCommandHandlers:
@@ -237,6 +238,8 @@ class VendorCommandHandlers:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
 
         def operation() -> ServicePackageDTO:
+            profile = self.vendor_repo.get_by_id(cmd.vendor_id)
+            ensure_vendor_can_create_service_package(profile)
             package = ServicePackage.create(
                 vendor_id=cmd.vendor_id,
                 name=cmd.name,
