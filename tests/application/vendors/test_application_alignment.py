@@ -947,6 +947,72 @@ def test_service_package_creation_always_requires_idempotency_storage():
     assert vendor_repo.get_by_id_calls == []
 
 
+def test_send_inquiry_command_requires_nonblank_idempotency_key():
+    idempotency_field = next(field for field in fields(SendInquiryCommand) if field.name == "idempotency_key")
+
+    assert idempotency_field.default is MISSING
+
+    with pytest.raises(TypeError):
+        SendInquiryCommand(
+            vendor_id=uuid.uuid4(),
+            client_name="Planner",
+            client_email="planner@example.com",
+            message="Can you support my event?",
+        )
+
+    with pytest.raises(InvalidVendorCommand) as none_exc:
+        SendInquiryCommand(
+            vendor_id=uuid.uuid4(),
+            client_name="Planner",
+            client_email="planner@example.com",
+            message="Can you support my event?",
+            idempotency_key=None,
+        )
+
+    with pytest.raises(InvalidVendorCommand) as blank_exc:
+        SendInquiryCommand(
+            vendor_id=uuid.uuid4(),
+            client_name="Planner",
+            client_email="planner@example.com",
+            message="Can you support my event?",
+            idempotency_key="  ",
+        )
+
+    assert none_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
+    assert blank_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
+
+
+def test_send_inquiry_always_requires_idempotency_storage():
+    vendor_id = uuid.uuid4()
+    profile = _profile(status=VendorStatus.APPROVED)
+    profile.id = vendor_id
+    vendor_repo = VendorRepo([profile])
+    inquiry_repo = InquiryRepo()
+    aggregate_uow = AggregateUow()
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        inquiry_repo=inquiry_repo,
+        aggregate_uow=aggregate_uow,
+        idempotency_port=None,
+    )
+
+    with pytest.raises(VendorApplicationConfigurationError) as exc_info:
+        handler.send_inquiry(
+            SendInquiryCommand(
+                vendor_id=vendor_id,
+                client_name="Planner",
+                client_email="planner@example.com",
+                message="Can you support my event?",
+                idempotency_key="missing-storage",
+            )
+        )
+
+    assert exc_info.value.field_errors == {"idempotency_key": ["Idempotency storage is required."]}
+    assert vendor_repo.get_by_id_calls == []
+    assert inquiry_repo.add_calls == []
+    assert aggregate_uow.add_calls == []
+
+
 def test_oversized_idempotency_key_raises_stable_field_error_after_trimming():
     actor = _actor()
     vendor_id = uuid.uuid4()
@@ -1457,6 +1523,7 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
             client_email="planner@example.com",
             message="Can you support my event?",
             event_date=date.today() + timedelta(days=40),
+            idempotency_key="send-inquiry-with-package",
         )
     )
 
@@ -1551,6 +1618,7 @@ def test_inquiry_command_rejects_datetime_event_date():
             client_email="planner@example.com",
             message="Can you support my event?",
             event_date=datetime.now(),
+            idempotency_key="datetime-event-date",
         )
 
 

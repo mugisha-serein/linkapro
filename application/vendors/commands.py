@@ -323,15 +323,15 @@ class SendInquiryCommand:
     client_name: str
     client_email: str
     message: str
+    idempotency_key: str
     client_phone: Optional[str] = None
     event_date: Optional[date] = None
-    idempotency_key: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         if isinstance(self.event_date, datetime):
             raise InvalidVendorCommand(field_errors={"event_date": ["Use a date, not a datetime."]})
-        object.__setattr__(self, "idempotency_key", _coerce_optional_idempotency_key(self.idempotency_key))
+        object.__setattr__(self, "idempotency_key", _coerce_required_idempotency_key(self.idempotency_key))
 
 
 @dataclass(frozen=True)

@@ -304,7 +304,7 @@ class VendorCommandHandlers:
             saved = self._add_with_pending_events(inquiry)
             return self._to_inquiry_dto(saved)
 
-        return self._run_idempotent("vendor_inquiry.send", cmd.vendor_id, cmd.idempotency_key, cmd, operation)
+        return self._run_required_idempotent("vendor_inquiry.send", cmd.vendor_id, cmd.idempotency_key, cmd, operation)
 
     def mark_inquiry_read(self, cmd: MarkInquiryReadCommand) -> InquiryDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
