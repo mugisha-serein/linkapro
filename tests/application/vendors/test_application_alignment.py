@@ -40,7 +40,12 @@ from application.vendors.errors import (
     VendorResourceNotFound,
 )
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
-from application.vendors.ports import VendorAggregateUnitOfWork, VendorCreationUnitOfWork, VendorEventDispatcher
+from application.vendors.ports import (
+    PortfolioReorderUnitOfWork,
+    VendorAggregateUnitOfWork,
+    VendorCreationUnitOfWork,
+    VendorEventDispatcher,
+)
 from application.vendors.queries import (
     GetVendorAnalyticsQuery,
     GetVendorDashboardSummaryQuery,
@@ -405,6 +410,7 @@ def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_r
     kwargs.setdefault("authorization_port", AuthorizationPort())
     kwargs.setdefault("aggregate_uow", AggregateUow())
     kwargs.setdefault("creation_uow", CreationUow())
+    kwargs.setdefault("reorder_uow", ReorderUow(()))
     return VendorCommandHandlers(
         vendor_repo=vendor_repo or VendorRepo(),
         image_repo=image_repo or ImageRepo(),
@@ -463,6 +469,12 @@ def test_vendor_command_handlers_constructor_types_event_dispatcher_port():
     hints = get_type_hints(VendorCommandHandlers.__init__)
 
     assert hints["event_dispatcher"] is VendorEventDispatcher
+
+
+def test_vendor_command_handlers_constructor_requires_reorder_unit_of_work_port():
+    hints = get_type_hints(VendorCommandHandlers.__init__)
+
+    assert hints["reorder_uow"] is PortfolioReorderUnitOfWork
 
 
 def test_vendor_application_configuration_error_has_dedicated_code():
@@ -551,17 +563,9 @@ def test_portfolio_dependencies_raise_configuration_error_when_missing_or_miscon
     profile = _profile(status=VendorStatus.APPROVED)
     profile.id = vendor_id
     vendor_repo = VendorRepo([profile])
-    image = _image(vendor_id, version=1)
 
     with pytest.raises(VendorApplicationConfigurationError) as reorder_exc:
-        _handlers().reorder_portfolio_images(
-            ReorderPortfolioImagesCommand(
-                actor=_actor(),
-                vendor_id=vendor_id,
-                image_ids_in_order=(image.id,),
-                expected_versions=(ResourceVersion(image.id, 1),),
-            )
-        )
+        _handlers(reorder_uow=None)
 
     with pytest.raises(VendorApplicationConfigurationError) as order_exc:
         _handlers(vendor_repo=vendor_repo, order_allocator=object()).add_portfolio_image(
@@ -574,6 +578,7 @@ def test_portfolio_dependencies_raise_configuration_error_when_missing_or_miscon
         )
 
     assert reorder_exc.value.code == "vendor_application_configuration_error"
+    assert str(reorder_exc.value) == "Portfolio reorder requires a unit of work."
     assert order_exc.value.field_errors == {"order": ["Portfolio order allocation is not configured."]}
 
 

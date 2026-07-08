@@ -76,13 +76,15 @@ class VendorCommandHandlers:
         inquiry_repo: IInquiryRepository,
         event_dispatcher: VendorEventDispatcher,
         *,
+        reorder_uow: PortfolioReorderUnitOfWork,
         aggregate_uow: VendorAggregateUnitOfWork | None = None,
         creation_uow: VendorCreationUnitOfWork | None = None,
         authorization_port: VendorAuthorizationPort | None = None,
         idempotency_port: VendorIdempotencyPort | None = None,
-        reorder_uow: PortfolioReorderUnitOfWork | None = None,
         order_allocator: PortfolioOrderAllocator | None = None,
     ):
+        if reorder_uow is None:
+            raise VendorApplicationConfigurationError("Portfolio reorder requires a unit of work.")
         self.vendor_repo = vendor_repo
         self.image_repo = image_repo
         self.package_repo = package_repo
@@ -216,8 +218,6 @@ class VendorCommandHandlers:
 
     def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> PageDTO[PortfolioImageDTO]:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        if self.reorder_uow is None:
-            raise VendorApplicationConfigurationError("Portfolio reorder requires a unit of work.")
         page = self.reorder_uow.list_vendor_images(cmd.vendor_id, PageRequest(limit=100, offset=0))
         image_map = {image.id: image for image in page.items}
         requested_ids = tuple(cmd.image_ids_in_order)
