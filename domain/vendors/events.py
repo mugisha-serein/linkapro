@@ -59,6 +59,12 @@ class VendorReinstated(VendorDomainEvent):
 
 
 @dataclass(frozen=True)
+class VendorProfileUpdated(VendorDomainEvent):
+    vendor_id: uuid.UUID
+    user_id: uuid.UUID
+
+
+@dataclass(frozen=True)
 class ServicePackageCreated(VendorDomainEvent):
     package_id: uuid.UUID
     vendor_id: uuid.UUID

@@ -25,6 +25,7 @@ from domain.vendors.errors import (
     PortfolioValidationError,
     VendorProfileValidationError,
 )
+from domain.vendors.events import VendorProfileUpdated
 
 
 def valid_profile(**overrides):
@@ -211,6 +212,86 @@ class TestVendorProfile:
             profile.reject(" ")
 
         assert "rejection_reason" in exc_info.value.field_errors
+        assert profile.__dict__ == original
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            VendorStatus.DRAFT,
+            VendorStatus.PENDING_REVIEW,
+            VendorStatus.APPROVED,
+            VendorStatus.REJECTED,
+        ],
+    )
+    def test_update_details_is_atomic_for_editable_fields_across_lifecycle_states(self, status):
+        now = utc_now()
+        overrides = {"status": status, "created_at": now, "updated_at": now}
+        if status == VendorStatus.PENDING_REVIEW:
+            overrides["submitted_at"] = now
+        if status == VendorStatus.APPROVED:
+            overrides["submitted_at"] = now
+            overrides["approved_at"] = now
+        if status == VendorStatus.REJECTED:
+            overrides["submitted_at"] = now
+            overrides["rejected_at"] = now
+            overrides["rejection_reason"] = "Needs stronger portfolio"
+        profile = valid_profile(**overrides)
+        profile.pull_events()
+        original_version = profile.version
+
+        frozen = now + timedelta(days=1)
+        with freeze_time(frozen):
+            profile.update_details(
+                business_name=" Updated Photography ",
+                description="Updated elegant wedding and event moments across Rwanda.",
+                service_area=" Kigali and Musanze ",
+                contact_email="UPDATED@EXAMPLE.COM",
+                contact_phone="+250 788 000 111",
+                website="https://example.com/vendor",
+            )
+
+        assert profile.status == status
+        assert profile.business_name == "Updated Photography"
+        assert profile.service_area == "Kigali and Musanze"
+        assert profile.contact_email == "updated@example.com"
+        assert profile.contact_phone == "+250788000111"
+        assert profile.updated_at == frozen
+        assert profile.version == original_version + 1
+        events = profile.pull_events()
+        assert len(events) == 1
+        assert isinstance(events[0], VendorProfileUpdated)
+        assert events[0].vendor_id == profile.id
+        assert events[0].user_id == profile.user_id
+        assert events[0].aggregate_id == profile.id
+        assert events[0].aggregate_version == profile.version
+        assert isinstance(events[0].event_id, uuid.UUID)
+
+    def test_update_details_noop_preserves_state_version_timestamps_and_events(self):
+        updated_at = utc_now()
+        profile = valid_profile(updated_at=updated_at, version=3)
+        profile.pull_events()
+
+        profile.update_details(
+            business_name=" Test Photography ",
+            category="photography",
+            description=" We capture elegant wedding and event moments. ",
+            service_area=" Kigali ",
+            contact_email="TEST@EXAMPLE.COM",
+            contact_phone="+250 788 123 456",
+        )
+
+        assert profile.version == 3
+        assert profile.updated_at == updated_at
+        assert profile.pull_events() == []
+
+    def test_update_details_validation_failure_leaves_state_unchanged(self):
+        profile = valid_profile(version=2)
+        original = profile.__dict__.copy()
+
+        with pytest.raises(VendorProfileValidationError) as exc_info:
+            profile.update_details(contact_email="not-an-email")
+
+        assert "contact_email" in exc_info.value.field_errors
         assert profile.__dict__ == original
 
     def test_suspend_and_reinstate_vendor(self):
