@@ -26,6 +26,7 @@ from .commands import (
     DeactivateServicePackageCommand,
     DeletePortfolioImageCommand,
     MarkInquiryReadCommand,
+    ModeratorActor,
     OMITTED,
     ReinstateVendorCommand,
     RejectVendorCommand,
@@ -133,6 +134,7 @@ class VendorCommandHandlers:
         return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def approve_vendor(self, cmd: ApproveVendorCommand) -> VendorProfileDTO:
+        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
@@ -140,6 +142,7 @@ class VendorCommandHandlers:
         return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def reject_vendor(self, cmd: RejectVendorCommand) -> VendorProfileDTO:
+        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
@@ -147,6 +150,7 @@ class VendorCommandHandlers:
         return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def suspend_vendor(self, cmd: SuspendVendorCommand) -> VendorProfileDTO:
+        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
@@ -154,6 +158,7 @@ class VendorCommandHandlers:
         return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def reinstate_vendor(self, cmd: ReinstateVendorCommand) -> VendorProfileDTO:
+        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
@@ -325,6 +330,11 @@ class VendorCommandHandlers:
         if self.authorization_port is None:
             raise InvalidVendorCommand(field_errors={"authorization_port": ["Vendor authorization is required."]})
         self.authorization_port.assert_actor_owns_vendor(actor, vendor_id)
+
+    def _assert_moderator_can_moderate_vendor(self, moderator: ModeratorActor, vendor_id: uuid.UUID) -> None:
+        if self.authorization_port is None:
+            raise InvalidVendorCommand(field_errors={"authorization_port": ["Vendor authorization is required."]})
+        self.authorization_port.assert_moderator_can_moderate_vendor(moderator, vendor_id)
 
     @staticmethod
     def _assert_expected_version(actual_version: int, expected_version: int) -> None:

@@ -18,10 +18,14 @@ from application.vendors.commands import (
     DeactivateServicePackageCommand,
     DeletePortfolioImageCommand,
     MarkInquiryReadCommand,
+    ModeratorActor,
     ReorderPortfolioImagesCommand,
+    ReinstateVendorCommand,
+    RejectVendorCommand,
     ResourceVersion,
     SendInquiryCommand,
     SubmitVendorForReviewCommand,
+    SuspendVendorCommand,
     UpdateServicePackageCommand,
     UpdateVendorProfileCommand,
 )
@@ -59,6 +63,10 @@ from domain.vendors.interfaces import Page, PageRequest
 
 def _actor(user_id: uuid.UUID | None = None) -> AuthenticatedActor:
     return AuthenticatedActor(user_id=user_id or uuid.uuid4())
+
+
+def _moderator(user_id: uuid.UUID | None = None) -> ModeratorActor:
+    return ModeratorActor(user_id=user_id or uuid.uuid4())
 
 
 def _profile(*, status=VendorStatus.DRAFT, version=0) -> VendorProfile:
@@ -306,6 +314,11 @@ class AuthorizationPort:
         if vendor_id in self.denied_vendor_ids:
             raise VendorOperationForbidden("Actor cannot access this vendor.")
 
+    def assert_moderator_can_moderate_vendor(self, moderator, vendor_id):
+        self.calls.append((moderator, vendor_id))
+        if vendor_id in self.denied_vendor_ids:
+            raise VendorOperationForbidden("Moderator cannot moderate this vendor.")
+
 
 class ReorderUow:
     def __init__(self, images):
@@ -409,6 +422,49 @@ def test_vendor_owned_commands_require_authenticated_actor_context():
 
     with pytest.raises(InvalidVendorCommand):
         UpdateVendorProfileCommand(actor=uuid.uuid4(), vendor_id=uuid.uuid4(), expected_version=1)
+
+
+def test_vendor_moderation_commands_require_moderator_actor_context():
+    moderation_commands = (
+        ApproveVendorCommand,
+        RejectVendorCommand,
+        SuspendVendorCommand,
+        ReinstateVendorCommand,
+    )
+
+    for command_type in moderation_commands:
+        assert "moderator" in command_type.__dataclass_fields__
+
+    with pytest.raises(InvalidVendorCommand):
+        ApproveVendorCommand(moderator=uuid.uuid4(), vendor_id=uuid.uuid4(), expected_version=1)
+
+
+def test_moderation_authorization_denial_happens_before_vendor_loads_or_transitions():
+    vendor_id = uuid.uuid4()
+    moderator = _moderator()
+    profile = _profile(status=VendorStatus.PENDING_REVIEW, version=1)
+    profile.id = vendor_id
+    repo = VendorRepo([profile])
+    auth = AuthorizationPort(denied_vendor_ids={vendor_id})
+    handler = _handlers(vendor_repo=repo, authorization_port=auth)
+
+    with pytest.raises(VendorOperationForbidden):
+        handler.approve_vendor(ApproveVendorCommand(moderator=moderator, vendor_id=vendor_id, expected_version=1))
+    with pytest.raises(VendorOperationForbidden):
+        handler.reject_vendor(
+            RejectVendorCommand(moderator=moderator, vendor_id=vendor_id, expected_version=1, reason="Incomplete")
+        )
+    with pytest.raises(VendorOperationForbidden):
+        handler.suspend_vendor(
+            SuspendVendorCommand(moderator=moderator, vendor_id=vendor_id, expected_version=1, reason="Policy")
+        )
+    with pytest.raises(VendorOperationForbidden):
+        handler.reinstate_vendor(ReinstateVendorCommand(moderator=moderator, vendor_id=vendor_id, expected_version=1))
+
+    assert repo.get_by_id_calls == []
+    assert repo.save_calls == []
+    assert profile.status == VendorStatus.PENDING_REVIEW
+    assert auth.calls == [(moderator, vendor_id)] * 4
 
 
 def test_authorization_denial_happens_before_vendor_owned_aggregate_loads_or_writes():
@@ -589,7 +645,9 @@ def test_lifecycle_events_are_pulled_from_aggregate_after_save():
     dispatcher = EventDispatcher()
     handler = _handlers(vendor_repo=repo, dispatcher=dispatcher)
 
-    result = handler.approve_vendor(ApproveVendorCommand(vendor_id=profile.id, expected_version=7))
+    result = handler.approve_vendor(
+        ApproveVendorCommand(moderator=_moderator(), vendor_id=profile.id, expected_version=7)
+    )
 
     assert result.status == VendorStatus.APPROVED.value
     assert repo.save_calls == [(profile, 7)]

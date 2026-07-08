@@ -55,9 +55,23 @@ class AuthenticatedActor:
         object.__setattr__(self, "user_id", _coerce_uuid(self.user_id, "actor.user_id"))
 
 
+@dataclass(frozen=True)
+class ModeratorActor:
+    user_id: uuid.UUID
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "user_id", _coerce_uuid(self.user_id, "moderator.user_id"))
+
+
 def _coerce_actor(value: AuthenticatedActor) -> AuthenticatedActor:
     if not isinstance(value, AuthenticatedActor):
         raise InvalidVendorCommand(field_errors={"actor": ["Authenticated actor is required."]})
+    return value
+
+
+def _coerce_moderator(value: ModeratorActor) -> ModeratorActor:
+    if not isinstance(value, ModeratorActor):
+        raise InvalidVendorCommand(field_errors={"moderator": ["Moderator actor is required."]})
     return value
 
 
@@ -133,42 +147,50 @@ class SubmitVendorForReviewCommand:
 
 @dataclass(frozen=True)
 class ApproveVendorCommand:
+    moderator: ModeratorActor
     vendor_id: uuid.UUID
     expected_version: int
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "moderator", _coerce_moderator(self.moderator))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
 
 
 @dataclass(frozen=True)
 class RejectVendorCommand:
+    moderator: ModeratorActor
     vendor_id: uuid.UUID
     expected_version: int
     reason: str
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "moderator", _coerce_moderator(self.moderator))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
 
 
 @dataclass(frozen=True)
 class SuspendVendorCommand:
+    moderator: ModeratorActor
     vendor_id: uuid.UUID
     expected_version: int
     reason: str | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "moderator", _coerce_moderator(self.moderator))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
 
 
 @dataclass(frozen=True)
 class ReinstateVendorCommand:
+    moderator: ModeratorActor
     vendor_id: uuid.UUID
     expected_version: int
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "moderator", _coerce_moderator(self.moderator))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
 
