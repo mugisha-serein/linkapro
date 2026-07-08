@@ -191,6 +191,7 @@ class ImageRepo:
         self.save_calls = []
         self.get_for_vendor_calls = []
         self.list_by_vendor_calls = []
+        self.allocate_next_order_calls = []
 
     def add(self, image):
         self.add_calls.append(image)
@@ -211,6 +212,10 @@ class ImageRepo:
         self.list_by_vendor_calls.append((vendor_id, page))
         items = [image for image in self.images.values() if image.vendor_id == vendor_id]
         return Page(items=items[: page.limit], total=len(items), limit=page.limit, offset=page.offset)
+
+    def allocate_next_order(self, vendor_id):
+        self.allocate_next_order_calls.append(vendor_id)
+        return len([image for image in self.images.values() if image.vendor_id == vendor_id])
 
 
 class PackageRepo:
@@ -555,6 +560,84 @@ def test_authorization_denial_happens_before_vendor_owned_aggregate_loads_or_wri
     assert inquiry_repo.get_for_vendor_calls == []
     assert uow.list_calls == []
     assert len(auth.calls) == 7
+
+
+def test_add_portfolio_media_loads_vendor_and_returns_stable_missing_vendor_error_before_allocation():
+    vendor_id = uuid.uuid4()
+    vendor_repo = VendorRepo()
+    image_repo = ImageRepo()
+    dispatcher = EventDispatcher()
+    handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo, dispatcher=dispatcher)
+
+    with pytest.raises(VendorResourceNotFound) as exc_info:
+        handler.add_portfolio_image(
+            AddPortfolioImageCommand(
+                actor=_actor(),
+                vendor_id=vendor_id,
+                public_id="asset",
+                secure_url="https://example.com/image.jpg",
+            )
+        )
+
+    assert exc_info.value.code == "vendor_not_found"
+    assert vendor_repo.get_by_id_calls == [vendor_id]
+    assert image_repo.allocate_next_order_calls == []
+    assert image_repo.add_calls == []
+    assert dispatcher.events == []
+
+
+def test_add_portfolio_media_policy_forbids_suspended_vendor_before_order_allocation():
+    profile = _profile(status=VendorStatus.SUSPENDED)
+    vendor_repo = VendorRepo([profile])
+    image_repo = ImageRepo()
+    dispatcher = EventDispatcher()
+    handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo, dispatcher=dispatcher)
+
+    with pytest.raises(VendorOperationForbidden) as exc_info:
+        handler.add_portfolio_image(
+            AddPortfolioImageCommand(
+                actor=_actor(),
+                vendor_id=profile.id,
+                public_id="asset",
+                secure_url="https://example.com/image.jpg",
+            )
+        )
+
+    assert exc_info.value.code == "vendor_portfolio_media_creation_forbidden"
+    assert vendor_repo.get_by_id_calls == [profile.id]
+    assert image_repo.allocate_next_order_calls == []
+    assert image_repo.add_calls == []
+    assert dispatcher.events == []
+
+
+def test_add_portfolio_media_allowed_statuses_keep_existing_order_allocation_path():
+    allowed_statuses = (
+        VendorStatus.DRAFT,
+        VendorStatus.PENDING_REVIEW,
+        VendorStatus.APPROVED,
+        VendorStatus.REJECTED,
+    )
+
+    for status in allowed_statuses:
+        profile = _profile(status=status)
+        existing = _image(profile.id, order=0)
+        vendor_repo = VendorRepo([profile])
+        image_repo = ImageRepo([existing])
+        handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo)
+
+        result = handler.add_portfolio_image(
+            AddPortfolioImageCommand(
+                actor=_actor(),
+                vendor_id=profile.id,
+                public_id="asset-new",
+                secure_url="https://example.com/new-image.jpg",
+            )
+        )
+
+        assert result.order == 1
+        assert vendor_repo.get_by_id_calls == [profile.id]
+        assert image_repo.allocate_next_order_calls == [profile.id]
+        assert len(image_repo.add_calls) == 1
 
 
 def test_expected_version_is_required_and_stale_commands_fail_before_mutation():
@@ -930,8 +1013,12 @@ def test_page_results_are_mapped_to_page_dto_and_read_port_is_mandatory():
 
     with pytest.raises(InvalidVendorCommand):
         VendorQueryHandlers(VendorRepo(), ImageRepo(), InquiryRepo(), None, auth)
-    with pytest.raises(InvalidVendorCommand):
-        VendorQueryHandlers(VendorRepo(), ImageRepo(), InquiryRepo(), read_port, None)
+    unauthenticated_query = VendorQueryHandlers(VendorRepo([profile]), ImageRepo([image]), InquiryRepo([inquiry]), read_port)
+
+    assert unauthenticated_query.get_vendor_by_user(profile.user_id).id == profile.id
+    with pytest.raises(InvalidVendorCommand) as exc_info:
+        unauthenticated_query.get_vendor(GetVendorQuery(actor=actor, vendor_id=vendor_id))
+    assert exc_info.value.field_errors == {"authorization_port": ["Vendor authorization is required."]}
 
     query = VendorQueryHandlers(VendorRepo([profile]), ImageRepo([image]), InquiryRepo([inquiry]), read_port, auth)
 

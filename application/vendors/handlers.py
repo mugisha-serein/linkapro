@@ -46,6 +46,7 @@ from .ports import (
     VendorIdempotencyPort,
     VendorReadPort,
 )
+from .portfolio_media_policy import ensure_vendor_can_add_portfolio_media
 from .queries import (
     GetVendorAnalyticsQuery,
     GetVendorDashboardSummaryQuery,
@@ -170,6 +171,8 @@ class VendorCommandHandlers:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
 
         def operation() -> PortfolioImageDTO:
+            profile = self.vendor_repo.get_by_id(cmd.vendor_id)
+            ensure_vendor_can_add_portfolio_media(profile)
             allocator = self.order_allocator or self.image_repo
             if not hasattr(allocator, "allocate_next_order"):
                 raise InvalidVendorCommand(field_errors={"order": ["Portfolio order allocation is not configured."]})
@@ -472,12 +475,10 @@ class VendorQueryHandlers:
         image_repo: IPortfolioImageRepository,
         inquiry_repo: IInquiryRepository,
         read_repo: VendorReadPort,
-        authorization_port: VendorAuthorizationPort,
+        authorization_port: VendorAuthorizationPort | None = None,
     ):
         if read_repo is None:
             raise InvalidVendorCommand(field_errors={"read_repo": ["Vendor read port is required."]})
-        if authorization_port is None:
-            raise InvalidVendorCommand(field_errors={"authorization_port": ["Vendor authorization is required."]})
         self.vendor_repo = vendor_repo
         self.image_repo = image_repo
         self.inquiry_repo = inquiry_repo
@@ -536,6 +537,8 @@ class VendorQueryHandlers:
             | ListRecentVendorActivityQuery
         ),
     ) -> None:
+        if self.authorization_port is None:
+            raise InvalidVendorCommand(field_errors={"authorization_port": ["Vendor authorization is required."]})
         self.authorization_port.assert_actor_can_access_vendor(query.actor, query.vendor_id)
 
     @staticmethod
