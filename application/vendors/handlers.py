@@ -1,21 +1,21 @@
-import uuid
-from typing import Optional, List
+from __future__ import annotations
 
-from domain.shared.utils import utc_now
-from domain.vendors.entities import (
-    VendorProfile, PortfolioImage, ServicePackage, Inquiry,
-    VendorStatus, ServiceCategory
-)
+from dataclasses import asdict, is_dataclass
+import json
+import uuid
+from typing import Callable, Iterable, Sequence
+
+from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile, VendorStatus
 from domain.vendors.inquiry_policy import ensure_vendor_can_receive_inquiry
-from domain.vendors.package_rules import validate_service_package_rules
 from domain.vendors.interfaces import (
-    IVendorProfileRepository, IPortfolioImageRepository,
-    IServicePackageRepository, IInquiryRepository, Page, PageRequest
+    IInquiryRepository,
+    IPortfolioImageRepository,
+    IServicePackageRepository,
+    IVendorProfileRepository,
+    Page,
+    PageRequest,
 )
-from domain.vendors.events import (
-    VendorSubmittedForReview, VendorApproved, VendorRejected,
-    VendorSuspended, InquiryReceived
-)
+
 from .commands import (
     ActivateServicePackageCommand,
     AddPortfolioImageCommand,
@@ -24,6 +24,7 @@ from .commands import (
     CreateVendorProfileCommand,
     DeactivateServicePackageCommand,
     DeletePortfolioImageCommand,
+    MarkInquiryReadCommand,
     ReinstateVendorCommand,
     RejectVendorCommand,
     ReorderPortfolioImagesCommand,
@@ -33,12 +34,9 @@ from .commands import (
     UpdateServicePackageCommand,
     UpdateVendorProfileCommand,
 )
-from .dtos import (
-    InquiryDTO,
-    PortfolioImageDTO,
-    ServicePackageDTO,
-    VendorProfileDTO,
-)
+from .dtos import InquiryDTO, PageDTO, PortfolioImageDTO, ServicePackageDTO, VendorProfileDTO
+from .errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
+from .ports import PortfolioReorderUnitOfWork, VendorIdempotencyPort, VendorReadPort
 
 
 class VendorCommandHandlers:
@@ -49,472 +47,425 @@ class VendorCommandHandlers:
         package_repo: IServicePackageRepository,
         inquiry_repo: IInquiryRepository,
         event_dispatcher,
+        *,
+        idempotency_port: VendorIdempotencyPort | None = None,
+        reorder_uow: PortfolioReorderUnitOfWork | None = None,
     ):
         self.vendor_repo = vendor_repo
         self.image_repo = image_repo
         self.package_repo = package_repo
         self.inquiry_repo = inquiry_repo
         self.event_dispatcher = event_dispatcher
+        self.idempotency_port = idempotency_port
+        self.reorder_uow = reorder_uow
 
     def create_profile(self, cmd: CreateVendorProfileCommand) -> VendorProfileDTO:
-        existing = self.vendor_repo.get_by_user_id(cmd.user_id)
-        if existing:
-            raise ValueError("User already has a vendor profile")
-        profile = VendorProfile(
-            id=uuid.uuid4(),
-            user_id=cmd.user_id,
-            business_name=cmd.business_name,
-            category=ServiceCategory(cmd.category),
-            description=cmd.description,
-            service_area=cmd.service_area,
-            contact_email=cmd.contact_email,
-            contact_phone=cmd.contact_phone,
-            custom_category=cmd.custom_category,
-            website=cmd.website,
-        )
-        saved = self.vendor_repo.save(profile)
-        return self._to_profile_dto(saved)
+        def operation() -> VendorProfileDTO:
+            existing = self.vendor_repo.get_by_user_id(cmd.user_id)
+            if existing:
+                raise VendorConflict("User already has a vendor profile.", code="vendor_profile_exists")
+            profile = VendorProfile.create_draft(
+                user_id=cmd.user_id,
+                business_name=cmd.business_name,
+                category=cmd.category,
+                description=cmd.description,
+                service_area=cmd.service_area,
+                contact_email=cmd.contact_email,
+                contact_phone=cmd.contact_phone,
+                custom_category=cmd.custom_category,
+                website=cmd.website,
+            )
+            saved = self.vendor_repo.add(profile)
+            self._dispatch_pending_events(profile)
+            return self._to_profile_dto(saved)
+
+        return self._run_idempotent(cmd.idempotency_key, cmd, operation)
 
     def update_profile(self, cmd: UpdateVendorProfileCommand) -> VendorProfileDTO:
-        profile = self.vendor_repo.get_by_id(cmd.vendor_id)
-        if not profile:
-            raise ValueError("Vendor not found")
-        self._reject_blank_required_profile_updates(cmd)
-        if cmd.business_name is not None: profile.business_name = cmd.business_name
-        if cmd.category is not None: profile.category = ServiceCategory(cmd.category)
-        if cmd.description is not None: profile.description = cmd.description
-        if cmd.service_area is not None: profile.service_area = cmd.service_area
-        if cmd.contact_email is not None: profile.contact_email = cmd.contact_email
-        if cmd.contact_phone is not None: profile.contact_phone = cmd.contact_phone
-        if cmd.custom_category is not None: profile.custom_category = cmd.custom_category
-        if cmd.website is not None: profile.website = cmd.website
-        saved = self.vendor_repo.save(profile)
-        return self._to_profile_dto(saved)
+        profile = self._get_vendor_or_raise(cmd.vendor_id)
+        self._assert_expected_version(profile.version, cmd.expected_version)
+        original_version = profile.version
+        updates = {
+            field_name: getattr(cmd, field_name)
+            for field_name in (
+                "business_name",
+                "category",
+                "description",
+                "service_area",
+                "contact_email",
+                "contact_phone",
+                "custom_category",
+                "website",
+            )
+            if getattr(cmd, field_name) is not None
+        }
+        profile.update_details(**updates)
+        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def submit_for_review(self, cmd: SubmitVendorForReviewCommand) -> VendorProfileDTO:
-        profile = self.vendor_repo.get_by_id(cmd.vendor_id)
-        if not profile:
-            raise ValueError("Vendor not found")
+        profile = self._get_vendor_or_raise(cmd.vendor_id)
+        self._assert_expected_version(profile.version, cmd.expected_version)
+        original_version = profile.version
         profile.submit_for_review()
-        saved = self.vendor_repo.save(profile)
-        self.event_dispatcher.dispatch(
-            VendorSubmittedForReview(vendor_id=saved.id, user_id=saved.user_id, occurred_at=utc_now())
-        )
-        return self._to_profile_dto(saved)
+        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def approve_vendor(self, cmd: ApproveVendorCommand) -> VendorProfileDTO:
-        profile = self.vendor_repo.get_by_id(cmd.vendor_id)
-        if not profile:
-            raise ValueError("Vendor not found")
+        profile = self._get_vendor_or_raise(cmd.vendor_id)
+        self._assert_expected_version(profile.version, cmd.expected_version)
+        original_version = profile.version
         profile.approve()
-        saved = self.vendor_repo.save(profile)
-        self.event_dispatcher.dispatch(VendorApproved(vendor_id=saved.id, occurred_at=utc_now()))
-        return self._to_profile_dto(saved)
+        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def reject_vendor(self, cmd: RejectVendorCommand) -> VendorProfileDTO:
-        profile = self.vendor_repo.get_by_id(cmd.vendor_id)
-        if not profile:
-            raise ValueError("Vendor not found")
+        profile = self._get_vendor_or_raise(cmd.vendor_id)
+        self._assert_expected_version(profile.version, cmd.expected_version)
+        original_version = profile.version
         profile.reject(cmd.reason)
-        saved = self.vendor_repo.save(profile)
-        self.event_dispatcher.dispatch(
-            VendorRejected(vendor_id=saved.id, reason=cmd.reason, occurred_at=utc_now())
-        )
-        return self._to_profile_dto(saved)
+        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def suspend_vendor(self, cmd: SuspendVendorCommand) -> VendorProfileDTO:
-        profile = self.vendor_repo.get_by_id(cmd.vendor_id)
-        if not profile:
-            raise ValueError("Vendor not found")
-        profile.suspend()
-        saved = self.vendor_repo.save(profile)
-        self.event_dispatcher.dispatch(VendorSuspended(vendor_id=saved.id, occurred_at=utc_now()))
-        return self._to_profile_dto(saved)
+        profile = self._get_vendor_or_raise(cmd.vendor_id)
+        self._assert_expected_version(profile.version, cmd.expected_version)
+        original_version = profile.version
+        profile.suspend(cmd.reason)
+        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def reinstate_vendor(self, cmd: ReinstateVendorCommand) -> VendorProfileDTO:
-        profile = self.vendor_repo.get_by_id(cmd.vendor_id)
-        if not profile:
-            raise ValueError("Vendor not found")
+        profile = self._get_vendor_or_raise(cmd.vendor_id)
+        self._assert_expected_version(profile.version, cmd.expected_version)
+        original_version = profile.version
         profile.reinstate()
-        saved = self.vendor_repo.save(profile)
-        return self._to_profile_dto(saved)
+        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
 
     def add_portfolio_image(self, cmd: AddPortfolioImageCommand) -> PortfolioImageDTO:
-        images = self.image_repo.list_by_vendor(cmd.vendor_id)
-        max_order = max([i.order for i in images], default=-1)
-        image = PortfolioImage(
-            id=uuid.uuid4(),
-            vendor_id=cmd.vendor_id,
-            public_id=cmd.public_id,
-            secure_url=cmd.secure_url,
-            caption=cmd.caption,
-            order=max_order + 1,
-        )
-        saved = self.image_repo.save(image)
-        return self._to_image_dto(saved)
+        def operation() -> PortfolioImageDTO:
+            image_page = self.image_repo.list_by_vendor(cmd.vendor_id, PageRequest(limit=100, offset=0))
+            max_order = max((image.order for image in image_page.items), default=-1)
+            image = PortfolioImage(
+                id=uuid.uuid4(),
+                vendor_id=cmd.vendor_id,
+                public_id=cmd.public_id,
+                secure_url=cmd.secure_url,
+                caption=cmd.caption,
+                order=max_order + 1,
+            )
+            saved = self.image_repo.add(image)
+            self._dispatch_pending_events(image)
+            return self._to_image_dto(saved)
+
+        return self._run_idempotent(cmd.idempotency_key, cmd, operation)
 
     def delete_portfolio_image(self, cmd: DeletePortfolioImageCommand) -> None:
-        image = self.image_repo.get_by_id(cmd.image_id)
-        self._assert_image_owned(image, cmd.vendor_id)
-        self.image_repo.delete(cmd.image_id, deleted_by_id=cmd.deleted_by_id)
+        image = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.image_id)
+        if not image:
+            raise VendorResourceNotFound("Image not found.")
+        self._assert_expected_version(image.version, cmd.expected_version)
+        original_version = image.version
+        image.deactivate()
+        if image.version == original_version:
+            return
+        self.image_repo.save(image, expected_version=original_version)
+        self._dispatch_pending_events(image)
 
-    def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> List[PortfolioImageDTO]:
-        images = self.image_repo.list_by_vendor(cmd.vendor_id)
-        image_map = {img.id: img for img in images}
-        requested_ids = list(cmd.image_ids_in_order)
+    def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> PageDTO[PortfolioImageDTO]:
+        if self.reorder_uow is None:
+            raise VendorOperationForbidden("Portfolio reorder requires a unit of work.")
+        page = self.reorder_uow.list_vendor_images(cmd.vendor_id, PageRequest(limit=100, offset=0))
+        image_map = {image.id: image for image in page.items}
+        requested_ids = tuple(cmd.image_ids_in_order)
         self._validate_portfolio_reorder_ids(requested_ids, image_map)
+        expected_versions = {item.resource_id: item.expected_version for item in cmd.expected_versions}
+        if set(expected_versions) != set(requested_ids):
+            raise InvalidVendorCommand(field_errors={"expected_versions": ["Expected versions must match image order."]})
+        for image_id, expected_version in expected_versions.items():
+            self._assert_expected_version(image_map[image_id].version, expected_version)
 
-        reordered = []
-        for idx, img_id in enumerate(requested_ids):
-            img = image_map[img_id]
-            img.reorder(idx)
-            saved = self.image_repo.save(img)
-            reordered.append(self._to_image_dto(saved))
-        return reordered
+        changed: list[PortfolioImage] = []
+        for index, image_id in enumerate(requested_ids):
+            image = image_map[image_id]
+            if image.order == index:
+                continue
+            image.reorder(index)
+            changed.append(image)
+
+        if changed:
+            persisted = tuple(
+                self.reorder_uow.persist_reorder(cmd.vendor_id, changed, expected_versions=expected_versions)
+            )
+            for image in changed:
+                self._dispatch_pending_events(image)
+            image_map.update({image.id: image for image in persisted})
+
+        ordered = tuple(self._to_image_dto(image_map[image_id]) for image_id in requested_ids)
+        return PageDTO(items=ordered, total=page.total, limit=page.limit, offset=page.offset, next_cursor=page.next_cursor)
 
     def create_service_package(self, cmd: CreateServicePackageCommand) -> ServicePackageDTO:
-        package = ServicePackage(
-            id=uuid.uuid4(),
-            vendor_id=cmd.vendor_id,
-            name=cmd.name,
-            description=cmd.description,
-            price=cmd.price,
-            currency=cmd.currency,
-            package_tier=cmd.package_tier,
-            approval_status="waiting_approval",
-            is_active=False,
-        )
-        validate_service_package_rules(
-            name=package.name,
-            description=package.description,
-            price=package.price,
-            package_tier=package.package_tier,
-        )
-        saved = self.package_repo.add(package)
-        return self._to_package_dto(saved)
+        def operation() -> ServicePackageDTO:
+            package = ServicePackage.create(
+                vendor_id=cmd.vendor_id,
+                name=cmd.name,
+                description=cmd.description,
+                price=cmd.price,
+                currency=cmd.currency,
+                package_tier=cmd.package_tier,
+            )
+            saved = self.package_repo.add(package)
+            self._dispatch_pending_events(package)
+            return self._to_package_dto(saved)
+
+        return self._run_idempotent(cmd.idempotency_key, cmd, operation)
 
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
-        package = self.package_repo.get_by_id(cmd.package_id)
-        self._assert_package_owned(package, cmd.vendor_id)
-        expected_version = package.version
+        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
+        self._assert_expected_version(package.version, cmd.expected_version)
+        original_version = package.version
         package.update_details(cmd.name, cmd.description, cmd.price, cmd.currency, cmd.package_tier)
-        validate_service_package_rules(
+        return self._save_if_changed(self.package_repo, package, original_version, self._to_package_dto)
+
+    def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
+        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
+        self._assert_expected_version(package.version, cmd.expected_version)
+        original_version = package.version
+        package.deactivate()
+        return self._save_if_changed(self.package_repo, package, original_version, self._to_package_dto)
+
+    def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
+        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
+        self._assert_expected_version(package.version, cmd.expected_version)
+        original_version = package.version
+        package.activate()
+        return self._save_if_changed(self.package_repo, package, original_version, self._to_package_dto)
+
+    def send_inquiry(self, cmd: SendInquiryCommand) -> InquiryDTO:
+        def operation() -> InquiryDTO:
+            profile = self.vendor_repo.get_by_id(cmd.vendor_id)
+            ensure_vendor_can_receive_inquiry(profile)
+            inquiry = Inquiry.create(
+                vendor_id=cmd.vendor_id,
+                client_name=cmd.client_name,
+                client_email=cmd.client_email,
+                client_phone=cmd.client_phone,
+                message=cmd.message,
+                event_date=cmd.event_date,
+            )
+            saved = self.inquiry_repo.add(inquiry)
+            self._dispatch_pending_events(inquiry)
+            return self._to_inquiry_dto(saved)
+
+        return self._run_idempotent(cmd.idempotency_key, cmd, operation)
+
+    def mark_inquiry_read(self, cmd: MarkInquiryReadCommand) -> InquiryDTO:
+        inquiry = self.inquiry_repo.get_for_vendor(cmd.vendor_id, cmd.inquiry_id)
+        if not inquiry:
+            raise VendorResourceNotFound("Inquiry not found.")
+        self._assert_expected_version(inquiry.version, cmd.expected_version)
+        original_version = inquiry.version
+        inquiry.mark_read()
+        return self._save_if_changed(self.inquiry_repo, inquiry, original_version, self._to_inquiry_dto)
+
+    def _get_vendor_or_raise(self, vendor_id: uuid.UUID) -> VendorProfile:
+        profile = self.vendor_repo.get_by_id(vendor_id)
+        if not profile:
+            raise VendorResourceNotFound("Vendor not found.")
+        return profile
+
+    def _get_package_or_raise(self, vendor_id: uuid.UUID, package_id: uuid.UUID) -> ServicePackage:
+        package = self.package_repo.get_for_vendor(vendor_id, package_id)
+        if not package:
+            raise VendorResourceNotFound("Package not found.")
+        return package
+
+    def _save_if_changed(self, repo, aggregate, original_version: int, to_dto: Callable):
+        if aggregate.version == original_version:
+            return to_dto(aggregate)
+        saved = repo.save(aggregate, expected_version=original_version)
+        self._dispatch_pending_events(aggregate)
+        return to_dto(saved)
+
+    def _dispatch_pending_events(self, aggregate) -> None:
+        for event in aggregate.pull_events():
+            self.event_dispatcher.dispatch(event)
+
+    @staticmethod
+    def _assert_expected_version(actual_version: int, expected_version: int) -> None:
+        if expected_version != actual_version:
+            raise VendorConflict("Vendor resource has changed.", code="vendor_version_conflict")
+
+    @staticmethod
+    def _validate_portfolio_reorder_ids(
+        requested_ids: Sequence[uuid.UUID], image_map: dict[uuid.UUID, PortfolioImage]
+    ) -> None:
+        if not requested_ids:
+            raise InvalidVendorCommand(field_errors={"image_ids_in_order": ["Portfolio image order is required."]})
+        if len(requested_ids) != len(set(requested_ids)):
+            raise InvalidVendorCommand(field_errors={"image_ids_in_order": ["Duplicate portfolio images are not allowed."]})
+        if set(requested_ids) != set(image_map.keys()):
+            raise VendorResourceNotFound("Image not found.")
+
+    def _run_idempotent(self, key: str | None, cmd, operation: Callable):
+        if key is None:
+            return operation()
+        if self.idempotency_port is None:
+            raise InvalidVendorCommand(field_errors={"idempotency_key": ["Idempotency storage is required."]})
+        fingerprint = self._payload_fingerprint(cmd)
+        existing = self.idempotency_port.get(key)
+        if existing is not None:
+            if existing.payload_fingerprint != fingerprint:
+                raise VendorConflict("Idempotency key was already used with a different payload.")
+            return existing.result
+        result = operation()
+        self.idempotency_port.store(key, payload_fingerprint=fingerprint, result=result)
+        return result
+
+    @staticmethod
+    def _payload_fingerprint(cmd) -> str:
+        payload = asdict(cmd) if is_dataclass(cmd) else dict(cmd)
+        payload.pop("idempotency_key", None)
+        return json.dumps(payload, sort_keys=True, default=str)
+
+    @staticmethod
+    def _to_profile_dto(profile: VendorProfile) -> VendorProfileDTO:
+        return VendorProfileDTO(
+            id=profile.id,
+            user_id=profile.user_id,
+            business_name=profile.business_name,
+            category=profile.category.value,
+            description=profile.description,
+            service_area=profile.service_area,
+            contact_email=profile.contact_email,
+            contact_phone=profile.contact_phone,
+            custom_category=profile.custom_category,
+            website=profile.website,
+            status=profile.status.value,
+            profile_image_url=profile.profile_image_url,
+            cover_image_url=profile.cover_image_url,
+            submitted_at=profile.submitted_at,
+            approved_at=profile.approved_at,
+            rejected_at=profile.rejected_at,
+            rejection_reason=profile.rejection_reason,
+            version=profile.version,
+        )
+
+    @staticmethod
+    def _to_image_dto(image: PortfolioImage) -> PortfolioImageDTO:
+        return PortfolioImageDTO(
+            id=image.id,
+            vendor_id=image.vendor_id,
+            secure_url=image.secure_url,
+            caption=image.caption,
+            order=image.order,
+            media_type=image.media_type,
+            upload_status=image.upload_status,
+            quality_status=image.quality_status,
+            visibility_status=image.visibility_status,
+            upload_error=image.upload_error,
+            failure_reason=image.failure_reason,
+            rejection_reason=image.rejection_reason,
+            original_filename=image.original_filename,
+            mime_type=image.mime_type,
+            file_size=image.file_size,
+            local_preview_url=image.local_preview_url,
+            cloudinary_public_id=image.cloudinary_public_id,
+            cloudinary_secure_url=image.cloudinary_secure_url,
+            width=image.width,
+            height=image.height,
+            duration_seconds=image.duration_seconds,
+            analyzer_score=image.analyzer_score,
+            analyzer_summary=image.analyzer_summary,
+            is_active=image.is_active,
+            is_deleted=image.is_deleted,
+            deleted_at=image.deleted_at,
+            version=image.version,
+        )
+
+    @staticmethod
+    def _to_package_dto(package: ServicePackage) -> ServicePackageDTO:
+        return ServicePackageDTO(
+            id=package.id,
+            vendor_id=package.vendor_id,
             name=package.name,
             description=package.description,
             price=package.price,
+            currency=package.currency,
             package_tier=package.package_tier,
-        )
-        if package.version == expected_version:
-            return self._to_package_dto(package)
-        saved = self.package_repo.save(package, expected_version=expected_version)
-        return self._to_package_dto(saved)
-
-    def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
-        package = self.package_repo.get_by_id(cmd.package_id)
-        self._assert_package_owned(package, cmd.vendor_id)
-        deleted = self.package_repo.delete(cmd.package_id, deleted_by_id=cmd.deleted_by_id)
-        if not deleted:
-            raise ValueError("Package not found")
-        return self._to_package_dto(deleted)
-
-    def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
-        package = self.package_repo.get_by_id(cmd.package_id)
-        self._assert_package_owned(package, cmd.vendor_id)
-        expected_version = package.version
-        package.activate()
-        if package.version == expected_version:
-            return self._to_package_dto(package)
-        saved = self.package_repo.save(package, expected_version=expected_version)
-        return self._to_package_dto(saved)
-
-    def send_inquiry(self, cmd: SendInquiryCommand) -> InquiryDTO:
-        profile = self.vendor_repo.get_by_id(cmd.vendor_id)
-        ensure_vendor_can_receive_inquiry(profile)
-        inquiry = Inquiry(
-            id=uuid.uuid4(),
-            vendor_id=cmd.vendor_id,
-            client_name=cmd.client_name,
-            client_email=cmd.client_email,
-            client_phone=cmd.client_phone,
-            message=cmd.message,
-            event_date=cmd.event_date,
-        )
-        saved = self.inquiry_repo.save(inquiry)
-        self.event_dispatcher.dispatch(
-            InquiryReceived(inquiry_id=saved.id, vendor_id=saved.vendor_id, occurred_at=utc_now())
-        )
-        return self._to_inquiry_dto(saved)
-
-    @staticmethod
-    def _reject_blank_required_profile_updates(cmd: UpdateVendorProfileCommand) -> None:
-        required_fields = (
-            "business_name",
-            "category",
-            "description",
-            "service_area",
-            "contact_email",
-            "contact_phone",
-        )
-        blank_fields = [
-            field_name
-            for field_name in required_fields
-            if getattr(cmd, field_name) is not None and not str(getattr(cmd, field_name)).strip()
-        ]
-        if blank_fields:
-            raise ValueError(f"Required vendor profile fields cannot be blank: {', '.join(blank_fields)}")
-
-    @staticmethod
-    def _validate_portfolio_reorder_ids(requested_ids: List[uuid.UUID], image_map: dict[uuid.UUID, PortfolioImage]) -> None:
-        if not requested_ids:
-            raise ValueError("Portfolio image order is required")
-        if len(requested_ids) != len(set(requested_ids)):
-            raise ValueError("Portfolio image order contains duplicate images")
-        if set(requested_ids) != set(image_map.keys()):
-            raise ValueError("Portfolio image order must include every image belonging to this vendor")
-
-    @staticmethod
-    def _assert_package_owned(package: ServicePackage | None, vendor_id: uuid.UUID | None) -> None:
-        if not package or (vendor_id is not None and package.vendor_id != vendor_id):
-            raise ValueError("Package not found")
-
-    @staticmethod
-    def _assert_image_owned(image: PortfolioImage | None, vendor_id: uuid.UUID | None) -> None:
-        if not image or (vendor_id is not None and image.vendor_id != vendor_id):
-            raise ValueError("Image not found")
-
-    # DTO conversion static methods
-    @staticmethod
-    def _to_profile_dto(p: VendorProfile) -> VendorProfileDTO:
-        return VendorProfileDTO(
-            id=p.id, user_id=p.user_id, business_name=p.business_name, category=p.category.value,
-            description=p.description, service_area=p.service_area, contact_email=p.contact_email,
-            contact_phone=p.contact_phone, custom_category=p.custom_category, website=p.website, status=p.status.value,
-            profile_image_url=p.profile_image_url, cover_image_url=p.cover_image_url,
-            submitted_at=p.submitted_at, approved_at=p.approved_at, rejected_at=p.rejected_at,
-            rejection_reason=p.rejection_reason
+            approval_status=package.approval_status,
+            rejection_reason=package.rejection_reason,
+            is_active=package.is_active,
+            is_deleted=package.is_deleted,
+            deleted_at=package.deleted_at,
+            version=package.version,
         )
 
     @staticmethod
-    def _to_image_dto(i: PortfolioImage) -> PortfolioImageDTO:
-        return PortfolioImageDTO(id=i.id, vendor_id=i.vendor_id, secure_url=i.secure_url,
-                                 caption=i.caption, order=i.order,
-                                 media_type=i.media_type,
-                                 upload_status=i.upload_status,
-                                 quality_status=i.quality_status,
-                                 visibility_status=i.visibility_status,
-                                 upload_error=i.upload_error,
-                                 failure_reason=i.failure_reason,
-                                 rejection_reason=i.rejection_reason,
-                                 original_filename=i.original_filename,
-                                 mime_type=i.mime_type,
-                                 file_size=i.file_size,
-                                 local_preview_url=i.local_preview_url,
-                                 cloudinary_public_id=i.cloudinary_public_id,
-                                 cloudinary_secure_url=i.cloudinary_secure_url,
-                                 width=i.width,
-                                 height=i.height,
-                                 duration_seconds=i.duration_seconds,
-                                 analyzer_score=i.analyzer_score,
-                                 analyzer_summary=i.analyzer_summary,
-                                 is_active=i.is_active,
-                                 is_deleted=i.is_deleted,
-                                 deleted_at=i.deleted_at)
-
-    @staticmethod
-    def _to_package_dto(p: ServicePackage) -> ServicePackageDTO:
-        return ServicePackageDTO(id=p.id, vendor_id=p.vendor_id, name=p.name,
-                                 description=p.description, price=p.price, currency=p.currency,
-                                 package_tier=p.package_tier, approval_status=p.approval_status,
-                                 rejection_reason=p.rejection_reason, is_active=p.is_active,
-                                 is_deleted=p.is_deleted, deleted_at=p.deleted_at)
-
-    @staticmethod
-    def _to_inquiry_dto(i: Inquiry) -> InquiryDTO:
-        return InquiryDTO(id=i.id, vendor_id=i.vendor_id, client_name=i.client_name,
-                          client_email=i.client_email, client_phone=i.client_phone,
-                          message=i.message, event_date=i.event_date, is_read=i.is_read,
-                          created_at=i.created_at)
+    def _to_inquiry_dto(inquiry: Inquiry) -> InquiryDTO:
+        return InquiryDTO(
+            id=inquiry.id,
+            vendor_id=inquiry.vendor_id,
+            client_name=inquiry.client_name,
+            client_email=inquiry.client_email,
+            client_phone=inquiry.client_phone,
+            message=inquiry.message,
+            event_date=inquiry.event_date,
+            is_read=inquiry.is_read,
+            created_at=inquiry.created_at,
+            version=inquiry.version,
+        )
 
 
 class VendorQueryHandlers:
-    def __init__(self, vendor_repo: IVendorProfileRepository,
-                 image_repo: IPortfolioImageRepository,
-                 package_repo: IServicePackageRepository,
-                 inquiry_repo: IInquiryRepository,
-                 read_repo=None):
+    def __init__(
+        self,
+        vendor_repo: IVendorProfileRepository,
+        image_repo: IPortfolioImageRepository,
+        inquiry_repo: IInquiryRepository,
+        read_repo: VendorReadPort,
+    ):
+        if read_repo is None:
+            raise InvalidVendorCommand(field_errors={"read_repo": ["Vendor read port is required."]})
         self.vendor_repo = vendor_repo
         self.image_repo = image_repo
-        self.package_repo = package_repo
         self.inquiry_repo = inquiry_repo
         self.read_repo = read_repo
 
-    def get_vendor(self, vendor_id: uuid.UUID) -> Optional[VendorProfileDTO]:
-        p = self.vendor_repo.get_by_id(vendor_id)
-        return VendorCommandHandlers._to_profile_dto(p) if p else None
+    def get_vendor(self, vendor_id: uuid.UUID) -> VendorProfileDTO | None:
+        profile = self.vendor_repo.get_by_id(vendor_id)
+        return VendorCommandHandlers._to_profile_dto(profile) if profile else None
 
-    def get_vendor_by_user(self, user_id: uuid.UUID) -> Optional[VendorProfileDTO]:
-        p = self.vendor_repo.get_by_user_id(user_id)
-        return VendorCommandHandlers._to_profile_dto(p) if p else None
+    def get_vendor_by_user(self, user_id: uuid.UUID) -> VendorProfileDTO | None:
+        profile = self.vendor_repo.get_by_user_id(user_id)
+        return VendorCommandHandlers._to_profile_dto(profile) if profile else None
 
-    def list_pending_approvals(self) -> List[VendorProfileDTO]:
-        profiles = self.vendor_repo.list_by_status(VendorStatus.PENDING_REVIEW)
-        return [VendorCommandHandlers._to_profile_dto(p) for p in profiles]
+    def list_pending_approvals(self, page: PageRequest | None = None) -> PageDTO[VendorProfileDTO]:
+        requested_page = page or PageRequest()
+        profiles = self.vendor_repo.list_by_status(VendorStatus.PENDING_REVIEW, requested_page)
+        return self._map_page(profiles, VendorCommandHandlers._to_profile_dto)
 
-    def list_portfolio_images(self, vendor_id: uuid.UUID) -> List[PortfolioImageDTO]:
-        images = self.image_repo.list_by_vendor(vendor_id)
-        return [VendorCommandHandlers._to_image_dto(i) for i in images]
+    def list_portfolio_images(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> PageDTO[PortfolioImageDTO]:
+        images = self.image_repo.list_by_vendor(vendor_id, page or PageRequest())
+        return self._map_page(images, VendorCommandHandlers._to_image_dto)
 
-    def list_service_packages(self, vendor_id: uuid.UUID, page: PageRequest | None = None):
-        page = page or PageRequest()
-        if self.read_repo is not None:
-            return self.read_repo.list_service_packages(vendor_id, page)
-        packages = self.package_repo.list_by_vendor(vendor_id, page)
-        if hasattr(packages, "items"):
-            return Page(
-                items=[VendorCommandHandlers._to_package_dto(p) for p in packages.items],
-                total=packages.total,
-                limit=packages.limit,
-                offset=packages.offset,
-                next_cursor=packages.next_cursor,
-            )
-        items = [VendorCommandHandlers._to_package_dto(p) for p in packages[: page.limit]]
-        return Page(items=items, total=len(packages), limit=page.limit, offset=page.offset)
+    def list_service_packages(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> PageDTO[ServicePackageDTO]:
+        return self.read_repo.list_service_packages(vendor_id, page or PageRequest())
 
-    def list_inquiries(self, vendor_id: uuid.UUID) -> List[InquiryDTO]:
-        inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
-        return [VendorCommandHandlers._to_inquiry_dto(i) for i in inquiries]
+    def list_inquiries(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> PageDTO[InquiryDTO]:
+        inquiries = self.inquiry_repo.list_by_vendor(vendor_id, page or PageRequest())
+        return self._map_page(inquiries, VendorCommandHandlers._to_inquiry_dto)
 
     def get_dashboard_summary(self, vendor_id: uuid.UUID) -> dict:
-        metrics = self._vendor_metrics(vendor_id)
-        return {
-            "profile_score": metrics["profile_completion"],
-            "total_views": 0,
-            "planner_requests": metrics["total_inquiries"],
-            "unread_inquiries": metrics["unread_inquiries"],
-            "active_packages": metrics["active_packages"],
-            "portfolio_count": metrics["portfolio_count"],
-            "account_status": metrics["account_status"],
-            "total_packages": metrics["total_packages"],
-            "pending_packages": metrics["pending_packages"],
-        }
+        return self.read_repo.dashboard_summary(vendor_id)
 
     def get_analytics(self, vendor_id: uuid.UUID) -> dict:
-        metrics = self._vendor_metrics(vendor_id)
-        return {
-            "total_views": 0,
-            "views_trend": 0,
-            "total_inquiries": metrics["total_inquiries"],
-            "inquiries_mtd": metrics["inquiries_mtd"],
-            "unresponded_inquiries": metrics["unread_inquiries"],
-            "avg_response_time_hours": None,
-            "conversion_rate": None,
-            "earnings_mtd": "0",
-            "pending_payments": "0",
-            "profile_completion": metrics["profile_completion"],
-            "active_packages": metrics["active_packages"],
-            "portfolio_count": metrics["portfolio_count"],
-            "account_status": metrics["account_status"],
-            "service_area": metrics["service_area"],
-            "total_packages": metrics["total_packages"],
-            "pending_packages": metrics["pending_packages"],
-            "approved_packages": metrics["approved_packages"],
-            "rejected_packages": metrics["rejected_packages"],
-            "read_inquiries": metrics["read_inquiries"],
-            "response_rate": metrics["response_rate"],
-            "unavailable_metrics": [
-                "total_views",
-                "views_trend",
-                "avg_response_time_hours",
-                "conversion_rate",
-                "earnings_mtd",
-                "pending_payments",
-            ],
-        }
+        return self.read_repo.analytics(vendor_id)
 
-    def get_recent_activity(self, vendor_id: uuid.UUID, limit: int = 10) -> List[dict]:
-        inquiry_page = self.inquiry_repo.list_by_vendor(vendor_id)
-        inquiry_items = inquiry_page.items if hasattr(inquiry_page, "items") else inquiry_page
-        inquiries = sorted(
-            inquiry_items,
-            key=lambda inquiry: inquiry.created_at,
-            reverse=True,
-        )[:limit]
-
-        activity = []
-        for inquiry in inquiries:
-            activity.append(
-                {
-                    "id": str(inquiry.id),
-                    "type": "inquiry_received",
-                    "title": f"New inquiry from {inquiry.client_name}",
-                    "description": inquiry.message[:120],
-                    "timestamp": inquiry.created_at.isoformat(),
-                    "metadata": {"is_read": inquiry.is_read},
-                }
-            )
-        return activity
-
-    def _vendor_metrics(self, vendor_id: uuid.UUID) -> dict:
-        if self.read_repo is not None:
-            return self.read_repo.vendor_metrics(vendor_id)
-
-        profile = self.vendor_repo.get_by_id(vendor_id)
-        inquiries = self.inquiry_repo.list_by_vendor(vendor_id)
-        package_page = self.package_repo.list_by_vendor(vendor_id, PageRequest(limit=100, offset=0))
-        packages = package_page.items if hasattr(package_page, "items") else package_page
-        images = self.image_repo.list_by_vendor(vendor_id)
-        inquiries = inquiries.items if hasattr(inquiries, "items") else inquiries
-        images = images.items if hasattr(images, "items") else images
-        now = utc_now()
-
-        total_inquiries = len(inquiries)
-        unread_inquiries = sum(1 for inquiry in inquiries if not inquiry.is_read)
-        read_inquiries = total_inquiries - unread_inquiries
-        inquiries_mtd = sum(
-            1
-            for inquiry in inquiries
-            if inquiry.created_at and inquiry.created_at.year == now.year and inquiry.created_at.month == now.month
-        )
-        active_packages = sum(
-            1 for package in packages if package.is_active and package.approval_status == "approved"
-        )
-        approved_packages = sum(1 for package in packages if package.approval_status == "approved")
-        pending_packages = sum(1 for package in packages if package.approval_status == "waiting_approval")
-        rejected_packages = sum(1 for package in packages if package.approval_status == "rejected")
-        response_rate = round((read_inquiries / total_inquiries) * 100) if total_inquiries else 0
-
-        return {
-            "profile_completion": self._profile_completion_score(profile, images, packages),
-            "total_inquiries": total_inquiries,
-            "inquiries_mtd": inquiries_mtd,
-            "unread_inquiries": unread_inquiries,
-            "read_inquiries": read_inquiries,
-            "response_rate": response_rate,
-            "total_packages": len(packages),
-            "active_packages": active_packages,
-            "approved_packages": approved_packages,
-            "pending_packages": pending_packages,
-            "rejected_packages": rejected_packages,
-            "portfolio_count": len(images),
-            "account_status": profile.status.value if profile else "draft",
-            "service_area": profile.service_area if profile else "",
-        }
+    def get_recent_activity(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> PageDTO[dict]:
+        return self.read_repo.recent_activity(vendor_id, page or PageRequest(limit=10, offset=0))
 
     @staticmethod
-    def _profile_completion_score(profile, images, packages) -> int:
-        if not profile:
-            return 0
-        fields = [
-            profile.business_name,
-            profile.description,
-            profile.service_area,
-            profile.contact_email,
-            profile.contact_phone,
-        ]
-        filled = sum(1 for value in fields if value)
-        if images:
-            filled += 1
-        if packages:
-            filled += 1
-        total = len(fields) + 2
-        return round((filled / total) * 100)
+    def _map_page(page: Page, mapper: Callable) -> PageDTO:
+        return PageDTO(
+            items=tuple(mapper(item) for item in page.items),
+            total=page.total,
+            limit=page.limit,
+            offset=page.offset,
+            next_cursor=page.next_cursor,
+        )

@@ -1,8 +1,22 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, List
+from typing import Generic, Optional, TypeVar
 import uuid
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class PageDTO(Generic[T]):
+    items: tuple[T, ...]
+    total: int
+    limit: int
+    offset: int
+    next_cursor: str | None = None
+
 
 @dataclass(frozen=True)
 class VendorProfileDTO:
@@ -23,6 +37,8 @@ class VendorProfileDTO:
     approved_at: Optional[datetime]
     rejected_at: Optional[datetime]
     rejection_reason: Optional[str]
+    version: int
+
 
 @dataclass(frozen=True)
 class PortfolioImageDTO:
@@ -31,10 +47,11 @@ class PortfolioImageDTO:
     secure_url: str
     caption: Optional[str]
     order: int
-    media_type: str = "image"
-    upload_status: str = "uploaded"
-    quality_status: str = "passed"
-    visibility_status: str = "approved"
+    media_type: str
+    upload_status: str
+    quality_status: str
+    visibility_status: str
+    is_active: bool
     upload_error: Optional[str] = None
     failure_reason: Optional[str] = None
     rejection_reason: Optional[str] = None
@@ -49,9 +66,10 @@ class PortfolioImageDTO:
     duration_seconds: Optional[int] = None
     analyzer_score: Optional[int] = None
     analyzer_summary: Optional[str] = None
-    is_active: bool = True
     is_deleted: bool = False
     deleted_at: Optional[datetime] = None
+    version: int = 0
+
 
 @dataclass(frozen=True)
 class ServicePackageDTO:
@@ -65,8 +83,10 @@ class ServicePackageDTO:
     approval_status: str
     rejection_reason: Optional[str]
     is_active: bool
-    is_deleted: bool = False
-    deleted_at: Optional[datetime] = None
+    is_deleted: bool
+    deleted_at: Optional[datetime]
+    version: int
+
 
 @dataclass(frozen=True)
 class InquiryDTO:
@@ -76,6 +96,7 @@ class InquiryDTO:
     client_email: str
     client_phone: Optional[str]
     message: str
-    event_date: Optional[datetime]
+    event_date: Optional[date]
     is_read: bool
     created_at: datetime
+    version: int
