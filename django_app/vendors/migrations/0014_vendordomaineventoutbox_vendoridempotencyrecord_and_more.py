@@ -41,10 +41,10 @@ def backfill_vendor_lifecycle_contracts(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-    # PostgreSQL cannot create the partial unique index while trigger events from
-    # the data-cleanup UPDATEs are still pending in the same transaction. Run
-    # the migration non-atomically, while keeping each cleanup step atomic, so
-    # its transaction commits before the constraint/index DDL executes.
+    # PostgreSQL cannot create the partial unique index in this migration while
+    # data-cleanup UPDATE statements still have pending FK trigger events in the
+    # same transaction. Run data-cleanup operations in their own committed
+    # transactions, then execute the constraint/index DDL afterwards.
     atomic = False
 
     dependencies = [
@@ -103,16 +103,8 @@ class Migration(migrations.Migration):
             name='version',
             field=models.PositiveIntegerField(default=0),
         ),
-        migrations.RunPython(
-            backfill_vendor_lifecycle_contracts,
-            migrations.RunPython.noop,
-            atomic=True,
-        ),
-        migrations.RunPython(
-            normalize_active_portfolio_orders,
-            migrations.RunPython.noop,
-            atomic=True,
-        ),
+        migrations.RunPython(backfill_vendor_lifecycle_contracts, migrations.RunPython.noop, atomic=True),
+        migrations.RunPython(normalize_active_portfolio_orders, migrations.RunPython.noop, atomic=True),
         migrations.AddConstraint(
             model_name='portfolioimage',
             constraint=models.UniqueConstraint(condition=models.Q(('is_active', True), ('is_deleted', False)), fields=('vendor', 'order'), name='vendors_portfolio_active_order_unique'),
