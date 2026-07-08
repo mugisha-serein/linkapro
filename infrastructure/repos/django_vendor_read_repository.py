@@ -5,8 +5,8 @@ import uuid
 from django.db.models import Count, Q
 from django.utils import timezone
 
-from application.vendors.dtos import ServicePackageDTO
-from domain.vendors.interfaces import Page, PageRequest
+from application.vendors.dtos import PageDTO, ServicePackageDTO
+from domain.vendors.interfaces import PageRequest
 from django_app.vendors.models import (
     Inquiry,
     PortfolioImage,
@@ -16,7 +16,7 @@ from django_app.vendors.models import (
 
 
 class DjangoVendorReadRepository:
-    def list_service_packages(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> Page[ServicePackageDTO]:
+    def list_service_packages(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> PageDTO[ServicePackageDTO]:
         page = page or PageRequest()
         queryset = (
             ServicePackage.objects.filter(vendor_id=vendor_id)
@@ -34,16 +34,50 @@ class DjangoVendorReadRepository:
                 "is_active",
                 "is_deleted",
                 "deleted_at",
+                "version",
             )
         )
         total = queryset.count()
         rows = list(queryset[page.offset : page.offset + page.limit])
-        return Page(
-            items=[ServicePackageDTO(**row) for row in rows],
+        return PageDTO(
+            items=tuple(ServicePackageDTO(**row) for row in rows),
             total=total,
             limit=page.limit,
             offset=page.offset,
         )
+
+    def dashboard_summary(self, vendor_id: uuid.UUID) -> dict:
+        return self.vendor_metrics(vendor_id)
+
+    def analytics(self, vendor_id: uuid.UUID) -> dict:
+        metrics = self.vendor_metrics(vendor_id)
+        total = metrics["total_inquiries"]
+        read = metrics["read_inquiries"]
+        return {
+            **metrics,
+            "avg_response_time_hours": None,
+            "conversion_rate": None,
+            "response_rate": round((read / total) * 100, 2) if total else 0,
+            "unavailable_metrics": ["avg_response_time_hours", "conversion_rate"],
+        }
+
+    def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> PageDTO[dict]:
+        page = page or PageRequest(limit=10, offset=0)
+        inquiry_qs = Inquiry.objects.filter(vendor_id=vendor_id).order_by("-created_at", "id").values(
+            "id", "created_at", "client_name", "is_read"
+        )
+        total = inquiry_qs.count()
+        rows = list(inquiry_qs[page.offset : page.offset + page.limit])
+        items = tuple(
+            {
+                "id": str(row["id"]),
+                "type": "inquiry_read" if row["is_read"] else "inquiry_received",
+                "message": f"Inquiry from {row['client_name']}",
+                "created_at": row["created_at"].isoformat(),
+            }
+            for row in rows
+        )
+        return PageDTO(items=items, total=total, limit=page.limit, offset=page.offset)
 
     def vendor_metrics(self, vendor_id: uuid.UUID) -> dict:
         profile = (

@@ -1,16 +1,31 @@
 import uuid
-from typing import Optional, List
+from typing import Optional
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
+from django.db.models import F
 
+from domain.vendors.errors import ConcurrentVendorUpdate
 from domain.vendors.entities import Inquiry as DomainInquiry
-from domain.vendors.interfaces import IInquiryRepository
+from domain.vendors.interfaces import IInquiryRepository, Page, PageRequest
 from django_app.vendors.models import Inquiry as DjangoInquiry, VendorProfile as DjangoVendor
 from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 
 class DjangoInquiryRepository(IInquiryRepository):
     def add(self, domain: DomainInquiry) -> DomainInquiry:
-        return self.save(domain)
+        obj = DjangoInquiry.objects.create(
+            id=domain.id,
+            vendor=self._get_vendor(domain.vendor_id),
+            client_name=domain.client_name,
+            client_email=domain.client_email,
+            client_phone=domain.client_phone,
+            message=domain.message,
+            event_date=domain.event_date,
+            is_read=domain.is_read,
+            version=domain.version,
+            created_at=domain.created_at,
+        )
+        return self._to_domain(obj)
 
     def get_by_id(self, inquiry_id: uuid.UUID) -> Optional[DomainInquiry]:
         try:
@@ -26,24 +41,32 @@ class DjangoInquiryRepository(IInquiryRepository):
         except ObjectDoesNotExist:
             return None
 
-    def list_by_vendor(self, vendor_id: uuid.UUID) -> List[DomainInquiry]:
-        objs = DjangoInquiry.objects.filter(vendor_id=vendor_id).order_by("-created_at")
-        return [self._to_domain(o) for o in objs]
+    def list_by_vendor(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> Page[DomainInquiry]:
+        page = page or PageRequest()
+        queryset = DjangoInquiry.objects.filter(vendor_id=vendor_id).order_by("-created_at", "id")
+        total = queryset.count()
+        objs = list(queryset[page.offset : page.offset + page.limit])
+        return Page(items=[self._to_domain(o) for o in objs], total=total, limit=page.limit, offset=page.offset)
 
-    def save(self, domain: DomainInquiry) -> DomainInquiry:
-        try:
-            obj = DjangoInquiry.objects.get(id=domain.id)
-        except DjangoInquiry.DoesNotExist:
-            obj = DjangoInquiry(id=domain.id)
-
-        obj.vendor = self._get_vendor(domain.vendor_id)
-        obj.client_name = domain.client_name
-        obj.client_email = domain.client_email
-        obj.client_phone = domain.client_phone
-        obj.message = domain.message
-        obj.event_date = domain.event_date
-        obj.is_read = domain.is_read
-        obj.save()
+    def save(self, domain: DomainInquiry, *, expected_version: int) -> DomainInquiry:
+        self._get_vendor(domain.vendor_id)
+        with transaction.atomic():
+            updated = DjangoInquiry.objects.filter(id=domain.id, version=expected_version).update(
+                vendor_id=domain.vendor_id,
+                client_name=domain.client_name,
+                client_email=domain.client_email,
+                client_phone=domain.client_phone,
+                message=domain.message,
+                event_date=domain.event_date,
+                is_read=domain.is_read,
+                version=F("version") + 1,
+            )
+            if updated == 0:
+                raise ConcurrentVendorUpdate(
+                    "Inquiry was updated by another request.",
+                    field_errors={"version": ["Inquiry was updated by another request."]},
+                )
+            obj = DjangoInquiry.objects.select_related("vendor").get(id=domain.id)
         return self._to_domain(obj)
 
     def delete(self, inquiry_id: uuid.UUID) -> None:
@@ -68,5 +91,6 @@ class DjangoInquiryRepository(IInquiryRepository):
             message=model.message,
             event_date=model.event_date,
             is_read=model.is_read,
+            version=model.version,
             created_at=model.created_at,
         )
