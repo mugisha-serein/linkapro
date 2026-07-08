@@ -874,6 +874,7 @@ def test_idempotency_key_is_trimmed_and_limited_to_200_characters():
     )
     inquiry = SendInquiryCommand(
         vendor_id=vendor_id,
+        requester_id=uuid.uuid4(),
         client_name="Planner",
         client_email="planner@example.com",
         message="Can you support my event?",
@@ -955,6 +956,7 @@ def test_send_inquiry_command_requires_nonblank_idempotency_key():
     with pytest.raises(TypeError):
         SendInquiryCommand(
             vendor_id=uuid.uuid4(),
+            requester_id=uuid.uuid4(),
             client_name="Planner",
             client_email="planner@example.com",
             message="Can you support my event?",
@@ -963,6 +965,7 @@ def test_send_inquiry_command_requires_nonblank_idempotency_key():
     with pytest.raises(InvalidVendorCommand) as none_exc:
         SendInquiryCommand(
             vendor_id=uuid.uuid4(),
+            requester_id=uuid.uuid4(),
             client_name="Planner",
             client_email="planner@example.com",
             message="Can you support my event?",
@@ -972,6 +975,7 @@ def test_send_inquiry_command_requires_nonblank_idempotency_key():
     with pytest.raises(InvalidVendorCommand) as blank_exc:
         SendInquiryCommand(
             vendor_id=uuid.uuid4(),
+            requester_id=uuid.uuid4(),
             client_name="Planner",
             client_email="planner@example.com",
             message="Can you support my event?",
@@ -980,6 +984,33 @@ def test_send_inquiry_command_requires_nonblank_idempotency_key():
 
     assert none_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
     assert blank_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
+
+
+def test_send_inquiry_command_requires_requester_identifier():
+    requester_field = next(field for field in fields(SendInquiryCommand) if field.name == "requester_id")
+
+    assert requester_field.default is MISSING
+
+    with pytest.raises(TypeError):
+        SendInquiryCommand(
+            vendor_id=uuid.uuid4(),
+            client_name="Planner",
+            client_email="planner@example.com",
+            message="Can you support my event?",
+            idempotency_key="send-inquiry",
+        )
+
+    with pytest.raises(InvalidVendorCommand) as exc_info:
+        SendInquiryCommand(
+            vendor_id=uuid.uuid4(),
+            requester_id=None,
+            client_name="Planner",
+            client_email="planner@example.com",
+            message="Can you support my event?",
+            idempotency_key="send-inquiry",
+        )
+
+    assert exc_info.value.field_errors == {"requester_id": ["Must be a valid UUID."]}
 
 
 def test_send_inquiry_always_requires_idempotency_storage():
@@ -1000,6 +1031,7 @@ def test_send_inquiry_always_requires_idempotency_storage():
         handler.send_inquiry(
             SendInquiryCommand(
                 vendor_id=vendor_id,
+                requester_id=uuid.uuid4(),
                 client_name="Planner",
                 client_email="planner@example.com",
                 message="Can you support my event?",
@@ -1050,6 +1082,7 @@ def test_oversized_idempotency_key_raises_stable_field_error_after_trimming():
     with pytest.raises(InvalidVendorCommand) as inquiry_exc:
         SendInquiryCommand(
             vendor_id=vendor_id,
+            requester_id=uuid.uuid4(),
             client_name="Planner",
             client_email="planner@example.com",
             message="Can you support my event?",
@@ -1490,6 +1523,7 @@ def test_service_package_update_uses_owned_lookup_and_single_domain_path():
 
 def test_create_service_package_and_inquiry_use_factories_add_and_domain_events():
     vendor_id = uuid.uuid4()
+    requester_id = uuid.uuid4()
     profile = _profile(status=VendorStatus.APPROVED)
     profile.id = vendor_id
     vendor_repo = VendorRepo([profile])
@@ -1497,13 +1531,14 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
     inquiry_repo = InquiryRepo()
     dispatcher = EventDispatcher()
     aggregate_uow = AggregateUow()
+    idempotency_port = IdempotencyPort()
     handler = _handlers(
         vendor_repo=vendor_repo,
         package_repo=package_repo,
         inquiry_repo=inquiry_repo,
         dispatcher=dispatcher,
         aggregate_uow=aggregate_uow,
-        idempotency_port=IdempotencyPort(),
+        idempotency_port=idempotency_port,
     )
 
     package_result = handler.create_service_package(
@@ -1519,6 +1554,7 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
     inquiry_result = handler.send_inquiry(
         SendInquiryCommand(
             vendor_id=vendor_id,
+            requester_id=requester_id,
             client_name="Planner",
             client_email="planner@example.com",
             message="Can you support my event?",
@@ -1534,6 +1570,11 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
     assert inquiry_result.event_date == date.today() + timedelta(days=40)
     assert dispatcher.events == []
     assert [type(event) for event in aggregate_uow.events] == [ServicePackageCreated, InquiryReceived]
+    inquiry_executions = [
+        execution for execution in idempotency_port.executions if execution[0] == "vendor_inquiry.send"
+    ]
+    assert [execution[1] for execution in inquiry_executions] == [requester_id]
+    assert requester_id != vendor_id
 
 
 def test_create_service_package_loads_vendor_and_returns_stable_missing_vendor_error():
@@ -1614,6 +1655,7 @@ def test_inquiry_command_rejects_datetime_event_date():
     with pytest.raises(InvalidVendorCommand):
         SendInquiryCommand(
             vendor_id=uuid.uuid4(),
+            requester_id=uuid.uuid4(),
             client_name="Planner",
             client_email="planner@example.com",
             message="Can you support my event?",

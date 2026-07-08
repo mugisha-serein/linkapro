@@ -320,6 +320,7 @@ class ActivateServicePackageCommand:
 @dataclass(frozen=True)
 class SendInquiryCommand:
     vendor_id: uuid.UUID
+    requester_id: uuid.UUID
     client_name: str
     client_email: str
     message: str
@@ -329,6 +330,7 @@ class SendInquiryCommand:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
+        object.__setattr__(self, "requester_id", _coerce_uuid(self.requester_id, "requester_id"))
         if isinstance(self.event_date, datetime):
             raise InvalidVendorCommand(field_errors={"event_date": ["Use a date, not a datetime."]})
         object.__setattr__(self, "idempotency_key", _coerce_required_idempotency_key(self.idempotency_key))
