@@ -493,6 +493,34 @@ def test_idempotency_payload_fingerprint_is_stable_sha256_hex_digest():
     assert first_fingerprint != changed_fingerprint
 
 
+def test_idempotency_payload_extraction_excludes_original_omitted_command_attributes():
+    actor = _actor()
+    vendor_id = uuid.uuid4()
+    omitted = UpdateVendorProfileCommand(actor=actor, vendor_id=vendor_id, expected_version=3)
+    explicit_none = UpdateVendorProfileCommand(
+        actor=actor,
+        vendor_id=vendor_id,
+        expected_version=3,
+        website=None,
+    )
+    explicit_value = UpdateVendorProfileCommand(
+        actor=actor,
+        vendor_id=vendor_id,
+        expected_version=3,
+        website="https://vendor.example",
+    )
+
+    omitted_fingerprint = VendorCommandHandlers._payload_fingerprint(omitted)
+    explicit_none_fingerprint = VendorCommandHandlers._payload_fingerprint(explicit_none)
+    explicit_value_fingerprint = VendorCommandHandlers._payload_fingerprint(explicit_value)
+
+    assert len(omitted_fingerprint) == 64
+    assert set(omitted_fingerprint) <= set("0123456789abcdef")
+    assert omitted_fingerprint != explicit_none_fingerprint
+    assert omitted_fingerprint != explicit_value_fingerprint
+    assert explicit_none_fingerprint != explicit_value_fingerprint
+
+
 def test_vendor_aggregate_unit_of_work_contract_persists_one_aggregate_with_pending_events():
     assert hasattr(VendorAggregateUnitOfWork, "add_with_pending_events")
     assert hasattr(VendorAggregateUnitOfWork, "save_with_pending_events")

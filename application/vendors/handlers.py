@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 import hashlib
 import json
 import uuid
@@ -403,7 +403,10 @@ class VendorCommandHandlers:
 
     @staticmethod
     def _payload_fingerprint(cmd) -> str:
-        payload = asdict(cmd) if is_dataclass(cmd) else dict(cmd)
+        if is_dataclass(cmd):
+            payload = {field.name: getattr(cmd, field.name) for field in fields(cmd)}
+        else:
+            payload = dict(cmd)
         payload.pop("idempotency_key", None)
         payload = {key: value for key, value in payload.items() if value is not OMITTED}
         canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
