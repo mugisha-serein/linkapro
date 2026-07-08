@@ -263,7 +263,7 @@ class VendorCommandHandlers:
             saved = self._add_with_pending_events(package)
             return self._to_package_dto(saved)
 
-        return self._run_idempotent("service_package.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
+        return self._run_required_idempotent("service_package.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)

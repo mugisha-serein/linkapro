@@ -257,15 +257,15 @@ class CreateServicePackageCommand:
     name: str
     description: str
     price: Decimal
+    idempotency_key: str
     currency: str = "RWF"
     package_tier: str = "standard"
-    idempotency_key: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "price", _coerce_price(self.price))
-        object.__setattr__(self, "idempotency_key", _coerce_optional_idempotency_key(self.idempotency_key))
+        object.__setattr__(self, "idempotency_key", _coerce_required_idempotency_key(self.idempotency_key))
 
 
 @dataclass(frozen=True)

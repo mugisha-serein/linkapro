@@ -819,6 +819,67 @@ def test_idempotency_key_is_trimmed_and_limited_to_200_characters():
     assert inquiry.idempotency_key == max_key
 
 
+def test_service_package_creation_command_requires_nonblank_idempotency_key():
+    idempotency_field = next(field for field in fields(CreateServicePackageCommand) if field.name == "idempotency_key")
+
+    assert idempotency_field.default is MISSING
+
+    with pytest.raises(TypeError):
+        CreateServicePackageCommand(
+            actor=_actor(),
+            vendor_id=uuid.uuid4(),
+            name="Standard",
+            description="Clear package details for a full event.",
+            price=Decimal("5000"),
+        )
+
+    with pytest.raises(InvalidVendorCommand) as none_exc:
+        CreateServicePackageCommand(
+            actor=_actor(),
+            vendor_id=uuid.uuid4(),
+            name="Standard",
+            description="Clear package details for a full event.",
+            price=Decimal("5000"),
+            idempotency_key=None,
+        )
+
+    with pytest.raises(InvalidVendorCommand) as blank_exc:
+        CreateServicePackageCommand(
+            actor=_actor(),
+            vendor_id=uuid.uuid4(),
+            name="Standard",
+            description="Clear package details for a full event.",
+            price=Decimal("5000"),
+            idempotency_key="  ",
+        )
+
+    assert none_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
+    assert blank_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
+
+
+def test_service_package_creation_always_requires_idempotency_storage():
+    vendor_id = uuid.uuid4()
+    profile = _profile(status=VendorStatus.APPROVED)
+    profile.id = vendor_id
+    vendor_repo = VendorRepo([profile])
+    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=None)
+
+    with pytest.raises(VendorApplicationConfigurationError) as exc_info:
+        handler.create_service_package(
+            CreateServicePackageCommand(
+                actor=_actor(),
+                vendor_id=vendor_id,
+                name="Standard",
+                description="Clear package details for a full event.",
+                price=Decimal("5000"),
+                idempotency_key="missing-storage",
+            )
+        )
+
+    assert exc_info.value.field_errors == {"idempotency_key": ["Idempotency storage is required."]}
+    assert vendor_repo.get_by_id_calls == []
+
+
 def test_oversized_idempotency_key_raises_stable_field_error_after_trimming():
     actor = _actor()
     vendor_id = uuid.uuid4()
@@ -1013,6 +1074,7 @@ def test_authorization_denial_happens_before_vendor_owned_aggregate_loads_or_wri
                 name="Blocked",
                 description="Blocked package details for this event.",
                 price=Decimal("5000"),
+                idempotency_key="blocked-package",
             )
         )
     with pytest.raises(VendorOperationForbidden):
@@ -1289,6 +1351,7 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
         inquiry_repo=inquiry_repo,
         dispatcher=dispatcher,
         aggregate_uow=aggregate_uow,
+        idempotency_port=IdempotencyPort(),
     )
 
     package_result = handler.create_service_package(
@@ -1298,6 +1361,7 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
             name="Standard",
             description="Clear package details for a full event.",
             price=Decimal("5000"),
+            idempotency_key="create-package-and-inquiry",
         )
     )
     inquiry_result = handler.send_inquiry(
@@ -1325,7 +1389,13 @@ def test_create_service_package_loads_vendor_and_returns_stable_missing_vendor_e
     package_repo = PackageRepo()
     dispatcher = EventDispatcher()
     aggregate_uow = AggregateUow()
-    handler = _handlers(vendor_repo=vendor_repo, package_repo=package_repo, dispatcher=dispatcher, aggregate_uow=aggregate_uow)
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        package_repo=package_repo,
+        dispatcher=dispatcher,
+        aggregate_uow=aggregate_uow,
+        idempotency_port=IdempotencyPort(),
+    )
 
     with pytest.raises(VendorResourceNotFound) as exc_info:
         handler.create_service_package(
@@ -1335,6 +1405,7 @@ def test_create_service_package_loads_vendor_and_returns_stable_missing_vendor_e
                 name="Standard",
                 description="Clear package details for a full event.",
                 price=Decimal("5000"),
+                idempotency_key="missing-package-vendor",
             )
         )
 
@@ -1364,6 +1435,7 @@ def test_create_service_package_policy_forbids_unapproved_vendor_statuses_before
             package_repo=package_repo,
             dispatcher=dispatcher,
             aggregate_uow=aggregate_uow,
+            idempotency_port=IdempotencyPort(),
         )
 
         with pytest.raises(VendorOperationForbidden) as exc_info:
@@ -1374,6 +1446,7 @@ def test_create_service_package_policy_forbids_unapproved_vendor_statuses_before
                     name="Standard",
                     description="Clear package details for a full event.",
                     price=Decimal("5000"),
+                    idempotency_key=f"forbidden-package-{status.value}",
                 )
             )
 
