@@ -25,6 +25,7 @@ from .commands import (
     DeactivateServicePackageCommand,
     DeletePortfolioImageCommand,
     MarkInquiryReadCommand,
+    OMITTED,
     ReinstateVendorCommand,
     RejectVendorCommand,
     ReorderPortfolioImagesCommand,
@@ -36,7 +37,7 @@ from .commands import (
 )
 from .dtos import InquiryDTO, PageDTO, PortfolioImageDTO, ServicePackageDTO, VendorProfileDTO
 from .errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
-from .ports import PortfolioReorderUnitOfWork, VendorIdempotencyPort, VendorReadPort
+from .ports import PortfolioOrderAllocator, PortfolioReorderUnitOfWork, VendorIdempotencyPort, VendorReadPort
 
 
 class VendorCommandHandlers:
@@ -50,6 +51,7 @@ class VendorCommandHandlers:
         *,
         idempotency_port: VendorIdempotencyPort | None = None,
         reorder_uow: PortfolioReorderUnitOfWork | None = None,
+        order_allocator: PortfolioOrderAllocator | None = None,
     ):
         self.vendor_repo = vendor_repo
         self.image_repo = image_repo
@@ -58,6 +60,7 @@ class VendorCommandHandlers:
         self.event_dispatcher = event_dispatcher
         self.idempotency_port = idempotency_port
         self.reorder_uow = reorder_uow
+        self.order_allocator = order_allocator
 
     def create_profile(self, cmd: CreateVendorProfileCommand) -> VendorProfileDTO:
         def operation() -> VendorProfileDTO:
@@ -79,7 +82,7 @@ class VendorCommandHandlers:
             self._dispatch_pending_events(profile)
             return self._to_profile_dto(saved)
 
-        return self._run_idempotent(cmd.idempotency_key, cmd, operation)
+        return self._run_idempotent("vendor_profile.create", cmd.user_id, cmd.idempotency_key, cmd, operation)
 
     def update_profile(self, cmd: UpdateVendorProfileCommand) -> VendorProfileDTO:
         profile = self._get_vendor_or_raise(cmd.vendor_id)
@@ -97,7 +100,7 @@ class VendorCommandHandlers:
                 "custom_category",
                 "website",
             )
-            if getattr(cmd, field_name) is not None
+            if getattr(cmd, field_name) is not OMITTED
         }
         profile.update_details(**updates)
         return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
@@ -139,21 +142,23 @@ class VendorCommandHandlers:
 
     def add_portfolio_image(self, cmd: AddPortfolioImageCommand) -> PortfolioImageDTO:
         def operation() -> PortfolioImageDTO:
-            image_page = self.image_repo.list_by_vendor(cmd.vendor_id, PageRequest(limit=100, offset=0))
-            max_order = max((image.order for image in image_page.items), default=-1)
+            allocator = self.order_allocator or self.image_repo
+            if not hasattr(allocator, "allocate_next_order"):
+                raise InvalidVendorCommand(field_errors={"order": ["Portfolio order allocation is not configured."]})
+            next_order = allocator.allocate_next_order(cmd.vendor_id)
             image = PortfolioImage(
                 id=uuid.uuid4(),
                 vendor_id=cmd.vendor_id,
                 public_id=cmd.public_id,
                 secure_url=cmd.secure_url,
                 caption=cmd.caption,
-                order=max_order + 1,
+                order=next_order,
             )
             saved = self.image_repo.add(image)
             self._dispatch_pending_events(image)
             return self._to_image_dto(saved)
 
-        return self._run_idempotent(cmd.idempotency_key, cmd, operation)
+        return self._run_idempotent("portfolio_image.add", cmd.vendor_id, cmd.idempotency_key, cmd, operation)
 
     def delete_portfolio_image(self, cmd: DeletePortfolioImageCommand) -> None:
         image = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.image_id)
@@ -213,7 +218,7 @@ class VendorCommandHandlers:
             self._dispatch_pending_events(package)
             return self._to_package_dto(saved)
 
-        return self._run_idempotent(cmd.idempotency_key, cmd, operation)
+        return self._run_idempotent("service_package.create", cmd.vendor_id, cmd.idempotency_key, cmd, operation)
 
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
         package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
@@ -252,7 +257,7 @@ class VendorCommandHandlers:
             self._dispatch_pending_events(inquiry)
             return self._to_inquiry_dto(saved)
 
-        return self._run_idempotent(cmd.idempotency_key, cmd, operation)
+        return self._run_idempotent("vendor_inquiry.send", cmd.vendor_id, cmd.idempotency_key, cmd, operation)
 
     def mark_inquiry_read(self, cmd: MarkInquiryReadCommand) -> InquiryDTO:
         inquiry = self.inquiry_repo.get_for_vendor(cmd.vendor_id, cmd.inquiry_id)
@@ -302,25 +307,25 @@ class VendorCommandHandlers:
         if set(requested_ids) != set(image_map.keys()):
             raise VendorResourceNotFound("Image not found.")
 
-    def _run_idempotent(self, key: str | None, cmd, operation: Callable):
+    def _run_idempotent(self, scope: str, actor_id: uuid.UUID, key: str | None, cmd, operation: Callable):
         if key is None:
             return operation()
         if self.idempotency_port is None:
             raise InvalidVendorCommand(field_errors={"idempotency_key": ["Idempotency storage is required."]})
         fingerprint = self._payload_fingerprint(cmd)
-        existing = self.idempotency_port.get(key)
-        if existing is not None:
-            if existing.payload_fingerprint != fingerprint:
-                raise VendorConflict("Idempotency key was already used with a different payload.")
-            return existing.result
-        result = operation()
-        self.idempotency_port.store(key, payload_fingerprint=fingerprint, result=result)
-        return result
+        return self.idempotency_port.execute_once(
+            scope=scope,
+            actor_id=actor_id,
+            key=key,
+            payload_fingerprint=fingerprint,
+            operation=operation,
+        )
 
     @staticmethod
     def _payload_fingerprint(cmd) -> str:
         payload = asdict(cmd) if is_dataclass(cmd) else dict(cmd)
         payload.pop("idempotency_key", None)
+        payload = {key: value for key, value in payload.items() if value is not OMITTED}
         return json.dumps(payload, sort_keys=True, default=str)
 
     @staticmethod
