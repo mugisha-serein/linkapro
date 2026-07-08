@@ -59,6 +59,7 @@ app.conf.update(
         "tasks.email_tasks",
         "tasks.image_tasks",
         "tasks.marketplace_sync",
+        "tasks.vendor_domain_events",
         "payments.tasks",
     )
 )

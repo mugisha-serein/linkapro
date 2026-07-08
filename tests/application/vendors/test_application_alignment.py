@@ -22,11 +22,9 @@ from application.vendors.commands import (
     UpdateServicePackageCommand,
     UpdateVendorProfileCommand,
 )
-from application.vendors.cooldown_handlers import VendorCooldownCommandHandlers
 from application.vendors.dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 from application.vendors.errors import InvalidVendorCommand, VendorConflict, VendorResourceNotFound
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
-from application.vendors.ports import IdempotencyRecord
 from domain.shared.utils import utc_now
 from domain.vendors.entities import (
     Inquiry,
@@ -249,14 +247,20 @@ class ReadPort:
 class IdempotencyPort:
     def __init__(self):
         self.records = {}
-        self.stores = []
+        self.executions = []
 
-    def get(self, key):
-        return self.records.get(key)
-
-    def store(self, key, *, payload_fingerprint, result):
-        self.stores.append((key, payload_fingerprint, result))
-        self.records[key] = IdempotencyRecord(payload_fingerprint=payload_fingerprint, result=result)
+    def execute_once(self, *, scope, actor_id, key, payload_fingerprint, operation):
+        record_key = (scope, actor_id, key)
+        existing = self.records.get(record_key)
+        if existing is not None:
+            existing_fingerprint, result = existing
+            if existing_fingerprint != payload_fingerprint:
+                raise VendorConflict("Idempotency key was already used with a different payload.")
+            return result
+        result = operation()
+        self.executions.append((scope, actor_id, key, payload_fingerprint, result))
+        self.records[record_key] = (payload_fingerprint, result)
+        return result
 
 
 class ReorderUow:
@@ -646,10 +650,8 @@ def test_portfolio_image_dto_has_no_unsafe_lifecycle_defaults():
         PortfolioImageDTO(id=uuid.uuid4(), vendor_id=uuid.uuid4(), secure_url="", caption=None, order=0)
 
 
-def test_one_package_handler_path_remains():
-    assert VendorCooldownCommandHandlers is VendorCommandHandlers
-    source = Path("application/vendors/cooldown_handlers.py").read_text(encoding="utf-8")
-    assert "def update_service_package" not in source
+def test_cooldown_compatibility_alias_is_removed():
+    assert not Path("application/vendors/cooldown_handlers.py").exists()
 
 
 def test_application_vendor_source_has_no_forbidden_imports_private_domain_calls_or_manual_events():

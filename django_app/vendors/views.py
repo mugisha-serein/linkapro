@@ -41,7 +41,9 @@ from application.vendors.commands import (
     CreateServicePackageCommand,
     UpdateServicePackageCommand,
     DeactivateServicePackageCommand,
+    ActivateServicePackageCommand,
     SendInquiryCommand,
+    ResourceVersion,
 )
 from application.vendors.dtos import (
     VendorProfileDTO,
@@ -58,6 +60,7 @@ from domain.vendors.package_rules import PackageValidationError
 from domain.vendors.errors import ConcurrentVendorUpdate, VendorDomainError
 from domain.vendors.interfaces import PageRequest
 from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
+from .api_contracts import map_vendor_exception, resolve_expected_version, response_with_version, vendor_error_response
 
 
 VENDOR_PROFILE_INCOMPLETE_CODE = "vendor_profile_incomplete"
@@ -180,6 +183,7 @@ def _serialize_profile(dto: VendorProfileDTO, *, message: str | None = None) -> 
         "approved_at": dto.approved_at.isoformat() if dto.approved_at else None,
         "rejected_at": dto.rejected_at.isoformat() if dto.rejected_at else None,
         "rejection_reason": dto.rejection_reason,
+        "version": dto.version,
         "onboarding": onboarding,
         "message": message or onboarding["message"],
     }
@@ -331,7 +335,7 @@ class VendorProfileView(APIView):
         profile, error_response = _get_current_vendor_profile(request)
         if error_response:
             return error_response
-        return Response(_serialize_profile(profile))
+        return response_with_version(Response(_serialize_profile(profile)), profile.version)
 
     def post(self, request):
         """Create a new vendor profile for the current user."""
@@ -350,27 +354,21 @@ class VendorProfileView(APIView):
             contact_phone=data["contact_phone"],
             custom_category=data.get("custom_category"),
             website=data.get("website"),
+            idempotency_key=request.headers.get("Idempotency-Key"),
         )
 
         try:
             command_handlers = get_command_handlers()
             profile = command_handlers.create_profile(cmd)
-            return Response(
+            return response_with_version(Response(
                 _serialize_profile(profile, message="Vendor profile saved."),
                 status=status.HTTP_201_CREATED,
-            )
-        except ValueError as e:
-            return Response(
-                {
-                    "code": "vendor_profile_save_failed",
-                    "message": str(e),
-                    "detail": str(e),
-                    "field_errors": {},
-                    "redirect_to": VENDOR_PROFILE_SETUP_REDIRECT,
-                    "onboarding": build_vendor_onboarding_contract(None),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            ), profile.version)
+        except Exception as exc:
+            mapped = map_vendor_exception(exc)
+            if mapped is not None:
+                return mapped
+            raise
 
     def patch(self, request):
         """Update the current user's vendor profile."""
@@ -382,35 +380,37 @@ class VendorProfileView(APIView):
         if not serializer.is_valid():
             return _validation_error_response(serializer.errors, profile=profile)
         data = serializer.validated_data
+        expected_version, version_error = resolve_expected_version(request)
+        if version_error:
+            return version_error
+
+        def _field(name: str):
+            from application.vendors.commands import OMITTED
+
+            return data[name] if name in data else OMITTED
 
         cmd = UpdateVendorProfileCommand(
             vendor_id=profile.id,
-            business_name=data.get("business_name"),
-            category=data.get("category"),
-            description=data.get("description"),
-            service_area=data.get("service_area"),
-            contact_email=data.get("contact_email"),
-            contact_phone=data.get("contact_phone"),
-            custom_category=data.get("custom_category"),
-            website=data.get("website"),
+            expected_version=expected_version,
+            business_name=_field("business_name"),
+            category=_field("category"),
+            description=_field("description"),
+            service_area=_field("service_area"),
+            contact_email=_field("contact_email"),
+            contact_phone=_field("contact_phone"),
+            custom_category=_field("custom_category"),
+            website=_field("website"),
         )
 
         try:
             command_handlers = get_command_handlers()
             updated_profile = command_handlers.update_profile(cmd)
-            return Response(_serialize_profile(updated_profile, message="Vendor profile saved."))
-        except ValueError as e:
-            return Response(
-                {
-                    "code": "vendor_profile_save_failed",
-                    "message": str(e),
-                    "detail": str(e),
-                    "field_errors": {},
-                    "redirect_to": build_vendor_onboarding_contract(profile)["redirect_to"],
-                    "onboarding": build_vendor_onboarding_contract(profile),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return response_with_version(Response(_serialize_profile(updated_profile, message="Vendor profile saved.")), updated_profile.version)
+        except Exception as exc:
+            mapped = map_vendor_exception(exc)
+            if mapped is not None:
+                return mapped
+            raise
 
 
 class VendorBrandingMediaView(APIView):
@@ -636,23 +636,23 @@ class VendorSubmitForReviewView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        cmd = SubmitVendorForReviewCommand(vendor_id=profile.id)
+        expected_version, version_error = resolve_expected_version(request)
+        if version_error:
+            return version_error
+
+        cmd = SubmitVendorForReviewCommand(vendor_id=profile.id, expected_version=expected_version)
         try:
             command_handlers = get_command_handlers()
             updated_profile = command_handlers.submit_for_review(cmd)
-            return Response(_serialize_profile(updated_profile, message="Profile submitted for review."))
-        except ValueError as e:
-            onboarding = build_vendor_onboarding_contract(profile)
-            return Response(
-                {
-                    "code": "vendor_submit_failed",
-                    "message": str(e),
-                    "field_errors": {},
-                    "redirect_to": onboarding["redirect_to"],
-                    "onboarding": onboarding,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return response_with_version(
+                Response(_serialize_profile(updated_profile, message="Profile submitted for review.")),
+                updated_profile.version,
             )
+        except Exception as exc:
+            mapped = map_vendor_exception(exc)
+            if mapped is not None:
+                return mapped
+            raise
 
 
 class PortfolioImageView(APIView):
@@ -667,7 +667,7 @@ class PortfolioImageView(APIView):
         query_handlers = get_query_handlers()
 
         images = query_handlers.list_portfolio_images(profile.id)
-        return Response([self._serialize_image(img) for img in images])
+        return Response([self._serialize_image(img) for img in images.items])
 
     def post(self, request):
         """Upload a new portfolio image/video (via Celery task)."""
@@ -707,29 +707,34 @@ class PortfolioImageView(APIView):
 
         image_id = uuid.uuid4()
         shared_upload = self._upload_portfolio_media(uploaded_media, media_type, str(image_id))
-        max_order = PortfolioImageModel.objects.filter(vendor_id=profile.id).aggregate(Max("order"))["order__max"]
-        image = PortfolioImageModel.objects.create(
-            id=image_id,
-            vendor_id=profile.id,
-            public_id=shared_upload["public_id"],
-            secure_url=shared_upload["secure_url"],
-            caption=serializer.validated_data.get("caption") or None,
-            order=(max_order if max_order is not None else -1) + 1,
-            media_type=media_type,
-            is_active=True,
-            upload_status=PortfolioImageModel.UploadStatus.QUEUED,
-            quality_status=PortfolioImageModel.QualityStatus.PENDING_ANALYSIS,
-            visibility_status=PortfolioImageModel.VisibilityStatus.PRIVATE,
-            original_filename=uploaded_media.name,
-            mime_type=(getattr(uploaded_media, "content_type", "") or "").lower(),
-            file_size=uploaded_media.size,
-            width=dimensions.get("width"),
-            height=dimensions.get("height"),
-            local_preview_url=None,
-            temp_upload_path=None,
-            cloudinary_public_id=shared_upload["public_id"],
-            cloudinary_secure_url=shared_upload["secure_url"],
-        )
+        with transaction.atomic():
+            VendorProfileModel.objects.select_for_update().get(id=profile.id)
+            max_order = (
+                PortfolioImageModel.all_objects.filter(vendor_id=profile.id, is_active=True, is_deleted=False)
+                .aggregate(Max("order"))["order__max"]
+            )
+            image = PortfolioImageModel.objects.create(
+                id=image_id,
+                vendor_id=profile.id,
+                public_id=shared_upload["public_id"],
+                secure_url=shared_upload["secure_url"],
+                caption=serializer.validated_data.get("caption") or None,
+                order=(max_order if max_order is not None else -1) + 1,
+                media_type=media_type,
+                is_active=True,
+                upload_status=PortfolioImageModel.UploadStatus.QUEUED,
+                quality_status=PortfolioImageModel.QualityStatus.PENDING_ANALYSIS,
+                visibility_status=PortfolioImageModel.VisibilityStatus.PRIVATE,
+                original_filename=uploaded_media.name,
+                mime_type=(getattr(uploaded_media, "content_type", "") or "").lower(),
+                file_size=uploaded_media.size,
+                width=dimensions.get("width"),
+                height=dimensions.get("height"),
+                local_preview_url=None,
+                temp_upload_path=None,
+                cloudinary_public_id=shared_upload["public_id"],
+                cloudinary_secure_url=shared_upload["secure_url"],
+            )
 
         from tasks.image_tasks import process_vendor_portfolio_media_task
 
@@ -761,16 +766,32 @@ class PortfolioImageView(APIView):
 
         # Verify ownership: fetch the image and check vendor_id
         images = query_handlers.list_portfolio_images(profile.id)
-        image = next((img for img in images if img.id == image_id), None)
+        image = next((img for img in images.items if img.id == image_id), None)
         if not image:
-            return Response(
-                {"detail": "Image not found or does not belong to this vendor."},
-                status=status.HTTP_404_NOT_FOUND
+            return vendor_error_response(
+                code="vendor_portfolio_item_not_found",
+                message="Image not found or does not belong to this vendor.",
+                status_code=status.HTTP_404_NOT_FOUND,
             )
 
-        cmd = DeletePortfolioImageCommand(image_id=image_id, deleted_by_id=request.user.id)
+        expected_version, version_error = resolve_expected_version(request)
+        if version_error:
+            return version_error
+
+        cmd = DeletePortfolioImageCommand(
+            vendor_id=profile.id,
+            image_id=image_id,
+            expected_version=expected_version,
+            deleted_by_id=request.user.id,
+        )
         command_handlers = get_command_handlers()
-        command_handlers.delete_portfolio_image(cmd)
+        try:
+            command_handlers.delete_portfolio_image(cmd)
+        except Exception as exc:
+            mapped = map_vendor_exception(exc)
+            if mapped is not None:
+                return mapped
+            raise
         return Response(
             {
                 "message": "Portfolio item removed from active listings.",
@@ -805,6 +826,7 @@ class PortfolioImageView(APIView):
             "analyzer_summary": dto.analyzer_summary,
             "is_active": dto.is_active,
             "is_deleted": dto.is_deleted,
+            "version": dto.version,
         }
 
     def _upload_portfolio_media(self, uploaded_media, media_type: str, media_id: str) -> dict:
@@ -846,6 +868,7 @@ class PortfolioImageView(APIView):
             "analyzer_summary": image.analyzer_summary,
             "is_active": image.is_active,
             "is_deleted": image.is_deleted,
+            "version": image.version,
         }
 
     def _validate_portfolio_media(self, uploaded_media) -> tuple[dict | None, str | None, dict]:
@@ -950,16 +973,27 @@ class PortfolioImageReorderView(APIView):
 
         serializer = ReorderImagesSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        image_ids = [uuid.UUID(id_str) for id_str in serializer.validated_data["image_ids"]]
+        image_ids = [uuid.UUID(str(id_str)) for id_str in serializer.validated_data["image_ids"]]
+        expected_versions = tuple(
+            ResourceVersion(resource_id=uuid.UUID(str(image_id)), expected_version=version)
+            for image_id, version in serializer.validated_data["expected_versions"].items()
+        )
 
         cmd = ReorderPortfolioImagesCommand(
             vendor_id=profile.id,
-            image_ids_in_order=image_ids
+            image_ids_in_order=tuple(image_ids),
+            expected_versions=expected_versions,
         )
 
         command_handlers = get_command_handlers()
-        reordered = command_handlers.reorder_portfolio_images(cmd)
-        return Response([PortfolioImageView._serialize_image(None, img) for img in reordered])
+        try:
+            reordered = command_handlers.reorder_portfolio_images(cmd)
+        except Exception as exc:
+            mapped = map_vendor_exception(exc)
+            if mapped is not None:
+                return mapped
+            raise
+        return Response([PortfolioImageView._serialize_image(None, img) for img in reordered.items])
 
 
 class ServicePackageListView(APIView):
@@ -1004,6 +1038,7 @@ class ServicePackageListView(APIView):
             price=data["price"],
             currency=data.get("currency", "RWF"),
             package_tier=data["package_tier"],
+            idempotency_key=request.headers.get("Idempotency-Key"),
         )
 
         command_handlers = get_command_handlers()
@@ -1013,7 +1048,12 @@ class ServicePackageListView(APIView):
             raise DRFValidationError(exc.errors)
         except IntegrityError as exc:
             return _stable_package_integrity_response(exc)
-        return Response(self._serialize_package(package), status=status.HTTP_201_CREATED)
+        except Exception as exc:
+            mapped = map_vendor_exception(exc)
+            if mapped is not None:
+                return mapped
+            raise
+        return response_with_version(Response(self._serialize_package(package), status=status.HTTP_201_CREATED), package.version)
 
     def _serialize_package(self, dto: ServicePackageDTO) -> dict:
         return {
@@ -1028,6 +1068,7 @@ class ServicePackageListView(APIView):
             "is_active": dto.is_active,
             "is_deleted": dto.is_deleted,
             "deleted_at": dto.deleted_at.isoformat() if dto.deleted_at else None,
+            "version": dto.version,
         }
 
 
@@ -1043,7 +1084,7 @@ class ServicePackageDetailView(APIView):
 
         # Verify ownership
         packages = query_handlers.list_service_packages(profile.id)
-        pkg = next((p for p in packages if p.id == package_id), None)
+        pkg = next((p for p in packages.items if p.id == package_id), None)
         if not pkg:
             return Response(
                 {"detail": "Package not found or does not belong to this vendor."},
@@ -1053,9 +1094,14 @@ class ServicePackageDetailView(APIView):
         serializer = ServicePackageSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        expected_version, version_error = resolve_expected_version(request)
+        if version_error:
+            return version_error
 
         cmd = UpdateServicePackageCommand(
+            vendor_id=profile.id,
             package_id=package_id,
+            expected_version=expected_version,
             name=data.get("name"),
             description=data.get("description"),
             price=data.get("price"),
@@ -1072,7 +1118,7 @@ class ServicePackageDetailView(APIView):
             return _stable_package_integrity_response(exc)
         except (IntegrityError, VendorDomainError) as exc:
             return _stable_package_integrity_response(exc, status_code=status.HTTP_400_BAD_REQUEST)
-        return Response(ServicePackageListView._serialize_package(None, updated))
+        return response_with_version(Response(ServicePackageListView._serialize_package(None, updated)), updated.version)
 
     def delete(self, request, package_id):
         """Deactivate a service package (soft delete)."""
@@ -1082,16 +1128,31 @@ class ServicePackageDetailView(APIView):
         query_handlers = get_query_handlers()
 
         packages = query_handlers.list_service_packages(profile.id)
-        pkg = next((p for p in packages if p.id == package_id), None)
+        pkg = next((p for p in packages.items if p.id == package_id), None)
         if not pkg:
             return Response(
                 {"detail": "Package not found or does not belong to this vendor."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        cmd = DeactivateServicePackageCommand(package_id=package_id, deleted_by_id=request.user.id)
+        expected_version, version_error = resolve_expected_version(request)
+        if version_error:
+            return version_error
+
+        cmd = DeactivateServicePackageCommand(
+            vendor_id=profile.id,
+            package_id=package_id,
+            expected_version=expected_version,
+            deleted_by_id=request.user.id,
+        )
         command_handlers = get_command_handlers()
-        package = command_handlers.deactivate_package(cmd)
+        try:
+            package = command_handlers.deactivate_package(cmd)
+        except Exception as exc:
+            mapped = map_vendor_exception(exc)
+            if mapped is not None:
+                return mapped
+            raise
         return Response(
             {
                 "message": "Package removed from active listings.",
@@ -1126,7 +1187,7 @@ class InquiryListView(APIView):
         query_handlers = get_query_handlers()
 
         inquiries = query_handlers.list_inquiries(profile.id)
-        return Response([self._serialize_inquiry(inq) for inq in inquiries])
+        return Response([self._serialize_inquiry(inq) for inq in inquiries.items])
 
     def _serialize_inquiry(self, dto: InquiryDTO) -> dict:
         return {
@@ -1138,6 +1199,7 @@ class InquiryListView(APIView):
             "event_date": dto.event_date.isoformat() if dto.event_date else None,
             "is_read": dto.is_read,
             "created_at": dto.created_at.isoformat(),
+            "version": dto.version,
         }
 
 
@@ -1360,6 +1422,7 @@ class PublicInquiryView(APIView):
             message=data["message"],
             client_phone=data.get("client_phone"),
             event_date=data.get("event_date"),
+            idempotency_key=request.headers.get("Idempotency-Key"),
         )
 
         command_handlers = get_command_handlers()
@@ -1372,8 +1435,11 @@ class PublicInquiryView(APIView):
                 status=status.HTTP_201_CREATED,
                 request=request,
             )
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            mapped = map_vendor_exception(exc)
+            if mapped is not None:
+                return mapped
+            raise
 
 
 class VendorDashboardSummaryView(APIView):

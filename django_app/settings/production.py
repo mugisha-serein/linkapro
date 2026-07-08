@@ -17,10 +17,11 @@ if render_external_hostname and render_external_hostname not in ALLOWED_HOSTS:
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured("ALLOWED_HOSTS must be set.")
 
-if not os.environ.get("DATABASE_URL"):
-    raise ImproperlyConfigured("DATABASE_URL must be set.")
+if not (os.environ.get("DJANGO_DATABASE_URL") or os.environ.get("DATABASE_URL")):
+    raise ImproperlyConfigured("DJANGO_DATABASE_URL must be set.")
 
-DATABASES["default"] = dj_database_url.config(
+DATABASES["default"] = dj_database_url.parse(
+    _django_database_url(),
     conn_max_age=600,
     ssl_require=True
 )

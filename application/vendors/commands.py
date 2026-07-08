@@ -9,6 +9,14 @@ import uuid
 from .errors import InvalidVendorCommand
 
 
+class _Omitted:
+    def __repr__(self) -> str:
+        return "OMITTED"
+
+
+OMITTED = _Omitted()
+
+
 def _coerce_uuid(value, field_name: str) -> uuid.UUID:
     if isinstance(value, uuid.UUID):
         return value
@@ -87,14 +95,14 @@ class CreateVendorProfileCommand:
 class UpdateVendorProfileCommand:
     vendor_id: uuid.UUID
     expected_version: int
-    business_name: Optional[str] = None
-    category: Optional[str] = None
-    description: Optional[str] = None
-    service_area: Optional[str] = None
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    custom_category: Optional[str] = None
-    website: Optional[str] = None
+    business_name: object = OMITTED
+    category: object = OMITTED
+    description: object = OMITTED
+    service_area: object = OMITTED
+    contact_email: object = OMITTED
+    contact_phone: object = OMITTED
+    custom_category: object = OMITTED
+    website: object = OMITTED
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))

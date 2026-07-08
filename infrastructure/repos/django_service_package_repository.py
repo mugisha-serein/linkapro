@@ -93,8 +93,8 @@ class DjangoServicePackageRepository(IServicePackageRepository):
                     "Service package was updated by another request.",
                     field_errors={"version": ["Service package was updated by another request."]},
                 )
-        domain.version = expected_version + 1
-        return domain
+            obj = DjangoPackage.all_objects.select_related("vendor").get(id=domain.id)
+        return self._to_domain(obj)
 
     def delete(self, package_id: uuid.UUID, deleted_by_id: Optional[uuid.UUID] = None) -> Optional[DomainPackage]:
         try:

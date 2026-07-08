@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from datetime import timedelta
+from urllib.parse import urlparse
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 import structlog
@@ -95,11 +96,56 @@ WSGI_APPLICATION = "django_app.wsgi.application"
 #     }
 # }
 
-DATABASES = {
-    "default": dj_database_url.config(
-        default=os.getenv("DATABASE_URL") or f"sqlite:///{BASE_DIR / 'db.sqlite3'}"
-    )
+DJANGO_DATABASE_SCHEMES = {
+    "cockroach",
+    "mssql",
+    "mssqlms",
+    "mysql",
+    "mysql-connector",
+    "mysql2",
+    "mysqlgis",
+    "oracle",
+    "oraclegis",
+    "pgsql",
+    "postgis",
+    "postgres",
+    "postgresql",
+    "redshift",
+    "spatialite",
+    "sqlite",
+    "timescale",
+    "timescalegis",
 }
+
+
+def _mask_database_url(database_url: str) -> str:
+    parsed = urlparse(database_url)
+    if not parsed.netloc:
+        return database_url
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    user = f"{parsed.username}:***@" if parsed.username else ""
+    return parsed._replace(netloc=f"{user}{host}{port}").geturl()
+
+
+def _django_database_url() -> str:
+    explicit = os.getenv("DJANGO_DATABASE_URL")
+    if explicit:
+        return explicit
+    fallback = os.getenv("DATABASE_URL")
+    if not fallback:
+        return f"sqlite:///{BASE_DIR / 'db.sqlite3'}"
+    scheme = urlparse(fallback).scheme
+    if scheme not in DJANGO_DATABASE_SCHEMES:
+        masked = _mask_database_url(fallback)
+        raise ImproperlyConfigured(
+            "DATABASE_URL is not compatible with Django. Set DJANGO_DATABASE_URL "
+            f"for Django and FASTAPI_DATABASE_URL for FastAPI. Received {masked!r}."
+        )
+    return fallback
+
+
+DATABASES = {"default": dj_database_url.parse(_django_database_url())}
 
 if os.environ.get('DATABASE_SSL', 'false').lower() == 'true':
     DATABASES['default']['OPTIONS']['sslmode'] = 'verify-full'

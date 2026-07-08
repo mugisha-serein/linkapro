@@ -1,25 +1,26 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Protocol, Sequence
+from typing import Callable, Protocol, Sequence, TypeVar
 import uuid
 
 from domain.vendors.entities import PortfolioImage
 from domain.vendors.interfaces import Page, PageRequest
 
-from .dtos import PageDTO, ServicePackageDTO
+from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 
-
-@dataclass(frozen=True)
-class IdempotencyRecord:
-    payload_fingerprint: str
-    result: Any
+T = TypeVar("T")
 
 
 class VendorIdempotencyPort(Protocol):
-    def get(self, key: str) -> IdempotencyRecord | None: ...
-
-    def store(self, key: str, *, payload_fingerprint: str, result: Any) -> None: ...
+    def execute_once(
+        self,
+        *,
+        scope: str,
+        actor_id: uuid.UUID,
+        key: str,
+        payload_fingerprint: str,
+        operation: Callable[[], T],
+    ) -> T: ...
 
 
 class VendorReadPort(Protocol):
@@ -42,3 +43,7 @@ class PortfolioReorderUnitOfWork(Protocol):
         *,
         expected_versions: dict[uuid.UUID, int],
     ) -> Sequence[PortfolioImage]: ...
+
+
+class PortfolioOrderAllocator(Protocol):
+    def allocate_next_order(self, vendor_id: uuid.UUID) -> int: ...

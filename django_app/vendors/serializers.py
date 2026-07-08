@@ -74,6 +74,11 @@ class ReorderImagesSerializer(serializers.Serializer):
         child=serializers.UUIDField(),
         allow_empty=False
     )
+    expected_versions = serializers.DictField(
+        child=serializers.IntegerField(min_value=0),
+        required=True,
+        allow_empty=False,
+    )
 
 class ServicePackageSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=200)
