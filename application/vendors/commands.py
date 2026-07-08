@@ -26,12 +26,6 @@ def _coerce_uuid(value, field_name: str) -> uuid.UUID:
         raise InvalidVendorCommand(field_errors={field_name: ["Must be a valid UUID."]}) from exc
 
 
-def _coerce_optional_uuid(value, field_name: str) -> uuid.UUID | None:
-    if value is None:
-        return None
-    return _coerce_uuid(value, field_name)
-
-
 def _coerce_expected_version(value, field_name: str = "expected_version") -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise InvalidVendorCommand(field_errors={field_name: ["Must be a nonnegative integer."]})
@@ -51,6 +45,20 @@ def _coerce_price(value) -> Decimal:
         return value if isinstance(value, Decimal) else Decimal(str(value))
     except Exception as exc:
         raise InvalidVendorCommand(field_errors={"price": ["Must be a valid decimal."]}) from exc
+
+
+@dataclass(frozen=True)
+class AuthenticatedActor:
+    user_id: uuid.UUID
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "user_id", _coerce_uuid(self.user_id, "actor.user_id"))
+
+
+def _coerce_actor(value: AuthenticatedActor) -> AuthenticatedActor:
+    if not isinstance(value, AuthenticatedActor):
+        raise InvalidVendorCommand(field_errors={"actor": ["Authenticated actor is required."]})
+    return value
 
 
 @dataclass(frozen=True)
@@ -75,7 +83,7 @@ def _coerce_resource_versions(value: Iterable[ResourceVersion] | Mapping[uuid.UU
 
 @dataclass(frozen=True)
 class CreateVendorProfileCommand:
-    user_id: uuid.UUID
+    actor: AuthenticatedActor
     business_name: str
     category: str
     description: str
@@ -87,12 +95,13 @@ class CreateVendorProfileCommand:
     idempotency_key: Optional[str] = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "user_id", _coerce_uuid(self.user_id, "user_id"))
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "idempotency_key", _coerce_optional_idempotency_key(self.idempotency_key))
 
 
 @dataclass(frozen=True)
 class UpdateVendorProfileCommand:
+    actor: AuthenticatedActor
     vendor_id: uuid.UUID
     expected_version: int
     business_name: object = OMITTED
@@ -105,16 +114,19 @@ class UpdateVendorProfileCommand:
     website: object = OMITTED
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
 
 
 @dataclass(frozen=True)
 class SubmitVendorForReviewCommand:
+    actor: AuthenticatedActor
     vendor_id: uuid.UUID
     expected_version: int
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
 
@@ -163,6 +175,7 @@ class ReinstateVendorCommand:
 
 @dataclass(frozen=True)
 class AddPortfolioImageCommand:
+    actor: AuthenticatedActor
     vendor_id: uuid.UUID
     public_id: str
     secure_url: str
@@ -170,31 +183,34 @@ class AddPortfolioImageCommand:
     idempotency_key: Optional[str] = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "idempotency_key", _coerce_optional_idempotency_key(self.idempotency_key))
 
 
 @dataclass(frozen=True)
 class DeletePortfolioImageCommand:
+    actor: AuthenticatedActor
     vendor_id: uuid.UUID
     image_id: uuid.UUID
     expected_version: int
-    deleted_by_id: Optional[uuid.UUID] = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "image_id", _coerce_uuid(self.image_id, "image_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
-        object.__setattr__(self, "deleted_by_id", _coerce_optional_uuid(self.deleted_by_id, "deleted_by_id"))
 
 
 @dataclass(frozen=True)
 class ReorderPortfolioImagesCommand:
+    actor: AuthenticatedActor
     vendor_id: uuid.UUID
     image_ids_in_order: tuple[uuid.UUID, ...]
     expected_versions: tuple[ResourceVersion, ...]
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(
             self,
@@ -206,6 +222,7 @@ class ReorderPortfolioImagesCommand:
 
 @dataclass(frozen=True)
 class CreateServicePackageCommand:
+    actor: AuthenticatedActor
     vendor_id: uuid.UUID
     name: str
     description: str
@@ -215,6 +232,7 @@ class CreateServicePackageCommand:
     idempotency_key: Optional[str] = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "price", _coerce_price(self.price))
         object.__setattr__(self, "idempotency_key", _coerce_optional_idempotency_key(self.idempotency_key))
@@ -222,6 +240,7 @@ class CreateServicePackageCommand:
 
 @dataclass(frozen=True)
 class UpdateServicePackageCommand:
+    actor: AuthenticatedActor
     vendor_id: uuid.UUID
     package_id: uuid.UUID
     expected_version: int
@@ -232,6 +251,7 @@ class UpdateServicePackageCommand:
     package_tier: Optional[str] = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "package_id", _coerce_uuid(self.package_id, "package_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
@@ -241,25 +261,27 @@ class UpdateServicePackageCommand:
 
 @dataclass(frozen=True)
 class DeactivateServicePackageCommand:
+    actor: AuthenticatedActor
     vendor_id: uuid.UUID
     package_id: uuid.UUID
     expected_version: int
-    deleted_by_id: Optional[uuid.UUID] = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "package_id", _coerce_uuid(self.package_id, "package_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
-        object.__setattr__(self, "deleted_by_id", _coerce_optional_uuid(self.deleted_by_id, "deleted_by_id"))
 
 
 @dataclass(frozen=True)
 class ActivateServicePackageCommand:
+    actor: AuthenticatedActor
     vendor_id: uuid.UUID
     package_id: uuid.UUID
     expected_version: int
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "package_id", _coerce_uuid(self.package_id, "package_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
@@ -284,11 +306,13 @@ class SendInquiryCommand:
 
 @dataclass(frozen=True)
 class MarkInquiryReadCommand:
+    actor: AuthenticatedActor
     vendor_id: uuid.UUID
     inquiry_id: uuid.UUID
     expected_version: int
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "inquiry_id", _coerce_uuid(self.inquiry_id, "inquiry_id"))
         object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))

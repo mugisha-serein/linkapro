@@ -6,6 +6,7 @@ import uuid
 from domain.vendors.entities import PortfolioImage
 from domain.vendors.interfaces import Page, PageRequest
 
+from .commands import AuthenticatedActor
 from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 
 T = TypeVar("T")
@@ -21,6 +22,10 @@ class VendorIdempotencyPort(Protocol):
         payload_fingerprint: str,
         operation: Callable[[], T],
     ) -> T: ...
+
+
+class VendorAuthorizationPort(Protocol):
+    def assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None: ...
 
 
 class VendorReadPort(Protocol):
