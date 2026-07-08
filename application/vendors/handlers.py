@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+import hashlib
 import json
 import uuid
 from typing import Callable, Sequence
@@ -405,7 +406,8 @@ class VendorCommandHandlers:
         payload = asdict(cmd) if is_dataclass(cmd) else dict(cmd)
         payload.pop("idempotency_key", None)
         payload = {key: value for key, value in payload.items() if value is not OMITTED}
-        return json.dumps(payload, sort_keys=True, default=str)
+        canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _to_profile_dto(profile: VendorProfile) -> VendorProfileDTO:

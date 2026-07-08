@@ -445,6 +445,52 @@ def test_profile_creation_uses_creation_unit_of_work_and_idempotency_replays_res
     assert len(creation_uow.add_calls) == 1
     assert vendor_repo.add_calls == []
     assert vendor_repo.save_calls == []
+    fingerprint = idem.executions[0][3]
+    assert len(fingerprint) == 64
+    assert set(fingerprint) <= set("0123456789abcdef")
+
+
+def test_idempotency_payload_fingerprint_is_stable_sha256_hex_digest():
+    actor = _actor()
+    first = CreateVendorProfileCommand(
+        actor=actor,
+        business_name="New Vendor",
+        category="catering",
+        description="Reliable event catering and planning support.",
+        service_area="Kigali",
+        contact_email="new@example.com",
+        contact_phone="+250700000000",
+        idempotency_key="first-key",
+    )
+    replay = CreateVendorProfileCommand(
+        actor=actor,
+        business_name="New Vendor",
+        category="catering",
+        description="Reliable event catering and planning support.",
+        service_area="Kigali",
+        contact_email="new@example.com",
+        contact_phone="+250700000000",
+        idempotency_key="replay-key",
+    )
+    changed = CreateVendorProfileCommand(
+        actor=actor,
+        business_name="Changed Vendor",
+        category="catering",
+        description="Reliable event catering and planning support.",
+        service_area="Kigali",
+        contact_email="new@example.com",
+        contact_phone="+250700000000",
+        idempotency_key="first-key",
+    )
+
+    first_fingerprint = VendorCommandHandlers._payload_fingerprint(first)
+    replay_fingerprint = VendorCommandHandlers._payload_fingerprint(replay)
+    changed_fingerprint = VendorCommandHandlers._payload_fingerprint(changed)
+
+    assert len(first_fingerprint) == 64
+    assert set(first_fingerprint) <= set("0123456789abcdef")
+    assert first_fingerprint == replay_fingerprint
+    assert first_fingerprint != changed_fingerprint
 
 
 def test_vendor_aggregate_unit_of_work_contract_persists_one_aggregate_with_pending_events():
