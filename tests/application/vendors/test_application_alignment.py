@@ -4,7 +4,9 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 import ast
+import inspect
 import uuid
+from typing import get_type_hints
 
 import pytest
 
@@ -32,7 +34,7 @@ from application.vendors.commands import (
 from application.vendors.dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 from application.vendors.errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
-from application.vendors.ports import VendorAggregateUnitOfWork, VendorCreationUnitOfWork
+from application.vendors.ports import VendorAggregateUnitOfWork, VendorCreationUnitOfWork, VendorEventDispatcher
 from application.vendors.queries import (
     GetVendorAnalyticsQuery,
     GetVendorDashboardSummaryQuery,
@@ -57,6 +59,7 @@ from domain.vendors.events import (
     PortfolioMediaReordered,
     ServicePackageCreated,
     VendorApproved,
+    VendorDomainEvent,
     VendorProfileUpdated,
 )
 from domain.vendors.interfaces import Page, PageRequest
@@ -439,6 +442,21 @@ def test_vendor_aggregate_unit_of_work_contract_persists_one_aggregate_with_pend
 
 def test_vendor_creation_unit_of_work_contract_adds_one_created_aggregate_with_pending_events():
     assert hasattr(VendorCreationUnitOfWork, "add_with_pending_events")
+
+
+def test_vendor_event_dispatcher_contract_persists_one_vendor_domain_event_for_publication():
+    signature = inspect.signature(VendorEventDispatcher.dispatch)
+    hints = get_type_hints(VendorEventDispatcher.dispatch)
+
+    assert tuple(signature.parameters) == ("self", "event")
+    assert hints["event"] is VendorDomainEvent
+    assert hints["return"] is type(None)
+
+
+def test_vendor_command_handlers_constructor_types_event_dispatcher_port():
+    hints = get_type_hints(VendorCommandHandlers.__init__)
+
+    assert hints["event_dispatcher"] is VendorEventDispatcher
 
 
 def test_profile_creation_requires_creation_unit_of_work():

@@ -45,6 +45,7 @@ from .ports import (
     VendorAggregateUnitOfWork,
     VendorAuthorizationPort,
     VendorCreationUnitOfWork,
+    VendorEventDispatcher,
     VendorIdempotencyPort,
     VendorReadPort,
 )
@@ -68,7 +69,7 @@ class VendorCommandHandlers:
         image_repo: IPortfolioImageRepository,
         package_repo: IServicePackageRepository,
         inquiry_repo: IInquiryRepository,
-        event_dispatcher,
+        event_dispatcher: VendorEventDispatcher,
         *,
         aggregate_uow: VendorAggregateUnitOfWork | None = None,
         creation_uow: VendorCreationUnitOfWork | None = None,

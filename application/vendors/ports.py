@@ -4,6 +4,7 @@ from typing import Callable, Protocol, Sequence, TypeVar
 import uuid
 
 from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
+from domain.vendors.events import VendorDomainEvent
 from domain.vendors.interfaces import Page, PageRequest
 
 from .commands import AuthenticatedActor, ModeratorActor
@@ -42,6 +43,12 @@ class VendorReadPort(Protocol):
     def analytics(self, vendor_id: uuid.UUID) -> dict: ...
 
     def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[dict]: ...
+
+
+class VendorEventDispatcher(Protocol):
+    """Persists a vendor domain event for publication."""
+
+    def dispatch(self, event: VendorDomainEvent) -> None: ...
 
 
 class VendorAggregateUnitOfWork(Protocol):
