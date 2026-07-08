@@ -6,7 +6,7 @@ import uuid
 from domain.vendors.entities import PortfolioImage
 from domain.vendors.interfaces import Page, PageRequest
 
-from .commands import AuthenticatedActor
+from .commands import AuthenticatedActor, ModeratorActor
 from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 
 T = TypeVar("T")
@@ -28,6 +28,8 @@ class VendorAuthorizationPort(Protocol):
     def assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None: ...
 
     def assert_actor_can_access_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None: ...
+
+    def assert_moderator_can_moderate_vendor(self, moderator: ModeratorActor, vendor_id: uuid.UUID) -> None: ...
 
 
 class VendorReadPort(Protocol):

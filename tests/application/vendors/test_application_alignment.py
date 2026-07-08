@@ -18,10 +18,14 @@ from application.vendors.commands import (
     DeactivateServicePackageCommand,
     DeletePortfolioImageCommand,
     MarkInquiryReadCommand,
+    ModeratorActor,
     ReorderPortfolioImagesCommand,
+    ReinstateVendorCommand,
+    RejectVendorCommand,
     ResourceVersion,
     SendInquiryCommand,
     SubmitVendorForReviewCommand,
+    SuspendVendorCommand,
     UpdateServicePackageCommand,
     UpdateVendorProfileCommand,
 )
@@ -61,12 +65,26 @@ def _actor(user_id: uuid.UUID | None = None) -> AuthenticatedActor:
     return AuthenticatedActor(user_id=user_id or uuid.uuid4())
 
 
+def _moderator(user_id: uuid.UUID | None = None) -> ModeratorActor:
+    return ModeratorActor(user_id=user_id or uuid.uuid4())
+
+
 def _profile(*, status=VendorStatus.DRAFT, version=0) -> VendorProfile:
     now = utc_now()
     kwargs = {}
     if status == VendorStatus.PENDING_REVIEW:
         kwargs.update(created_at=now, updated_at=now, submitted_at=now)
     if status == VendorStatus.APPROVED:
+        kwargs.update(created_at=now, updated_at=now, submitted_at=now, approved_at=now)
+    if status == VendorStatus.REJECTED:
+        kwargs.update(
+            created_at=now,
+            updated_at=now,
+            submitted_at=now,
+            rejected_at=now,
+            rejection_reason="Needs more complete verification details.",
+        )
+    if status == VendorStatus.SUSPENDED:
         kwargs.update(created_at=now, updated_at=now, submitted_at=now, approved_at=now)
     return VendorProfile(
         id=uuid.uuid4(),
@@ -306,6 +324,11 @@ class AuthorizationPort:
         if vendor_id in self.denied_vendor_ids:
             raise VendorOperationForbidden("Actor cannot access this vendor.")
 
+    def assert_moderator_can_moderate_vendor(self, moderator, vendor_id):
+        self.calls.append((moderator, vendor_id))
+        if vendor_id in self.denied_vendor_ids:
+            raise VendorOperationForbidden("Moderator cannot moderate this vendor.")
+
 
 class ReorderUow:
     def __init__(self, images):
@@ -364,11 +387,13 @@ def test_creation_uses_add_not_save_and_idempotency_replays_result():
 
 def test_idempotency_payload_conflict_raises_vendor_conflict():
     idem = IdempotencyPort()
-    handler = _handlers(idempotency_port=idem)
     actor = _actor()
+    profile = _profile(status=VendorStatus.APPROVED)
+    vendor_repo = VendorRepo([profile])
+    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=idem)
     base = CreateServicePackageCommand(
         actor=actor,
-        vendor_id=uuid.uuid4(),
+        vendor_id=profile.id,
         name="Standard",
         description="Clear package details for a full event.",
         price=Decimal("5000"),
@@ -409,6 +434,49 @@ def test_vendor_owned_commands_require_authenticated_actor_context():
 
     with pytest.raises(InvalidVendorCommand):
         UpdateVendorProfileCommand(actor=uuid.uuid4(), vendor_id=uuid.uuid4(), expected_version=1)
+
+
+def test_vendor_moderation_commands_require_moderator_actor_context():
+    moderation_commands = (
+        ApproveVendorCommand,
+        RejectVendorCommand,
+        SuspendVendorCommand,
+        ReinstateVendorCommand,
+    )
+
+    for command_type in moderation_commands:
+        assert "moderator" in command_type.__dataclass_fields__
+
+    with pytest.raises(InvalidVendorCommand):
+        ApproveVendorCommand(moderator=uuid.uuid4(), vendor_id=uuid.uuid4(), expected_version=1)
+
+
+def test_moderation_authorization_denial_happens_before_vendor_loads_or_transitions():
+    vendor_id = uuid.uuid4()
+    moderator = _moderator()
+    profile = _profile(status=VendorStatus.PENDING_REVIEW, version=1)
+    profile.id = vendor_id
+    repo = VendorRepo([profile])
+    auth = AuthorizationPort(denied_vendor_ids={vendor_id})
+    handler = _handlers(vendor_repo=repo, authorization_port=auth)
+
+    with pytest.raises(VendorOperationForbidden):
+        handler.approve_vendor(ApproveVendorCommand(moderator=moderator, vendor_id=vendor_id, expected_version=1))
+    with pytest.raises(VendorOperationForbidden):
+        handler.reject_vendor(
+            RejectVendorCommand(moderator=moderator, vendor_id=vendor_id, expected_version=1, reason="Incomplete")
+        )
+    with pytest.raises(VendorOperationForbidden):
+        handler.suspend_vendor(
+            SuspendVendorCommand(moderator=moderator, vendor_id=vendor_id, expected_version=1, reason="Policy")
+        )
+    with pytest.raises(VendorOperationForbidden):
+        handler.reinstate_vendor(ReinstateVendorCommand(moderator=moderator, vendor_id=vendor_id, expected_version=1))
+
+    assert repo.get_by_id_calls == []
+    assert repo.save_calls == []
+    assert profile.status == VendorStatus.PENDING_REVIEW
+    assert auth.calls == [(moderator, vendor_id)] * 4
 
 
 def test_authorization_denial_happens_before_vendor_owned_aggregate_loads_or_writes():
@@ -589,7 +657,9 @@ def test_lifecycle_events_are_pulled_from_aggregate_after_save():
     dispatcher = EventDispatcher()
     handler = _handlers(vendor_repo=repo, dispatcher=dispatcher)
 
-    result = handler.approve_vendor(ApproveVendorCommand(vendor_id=profile.id, expected_version=7))
+    result = handler.approve_vendor(
+        ApproveVendorCommand(moderator=_moderator(), vendor_id=profile.id, expected_version=7)
+    )
 
     assert result.status == VendorStatus.APPROVED.value
     assert repo.save_calls == [(profile, 7)]
@@ -665,6 +735,62 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
     assert len(inquiry_repo.add_calls) == 1
     assert inquiry_result.event_date == date.today() + timedelta(days=40)
     assert [type(event) for event in dispatcher.events] == [ServicePackageCreated, InquiryReceived]
+
+
+def test_create_service_package_loads_vendor_and_returns_stable_missing_vendor_error():
+    vendor_id = uuid.uuid4()
+    vendor_repo = VendorRepo()
+    package_repo = PackageRepo()
+    dispatcher = EventDispatcher()
+    handler = _handlers(vendor_repo=vendor_repo, package_repo=package_repo, dispatcher=dispatcher)
+
+    with pytest.raises(VendorResourceNotFound) as exc_info:
+        handler.create_service_package(
+            CreateServicePackageCommand(
+                actor=_actor(),
+                vendor_id=vendor_id,
+                name="Standard",
+                description="Clear package details for a full event.",
+                price=Decimal("5000"),
+            )
+        )
+
+    assert exc_info.value.code == "vendor_not_found"
+    assert vendor_repo.get_by_id_calls == [vendor_id]
+    assert package_repo.add_calls == []
+    assert dispatcher.events == []
+
+
+def test_create_service_package_policy_forbids_unapproved_vendor_statuses_before_package_creation():
+    forbidden_statuses = (
+        VendorStatus.DRAFT,
+        VendorStatus.PENDING_REVIEW,
+        VendorStatus.REJECTED,
+        VendorStatus.SUSPENDED,
+    )
+
+    for status in forbidden_statuses:
+        profile = _profile(status=status)
+        vendor_repo = VendorRepo([profile])
+        package_repo = PackageRepo()
+        dispatcher = EventDispatcher()
+        handler = _handlers(vendor_repo=vendor_repo, package_repo=package_repo, dispatcher=dispatcher)
+
+        with pytest.raises(VendorOperationForbidden) as exc_info:
+            handler.create_service_package(
+                CreateServicePackageCommand(
+                    actor=_actor(),
+                    vendor_id=profile.id,
+                    name="Standard",
+                    description="Clear package details for a full event.",
+                    price=Decimal("5000"),
+                )
+            )
+
+        assert exc_info.value.code == "vendor_service_package_creation_forbidden"
+        assert vendor_repo.get_by_id_calls == [profile.id]
+        assert package_repo.add_calls == []
+        assert dispatcher.events == []
 
 
 def test_inquiry_command_rejects_datetime_event_date():
