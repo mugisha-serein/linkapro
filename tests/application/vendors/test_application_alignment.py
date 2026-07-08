@@ -32,7 +32,7 @@ from application.vendors.commands import (
 from application.vendors.dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 from application.vendors.errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
-from application.vendors.ports import VendorAggregateUnitOfWork
+from application.vendors.ports import VendorAggregateUnitOfWork, VendorCreationUnitOfWork
 from application.vendors.queries import (
     GetVendorAnalyticsQuery,
     GetVendorDashboardSummaryQuery,
@@ -151,6 +151,20 @@ class EventDispatcher:
 
     def dispatch(self, event):
         self.events.append(event)
+
+
+class CreationUow:
+    def __init__(self):
+        self.add_calls = []
+        self.events = []
+        self.fail_on_add = False
+
+    def add_with_pending_events(self, aggregate):
+        self.add_calls.append(aggregate)
+        if self.fail_on_add:
+            raise RuntimeError("creation transaction failed")
+        self.events.extend(aggregate.pull_events())
+        return aggregate
 
 
 class AggregateUow:
@@ -381,6 +395,7 @@ class ReorderUow:
 def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_repo=None, dispatcher=None, **kwargs):
     kwargs.setdefault("authorization_port", AuthorizationPort())
     kwargs.setdefault("aggregate_uow", AggregateUow())
+    kwargs.setdefault("creation_uow", CreationUow())
     return VendorCommandHandlers(
         vendor_repo=vendor_repo or VendorRepo(),
         image_repo=image_repo or ImageRepo(),
@@ -391,11 +406,11 @@ def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_r
     )
 
 
-def test_creation_uses_aggregate_unit_of_work_and_idempotency_replays_result():
+def test_profile_creation_uses_creation_unit_of_work_and_idempotency_replays_result():
     idem = IdempotencyPort()
     vendor_repo = VendorRepo()
-    aggregate_uow = AggregateUow()
-    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=idem, aggregate_uow=aggregate_uow)
+    creation_uow = CreationUow()
+    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=idem, creation_uow=creation_uow)
     actor = _actor()
     cmd = CreateVendorProfileCommand(
         actor=actor,
@@ -412,7 +427,7 @@ def test_creation_uses_aggregate_unit_of_work_and_idempotency_replays_result():
     second = handler.create_profile(cmd)
 
     assert first is second
-    assert len(aggregate_uow.add_calls) == 1
+    assert len(creation_uow.add_calls) == 1
     assert vendor_repo.add_calls == []
     assert vendor_repo.save_calls == []
 
@@ -420,6 +435,68 @@ def test_creation_uses_aggregate_unit_of_work_and_idempotency_replays_result():
 def test_vendor_aggregate_unit_of_work_contract_persists_one_aggregate_with_pending_events():
     assert hasattr(VendorAggregateUnitOfWork, "add_with_pending_events")
     assert hasattr(VendorAggregateUnitOfWork, "save_with_pending_events")
+
+
+def test_vendor_creation_unit_of_work_contract_adds_one_created_aggregate_with_pending_events():
+    assert hasattr(VendorCreationUnitOfWork, "add_with_pending_events")
+
+
+def test_profile_creation_requires_creation_unit_of_work():
+    vendor_repo = VendorRepo()
+    dispatcher = EventDispatcher()
+    handler = _handlers(vendor_repo=vendor_repo, dispatcher=dispatcher, creation_uow=None)
+
+    with pytest.raises(InvalidVendorCommand) as exc_info:
+        handler.create_profile(
+            CreateVendorProfileCommand(
+                actor=_actor(),
+                business_name="New Vendor",
+                category="catering",
+                description="Reliable event catering and planning support.",
+                service_area="Kigali",
+                contact_email="new@example.com",
+                contact_phone="+250700000000",
+            )
+        )
+
+    assert exc_info.value.field_errors == {"creation_uow": ["Vendor creation unit of work is required."]}
+    assert vendor_repo.add_calls == []
+    assert vendor_repo.save_calls == []
+    assert dispatcher.events == []
+
+
+def test_profile_creation_unit_of_work_failure_is_not_cached_or_dispatched():
+    idem = IdempotencyPort()
+    vendor_repo = VendorRepo()
+    dispatcher = EventDispatcher()
+    creation_uow = CreationUow()
+    creation_uow.fail_on_add = True
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        dispatcher=dispatcher,
+        creation_uow=creation_uow,
+        idempotency_port=idem,
+    )
+    cmd = CreateVendorProfileCommand(
+        actor=_actor(),
+        business_name="New Vendor",
+        category="catering",
+        description="Reliable event catering and planning support.",
+        service_area="Kigali",
+        contact_email="new@example.com",
+        contact_phone="+250700000000",
+        idempotency_key="create-profile-fails",
+    )
+
+    with pytest.raises(RuntimeError):
+        handler.create_profile(cmd)
+
+    assert len(creation_uow.add_calls) == 1
+    assert creation_uow.events == []
+    assert vendor_repo.add_calls == []
+    assert vendor_repo.save_calls == []
+    assert dispatcher.events == []
+    assert idem.records == {}
 
 
 def test_idempotency_payload_conflict_raises_vendor_conflict():

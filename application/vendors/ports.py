@@ -11,6 +11,7 @@ from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 
 T = TypeVar("T")
 VendorAggregateT = TypeVar("VendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
+CreatedVendorAggregateT = TypeVar("CreatedVendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
 
 
 class VendorIdempotencyPort(Protocol):
@@ -54,6 +55,12 @@ class VendorAggregateUnitOfWork(Protocol):
         *,
         expected_version: int,
     ) -> VendorAggregateT: ...
+
+
+class VendorCreationUnitOfWork(Protocol):
+    """Atomically adds one newly created vendor aggregate with its pending creation events."""
+
+    def add_with_pending_events(self, aggregate: CreatedVendorAggregateT) -> CreatedVendorAggregateT: ...
 
 
 class PortfolioReorderUnitOfWork(Protocol):

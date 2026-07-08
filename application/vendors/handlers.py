@@ -44,6 +44,7 @@ from .ports import (
     PortfolioReorderUnitOfWork,
     VendorAggregateUnitOfWork,
     VendorAuthorizationPort,
+    VendorCreationUnitOfWork,
     VendorIdempotencyPort,
     VendorReadPort,
 )
@@ -70,6 +71,7 @@ class VendorCommandHandlers:
         event_dispatcher,
         *,
         aggregate_uow: VendorAggregateUnitOfWork | None = None,
+        creation_uow: VendorCreationUnitOfWork | None = None,
         authorization_port: VendorAuthorizationPort | None = None,
         idempotency_port: VendorIdempotencyPort | None = None,
         reorder_uow: PortfolioReorderUnitOfWork | None = None,
@@ -80,6 +82,7 @@ class VendorCommandHandlers:
         self.package_repo = package_repo
         self.inquiry_repo = inquiry_repo
         self.aggregate_uow = aggregate_uow
+        self.creation_uow = creation_uow
         self.authorization_port = authorization_port
         self.idempotency_port = idempotency_port
         self.reorder_uow = reorder_uow
@@ -101,7 +104,7 @@ class VendorCommandHandlers:
                 custom_category=cmd.custom_category,
                 website=cmd.website,
             )
-            saved = self._add_with_pending_events(profile)
+            saved = self._add_created_with_pending_events(profile)
             return self._to_profile_dto(saved)
 
         return self._run_idempotent("vendor_profile.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
@@ -326,6 +329,11 @@ class VendorCommandHandlers:
         if self.aggregate_uow is None:
             raise InvalidVendorCommand(field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]})
         return self.aggregate_uow.add_with_pending_events(aggregate)
+
+    def _add_created_with_pending_events(self, aggregate):
+        if self.creation_uow is None:
+            raise InvalidVendorCommand(field_errors={"creation_uow": ["Vendor creation unit of work is required."]})
+        return self.creation_uow.add_with_pending_events(aggregate)
 
     def _save_with_pending_events(self, aggregate, expected_version: int):
         if self.aggregate_uow is None:
