@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 import json
 import uuid
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Sequence
 
 from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile, VendorStatus
 from domain.vendors.inquiry_policy import ensure_vendor_can_receive_inquiry
@@ -42,6 +42,7 @@ from .errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidd
 from .ports import (
     PortfolioOrderAllocator,
     PortfolioReorderUnitOfWork,
+    VendorAggregateUnitOfWork,
     VendorAuthorizationPort,
     VendorIdempotencyPort,
     VendorReadPort,
@@ -68,6 +69,7 @@ class VendorCommandHandlers:
         inquiry_repo: IInquiryRepository,
         event_dispatcher,
         *,
+        aggregate_uow: VendorAggregateUnitOfWork | None = None,
         authorization_port: VendorAuthorizationPort | None = None,
         idempotency_port: VendorIdempotencyPort | None = None,
         reorder_uow: PortfolioReorderUnitOfWork | None = None,
@@ -77,7 +79,7 @@ class VendorCommandHandlers:
         self.image_repo = image_repo
         self.package_repo = package_repo
         self.inquiry_repo = inquiry_repo
-        self.event_dispatcher = event_dispatcher
+        self.aggregate_uow = aggregate_uow
         self.authorization_port = authorization_port
         self.idempotency_port = idempotency_port
         self.reorder_uow = reorder_uow
@@ -99,8 +101,7 @@ class VendorCommandHandlers:
                 custom_category=cmd.custom_category,
                 website=cmd.website,
             )
-            saved = self.vendor_repo.add(profile)
-            self._dispatch_pending_events(profile)
+            saved = self._add_with_pending_events(profile)
             return self._to_profile_dto(saved)
 
         return self._run_idempotent("vendor_profile.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
@@ -125,7 +126,7 @@ class VendorCommandHandlers:
             if getattr(cmd, field_name) is not OMITTED
         }
         profile.update_details(**updates)
-        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
+        return self._save_if_changed(profile, original_version, self._to_profile_dto)
 
     def submit_for_review(self, cmd: SubmitVendorForReviewCommand) -> VendorProfileDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -133,7 +134,7 @@ class VendorCommandHandlers:
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
         profile.submit_for_review()
-        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
+        return self._save_if_changed(profile, original_version, self._to_profile_dto)
 
     def approve_vendor(self, cmd: ApproveVendorCommand) -> VendorProfileDTO:
         self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
@@ -141,7 +142,7 @@ class VendorCommandHandlers:
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
         profile.approve()
-        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
+        return self._save_if_changed(profile, original_version, self._to_profile_dto)
 
     def reject_vendor(self, cmd: RejectVendorCommand) -> VendorProfileDTO:
         self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
@@ -149,7 +150,7 @@ class VendorCommandHandlers:
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
         profile.reject(cmd.reason)
-        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
+        return self._save_if_changed(profile, original_version, self._to_profile_dto)
 
     def suspend_vendor(self, cmd: SuspendVendorCommand) -> VendorProfileDTO:
         self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
@@ -157,7 +158,7 @@ class VendorCommandHandlers:
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
         profile.suspend(cmd.reason)
-        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
+        return self._save_if_changed(profile, original_version, self._to_profile_dto)
 
     def reinstate_vendor(self, cmd: ReinstateVendorCommand) -> VendorProfileDTO:
         self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
@@ -165,7 +166,7 @@ class VendorCommandHandlers:
         self._assert_expected_version(profile.version, cmd.expected_version)
         original_version = profile.version
         profile.reinstate()
-        return self._save_if_changed(self.vendor_repo, profile, original_version, self._to_profile_dto)
+        return self._save_if_changed(profile, original_version, self._to_profile_dto)
 
     def add_portfolio_image(self, cmd: AddPortfolioImageCommand) -> PortfolioImageDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -185,8 +186,7 @@ class VendorCommandHandlers:
                 caption=cmd.caption,
                 order=next_order,
             )
-            saved = self.image_repo.add(image)
-            self._dispatch_pending_events(image)
+            saved = self._add_with_pending_events(image)
             return self._to_image_dto(saved)
 
         return self._run_idempotent("portfolio_image.add", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
@@ -201,8 +201,7 @@ class VendorCommandHandlers:
         image.deactivate()
         if image.version == original_version:
             return
-        self.image_repo.save(image, expected_version=original_version)
-        self._dispatch_pending_events(image)
+        self._save_with_pending_events(image, original_version)
 
     def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> PageDTO[PortfolioImageDTO]:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -230,8 +229,6 @@ class VendorCommandHandlers:
             persisted = tuple(
                 self.reorder_uow.persist_reorder(cmd.vendor_id, changed, expected_versions=expected_versions)
             )
-            for image in changed:
-                self._dispatch_pending_events(image)
             image_map.update({image.id: image for image in persisted})
 
         ordered = tuple(self._to_image_dto(image_map[image_id]) for image_id in requested_ids)
@@ -251,8 +248,7 @@ class VendorCommandHandlers:
                 currency=cmd.currency,
                 package_tier=cmd.package_tier,
             )
-            saved = self.package_repo.add(package)
-            self._dispatch_pending_events(package)
+            saved = self._add_with_pending_events(package)
             return self._to_package_dto(saved)
 
         return self._run_idempotent("service_package.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
@@ -263,7 +259,7 @@ class VendorCommandHandlers:
         self._assert_expected_version(package.version, cmd.expected_version)
         original_version = package.version
         package.update_details(cmd.name, cmd.description, cmd.price, cmd.currency, cmd.package_tier)
-        return self._save_if_changed(self.package_repo, package, original_version, self._to_package_dto)
+        return self._save_if_changed(package, original_version, self._to_package_dto)
 
     def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -271,7 +267,7 @@ class VendorCommandHandlers:
         self._assert_expected_version(package.version, cmd.expected_version)
         original_version = package.version
         package.deactivate()
-        return self._save_if_changed(self.package_repo, package, original_version, self._to_package_dto)
+        return self._save_if_changed(package, original_version, self._to_package_dto)
 
     def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -279,7 +275,7 @@ class VendorCommandHandlers:
         self._assert_expected_version(package.version, cmd.expected_version)
         original_version = package.version
         package.activate()
-        return self._save_if_changed(self.package_repo, package, original_version, self._to_package_dto)
+        return self._save_if_changed(package, original_version, self._to_package_dto)
 
     def send_inquiry(self, cmd: SendInquiryCommand) -> InquiryDTO:
         def operation() -> InquiryDTO:
@@ -293,8 +289,7 @@ class VendorCommandHandlers:
                 message=cmd.message,
                 event_date=cmd.event_date,
             )
-            saved = self.inquiry_repo.add(inquiry)
-            self._dispatch_pending_events(inquiry)
+            saved = self._add_with_pending_events(inquiry)
             return self._to_inquiry_dto(saved)
 
         return self._run_idempotent("vendor_inquiry.send", cmd.vendor_id, cmd.idempotency_key, cmd, operation)
@@ -307,7 +302,7 @@ class VendorCommandHandlers:
         self._assert_expected_version(inquiry.version, cmd.expected_version)
         original_version = inquiry.version
         inquiry.mark_read()
-        return self._save_if_changed(self.inquiry_repo, inquiry, original_version, self._to_inquiry_dto)
+        return self._save_if_changed(inquiry, original_version, self._to_inquiry_dto)
 
     def _get_vendor_or_raise(self, vendor_id: uuid.UUID) -> VendorProfile:
         profile = self.vendor_repo.get_by_id(vendor_id)
@@ -321,16 +316,21 @@ class VendorCommandHandlers:
             raise VendorResourceNotFound("Package not found.")
         return package
 
-    def _save_if_changed(self, repo, aggregate, original_version: int, to_dto: Callable):
+    def _save_if_changed(self, aggregate, original_version: int, to_dto: Callable):
         if aggregate.version == original_version:
             return to_dto(aggregate)
-        saved = repo.save(aggregate, expected_version=original_version)
-        self._dispatch_pending_events(aggregate)
+        saved = self._save_with_pending_events(aggregate, original_version)
         return to_dto(saved)
 
-    def _dispatch_pending_events(self, aggregate) -> None:
-        for event in aggregate.pull_events():
-            self.event_dispatcher.dispatch(event)
+    def _add_with_pending_events(self, aggregate):
+        if self.aggregate_uow is None:
+            raise InvalidVendorCommand(field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]})
+        return self.aggregate_uow.add_with_pending_events(aggregate)
+
+    def _save_with_pending_events(self, aggregate, expected_version: int):
+        if self.aggregate_uow is None:
+            raise InvalidVendorCommand(field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]})
+        return self.aggregate_uow.save_with_pending_events(aggregate, expected_version=expected_version)
 
     def _assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None:
         if self.authorization_port is None:
