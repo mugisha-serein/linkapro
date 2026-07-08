@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
+import hashlib
 import json
 import uuid
 from typing import Callable, Sequence
@@ -115,7 +116,7 @@ class VendorCommandHandlers:
             saved = self._add_created_with_pending_events(profile)
             return self._to_profile_dto(saved)
 
-        return self._run_idempotent("vendor_profile.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
+        return self._run_required_idempotent("vendor_profile.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def update_profile(self, cmd: UpdateVendorProfileCommand) -> VendorProfileDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -202,7 +203,7 @@ class VendorCommandHandlers:
             saved = self._add_with_pending_events(image)
             return self._to_image_dto(saved)
 
-        return self._run_idempotent("portfolio_image.add", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
+        return self._run_required_idempotent("portfolio_image.add", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def delete_portfolio_image(self, cmd: DeletePortfolioImageCommand) -> None:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -262,7 +263,7 @@ class VendorCommandHandlers:
             saved = self._add_with_pending_events(package)
             return self._to_package_dto(saved)
 
-        return self._run_idempotent("service_package.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
+        return self._run_required_idempotent("service_package.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -303,7 +304,9 @@ class VendorCommandHandlers:
             saved = self._add_with_pending_events(inquiry)
             return self._to_inquiry_dto(saved)
 
-        return self._run_idempotent("vendor_inquiry.send", cmd.vendor_id, cmd.idempotency_key, cmd, operation)
+        return self._run_required_idempotent(
+            "vendor_inquiry.send", cmd.requester_id, cmd.idempotency_key, cmd, operation
+        )
 
     def mark_inquiry_read(self, cmd: MarkInquiryReadCommand) -> InquiryDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -387,6 +390,9 @@ class VendorCommandHandlers:
     def _run_idempotent(self, scope: str, actor_id: uuid.UUID, key: str | None, cmd, operation: Callable):
         if key is None:
             return operation()
+        return self._run_required_idempotent(scope, actor_id, key, cmd, operation)
+
+    def _run_required_idempotent(self, scope: str, actor_id: uuid.UUID, key: str, cmd, operation: Callable):
         if self.idempotency_port is None:
             raise VendorApplicationConfigurationError(
                 field_errors={"idempotency_key": ["Idempotency storage is required."]}
@@ -402,10 +408,14 @@ class VendorCommandHandlers:
 
     @staticmethod
     def _payload_fingerprint(cmd) -> str:
-        payload = asdict(cmd) if is_dataclass(cmd) else dict(cmd)
+        if is_dataclass(cmd):
+            payload = {field.name: getattr(cmd, field.name) for field in fields(cmd)}
+        else:
+            payload = dict(cmd)
         payload.pop("idempotency_key", None)
         payload = {key: value for key, value in payload.items() if value is not OMITTED}
-        return json.dumps(payload, sort_keys=True, default=str)
+        canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _to_profile_dto(profile: VendorProfile) -> VendorProfileDTO:
