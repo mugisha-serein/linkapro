@@ -209,13 +209,13 @@ class AddPortfolioImageCommand:
     vendor_id: uuid.UUID
     public_id: str
     secure_url: str
+    idempotency_key: str
     caption: Optional[str] = None
-    idempotency_key: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
-        object.__setattr__(self, "idempotency_key", _coerce_optional_idempotency_key(self.idempotency_key))
+        object.__setattr__(self, "idempotency_key", _coerce_required_idempotency_key(self.idempotency_key))
 
 
 @dataclass(frozen=True)

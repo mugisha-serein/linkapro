@@ -658,6 +658,66 @@ def test_profile_creation_always_requires_idempotency_storage():
     assert vendor_repo.add_calls == []
 
 
+def test_add_portfolio_image_command_requires_nonblank_idempotency_key():
+    idempotency_field = next(field for field in fields(AddPortfolioImageCommand) if field.name == "idempotency_key")
+
+    assert idempotency_field.default is MISSING
+
+    with pytest.raises(TypeError):
+        AddPortfolioImageCommand(
+            actor=_actor(),
+            vendor_id=uuid.uuid4(),
+            public_id="asset",
+            secure_url="https://example.com/image.jpg",
+        )
+
+    with pytest.raises(InvalidVendorCommand) as none_exc:
+        AddPortfolioImageCommand(
+            actor=_actor(),
+            vendor_id=uuid.uuid4(),
+            public_id="asset",
+            secure_url="https://example.com/image.jpg",
+            idempotency_key=None,
+        )
+
+    with pytest.raises(InvalidVendorCommand) as blank_exc:
+        AddPortfolioImageCommand(
+            actor=_actor(),
+            vendor_id=uuid.uuid4(),
+            public_id="asset",
+            secure_url="https://example.com/image.jpg",
+            idempotency_key="  ",
+        )
+
+    assert none_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
+    assert blank_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
+
+
+def test_add_portfolio_image_always_requires_idempotency_storage():
+    vendor_id = uuid.uuid4()
+    profile = _profile(status=VendorStatus.APPROVED)
+    profile.id = vendor_id
+    vendor_repo = VendorRepo([profile])
+    image_repo = ImageRepo()
+    handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo, idempotency_port=None)
+
+    with pytest.raises(VendorApplicationConfigurationError) as exc_info:
+        handler.add_portfolio_image(
+            AddPortfolioImageCommand(
+                actor=_actor(),
+                vendor_id=vendor_id,
+                public_id="asset",
+                secure_url="https://example.com/image.jpg",
+                idempotency_key="missing-storage",
+            )
+        )
+
+    assert exc_info.value.field_errors == {"idempotency_key": ["Idempotency storage is required."]}
+    assert vendor_repo.get_by_id_calls == []
+    assert image_repo.allocate_next_order_calls == []
+    assert image_repo.add_calls == []
+
+
 def test_missing_aggregate_unit_of_work_raises_configuration_error_for_create_and_update_paths():
     vendor_id = uuid.uuid4()
     actor = _actor()
@@ -665,7 +725,12 @@ def test_missing_aggregate_unit_of_work_raises_configuration_error_for_create_an
     approved.id = vendor_id
     vendor_repo = VendorRepo([approved])
     image_repo = ImageRepo()
-    handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo, aggregate_uow=None)
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        image_repo=image_repo,
+        aggregate_uow=None,
+        idempotency_port=IdempotencyPort(),
+    )
 
     with pytest.raises(VendorApplicationConfigurationError) as create_exc:
         handler.add_portfolio_image(
@@ -674,6 +739,7 @@ def test_missing_aggregate_unit_of_work_raises_configuration_error_for_create_an
                 vendor_id=vendor_id,
                 public_id="asset",
                 secure_url="https://example.com/image.jpg",
+                idempotency_key="missing-aggregate-uow",
             )
         )
 
@@ -698,12 +764,13 @@ def test_portfolio_dependencies_raise_configuration_error_when_missing_or_miscon
         _handlers(reorder_uow=None)
 
     with pytest.raises(VendorApplicationConfigurationError) as order_exc:
-        _handlers(vendor_repo=vendor_repo, order_allocator=object()).add_portfolio_image(
+        _handlers(vendor_repo=vendor_repo, order_allocator=object(), idempotency_port=IdempotencyPort()).add_portfolio_image(
             AddPortfolioImageCommand(
                 actor=_actor(),
                 vendor_id=vendor_id,
                 public_id="asset",
                 secure_url="https://example.com/image.jpg",
+                idempotency_key="misconfigured-order-allocation",
             )
         )
 
@@ -1051,6 +1118,7 @@ def test_authorization_denial_happens_before_vendor_owned_aggregate_loads_or_wri
                 vendor_id=vendor_id,
                 public_id="asset",
                 secure_url="https://example.com/a.jpg",
+                idempotency_key="blocked-portfolio-add",
             )
         )
     with pytest.raises(VendorOperationForbidden):
@@ -1101,7 +1169,12 @@ def test_add_portfolio_media_loads_vendor_and_returns_stable_missing_vendor_erro
     vendor_repo = VendorRepo()
     image_repo = ImageRepo()
     dispatcher = EventDispatcher()
-    handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo, dispatcher=dispatcher)
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        image_repo=image_repo,
+        dispatcher=dispatcher,
+        idempotency_port=IdempotencyPort(),
+    )
 
     with pytest.raises(VendorResourceNotFound) as exc_info:
         handler.add_portfolio_image(
@@ -1110,6 +1183,7 @@ def test_add_portfolio_media_loads_vendor_and_returns_stable_missing_vendor_erro
                 vendor_id=vendor_id,
                 public_id="asset",
                 secure_url="https://example.com/image.jpg",
+                idempotency_key="missing-portfolio-vendor",
             )
         )
 
@@ -1125,7 +1199,12 @@ def test_add_portfolio_media_policy_forbids_suspended_vendor_before_order_alloca
     vendor_repo = VendorRepo([profile])
     image_repo = ImageRepo()
     dispatcher = EventDispatcher()
-    handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo, dispatcher=dispatcher)
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        image_repo=image_repo,
+        dispatcher=dispatcher,
+        idempotency_port=IdempotencyPort(),
+    )
 
     with pytest.raises(VendorOperationForbidden) as exc_info:
         handler.add_portfolio_image(
@@ -1134,6 +1213,7 @@ def test_add_portfolio_media_policy_forbids_suspended_vendor_before_order_alloca
                 vendor_id=profile.id,
                 public_id="asset",
                 secure_url="https://example.com/image.jpg",
+                idempotency_key="forbidden-portfolio-add",
             )
         )
 
@@ -1158,7 +1238,12 @@ def test_add_portfolio_media_allowed_statuses_keep_existing_order_allocation_pat
         vendor_repo = VendorRepo([profile])
         image_repo = ImageRepo([existing])
         aggregate_uow = AggregateUow()
-        handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo, aggregate_uow=aggregate_uow)
+        handler = _handlers(
+            vendor_repo=vendor_repo,
+            image_repo=image_repo,
+            aggregate_uow=aggregate_uow,
+            idempotency_port=IdempotencyPort(),
+        )
 
         result = handler.add_portfolio_image(
             AddPortfolioImageCommand(
@@ -1166,6 +1251,7 @@ def test_add_portfolio_media_allowed_statuses_keep_existing_order_allocation_pat
                 vendor_id=profile.id,
                 public_id="asset-new",
                 secure_url="https://example.com/new-image.jpg",
+                idempotency_key=f"allowed-portfolio-add-{status.value}",
             )
         )
 

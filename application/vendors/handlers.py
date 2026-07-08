@@ -203,7 +203,7 @@ class VendorCommandHandlers:
             saved = self._add_with_pending_events(image)
             return self._to_image_dto(saved)
 
-        return self._run_idempotent("portfolio_image.add", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
+        return self._run_required_idempotent("portfolio_image.add", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def delete_portfolio_image(self, cmd: DeletePortfolioImageCommand) -> None:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
