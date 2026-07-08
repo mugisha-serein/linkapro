@@ -7,7 +7,7 @@ from pathlib import Path
 import ast
 import inspect
 import uuid
-from typing import get_type_hints
+from typing import get_args, get_origin, get_type_hints
 
 import pytest
 
@@ -43,9 +43,16 @@ from application.vendors.errors import (
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
 from application.vendors.ports import (
     PortfolioReorderUnitOfWork,
+    VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER,
     VendorAggregateUnitOfWork,
     VendorCreationUnitOfWork,
     VendorEventDispatcher,
+    VendorIdempotencyCompleted,
+    VendorIdempotencyExpired,
+    VendorIdempotencyInProgress,
+    VendorIdempotencyOutcome,
+    VendorIdempotencyPort,
+    VendorIdempotencyRetryableFailed,
 )
 from application.vendors.queries import (
     GetVendorAnalyticsQuery,
@@ -531,6 +538,59 @@ def test_vendor_aggregate_unit_of_work_contract_persists_one_aggregate_with_pend
 
 def test_vendor_creation_unit_of_work_contract_adds_one_created_aggregate_with_pending_events():
     assert hasattr(VendorCreationUnitOfWork, "add_with_pending_events")
+
+
+def test_vendor_idempotency_contract_defines_expiration_and_typed_record_outcomes():
+    completed = VendorIdempotencyCompleted(payload_fingerprint="fingerprint", result={"id": "created"})
+    in_progress = VendorIdempotencyInProgress(payload_fingerprint="fingerprint")
+    retryable_failed = VendorIdempotencyRetryableFailed(payload_fingerprint="fingerprint")
+    expired = VendorIdempotencyExpired(payload_fingerprint="fingerprint")
+    outcome_types = get_args(VendorIdempotencyOutcome)
+
+    assert VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER == timedelta(hours=24)
+    assert completed.status == "completed"
+    assert completed.result == {"id": "created"}
+    assert in_progress.status == "in_progress"
+    assert retryable_failed.status == "retryable_failed"
+    assert expired.status == "expired"
+    assert {field.name for field in fields(VendorIdempotencyCompleted)} == {
+        "payload_fingerprint",
+        "result",
+        "status",
+    }
+    assert get_origin(outcome_types[0]) is VendorIdempotencyCompleted
+    assert set(outcome_types[1:]) == {
+        VendorIdempotencyInProgress,
+        VendorIdempotencyRetryableFailed,
+        VendorIdempotencyExpired,
+    }
+
+
+def test_vendor_idempotency_port_contract_exposes_outcome_lookup_with_application_expiration():
+    signature = inspect.signature(VendorIdempotencyPort.get_outcome)
+    hints = get_type_hints(VendorIdempotencyPort.get_outcome)
+
+    assert tuple(signature.parameters) == (
+        "self",
+        "scope",
+        "actor_id",
+        "key",
+        "payload_fingerprint",
+        "expires_after",
+    )
+    assert signature.parameters["expires_after"].default == VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER
+    assert hints["actor_id"] is uuid.UUID
+    assert hints["expires_after"] is timedelta
+    return_args = get_args(hints["return"])
+    outcome_args = tuple(arg for arg in return_args if arg is not type(None))
+
+    assert any(get_origin(arg) is VendorIdempotencyCompleted for arg in outcome_args)
+    assert {arg for arg in outcome_args if get_origin(arg) is None} == {
+        VendorIdempotencyInProgress,
+        VendorIdempotencyRetryableFailed,
+        VendorIdempotencyExpired,
+    }
+    assert type(None) in return_args
 
 
 def test_vendor_event_dispatcher_contract_persists_one_vendor_domain_event_for_publication():
