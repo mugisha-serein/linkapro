@@ -36,6 +36,10 @@ def _coerce_expected_version(value, field_name: str = "expected_version") -> int
 def _coerce_optional_idempotency_key(value: str | None) -> str | None:
     if value is None:
         return None
+    return _coerce_required_idempotency_key(value)
+
+
+def _coerce_required_idempotency_key(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise InvalidVendorCommand(field_errors={"idempotency_key": ["Must be a nonblank string."]})
     key = value.strip()
@@ -108,13 +112,13 @@ class CreateVendorProfileCommand:
     service_area: str
     contact_email: str
     contact_phone: str
+    idempotency_key: str
     custom_category: Optional[str] = None
     website: Optional[str] = None
-    idempotency_key: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "actor", _coerce_actor(self.actor))
-        object.__setattr__(self, "idempotency_key", _coerce_optional_idempotency_key(self.idempotency_key))
+        object.__setattr__(self, "idempotency_key", _coerce_required_idempotency_key(self.idempotency_key))
 
 
 @dataclass(frozen=True)

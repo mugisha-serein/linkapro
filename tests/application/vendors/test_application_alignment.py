@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import MISSING, fields
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -207,6 +208,7 @@ class VendorRepo:
         self.add_calls = []
         self.save_calls = []
         self.get_by_id_calls = []
+        self.get_by_user_id_calls = []
         self.fail_on_save = False
 
     def add(self, profile):
@@ -226,6 +228,7 @@ class VendorRepo:
         return self.profiles.get(vendor_id)
 
     def get_by_user_id(self, user_id):
+        self.get_by_user_id_calls.append(user_id)
         return next((profile for profile in self.profiles.values() if profile.user_id == user_id), None)
 
     def list_by_status(self, status, page):
@@ -561,7 +564,12 @@ def test_vendor_application_configuration_error_has_dedicated_code():
 def test_profile_creation_requires_creation_unit_of_work():
     vendor_repo = VendorRepo()
     dispatcher = EventDispatcher()
-    handler = _handlers(vendor_repo=vendor_repo, dispatcher=dispatcher, creation_uow=None)
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        dispatcher=dispatcher,
+        creation_uow=None,
+        idempotency_port=IdempotencyPort(),
+    )
 
     with pytest.raises(VendorApplicationConfigurationError) as exc_info:
         handler.create_profile(
@@ -573,6 +581,7 @@ def test_profile_creation_requires_creation_unit_of_work():
                 service_area="Kigali",
                 contact_email="new@example.com",
                 contact_phone="+250700000000",
+                idempotency_key="missing-creation-uow",
             )
         )
 
@@ -582,8 +591,53 @@ def test_profile_creation_requires_creation_unit_of_work():
     assert dispatcher.events == []
 
 
-def test_idempotent_commands_require_idempotency_storage_when_key_is_present():
-    handler = _handlers(idempotency_port=None)
+def test_profile_creation_command_requires_nonblank_idempotency_key():
+    idempotency_field = next(field for field in fields(CreateVendorProfileCommand) if field.name == "idempotency_key")
+
+    assert idempotency_field.default is MISSING
+
+    with pytest.raises(TypeError):
+        CreateVendorProfileCommand(
+            actor=_actor(),
+            business_name="New Vendor",
+            category="catering",
+            description="Reliable event catering and planning support.",
+            service_area="Kigali",
+            contact_email="new@example.com",
+            contact_phone="+250700000000",
+        )
+
+    with pytest.raises(InvalidVendorCommand) as none_exc:
+        CreateVendorProfileCommand(
+            actor=_actor(),
+            business_name="New Vendor",
+            category="catering",
+            description="Reliable event catering and planning support.",
+            service_area="Kigali",
+            contact_email="new@example.com",
+            contact_phone="+250700000000",
+            idempotency_key=None,
+        )
+
+    with pytest.raises(InvalidVendorCommand) as blank_exc:
+        CreateVendorProfileCommand(
+            actor=_actor(),
+            business_name="New Vendor",
+            category="catering",
+            description="Reliable event catering and planning support.",
+            service_area="Kigali",
+            contact_email="new@example.com",
+            contact_phone="+250700000000",
+            idempotency_key="  ",
+        )
+
+    assert none_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
+    assert blank_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
+
+
+def test_profile_creation_always_requires_idempotency_storage():
+    vendor_repo = VendorRepo()
+    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=None)
 
     with pytest.raises(VendorApplicationConfigurationError) as exc_info:
         handler.create_profile(
@@ -600,6 +654,8 @@ def test_idempotent_commands_require_idempotency_storage_when_key_is_present():
         )
 
     assert exc_info.value.field_errors == {"idempotency_key": ["Idempotency storage is required."]}
+    assert vendor_repo.get_by_user_id_calls == []
+    assert vendor_repo.add_calls == []
 
 
 def test_missing_aggregate_unit_of_work_raises_configuration_error_for_create_and_update_paths():

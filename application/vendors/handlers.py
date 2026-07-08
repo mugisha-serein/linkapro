@@ -116,7 +116,7 @@ class VendorCommandHandlers:
             saved = self._add_created_with_pending_events(profile)
             return self._to_profile_dto(saved)
 
-        return self._run_idempotent("vendor_profile.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
+        return self._run_required_idempotent("vendor_profile.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def update_profile(self, cmd: UpdateVendorProfileCommand) -> VendorProfileDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -388,6 +388,9 @@ class VendorCommandHandlers:
     def _run_idempotent(self, scope: str, actor_id: uuid.UUID, key: str | None, cmd, operation: Callable):
         if key is None:
             return operation()
+        return self._run_required_idempotent(scope, actor_id, key, cmd, operation)
+
+    def _run_required_idempotent(self, scope: str, actor_id: uuid.UUID, key: str, cmd, operation: Callable):
         if self.idempotency_port is None:
             raise VendorApplicationConfigurationError(
                 field_errors={"idempotency_key": ["Idempotency storage is required."]}
