@@ -29,6 +29,7 @@ from domain.vendors.events import (
     ServicePackageSubmittedForApproval,
     ServicePackageUpdated,
     VendorApproved,
+    VendorProfileUpdated,
     VendorRejected,
     VendorReinstated,
     VendorSubmittedForReview,
@@ -79,6 +80,9 @@ class VendorStatus(str, Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     SUSPENDED = "suspended"
+
+
+_UNSET = object()
 
 
 class ServiceCategory(str, Enum):
@@ -491,6 +495,69 @@ class VendorProfile(DomainAggregate):
     @property
     def is_profile_complete(self) -> bool:
         return not self.get_profile_completion_errors()
+
+    def update_details(
+        self,
+        *,
+        business_name=_UNSET,
+        category=_UNSET,
+        description=_UNSET,
+        service_area=_UNSET,
+        contact_email=_UNSET,
+        contact_phone=_UNSET,
+        custom_category=_UNSET,
+        website=_UNSET,
+        profile_image_url=_UNSET,
+        profile_image_public_id=_UNSET,
+        cover_image_url=_UNSET,
+        cover_image_public_id=_UNSET,
+    ) -> None:
+        candidate = replace(
+            self,
+            business_name=self.business_name if business_name is _UNSET else business_name,
+            category=self.category if category is _UNSET else category,
+            description=self.description if description is _UNSET else description,
+            service_area=self.service_area if service_area is _UNSET else service_area,
+            contact_email=self.contact_email if contact_email is _UNSET else contact_email,
+            contact_phone=self.contact_phone if contact_phone is _UNSET else contact_phone,
+            custom_category=self.custom_category if custom_category is _UNSET else custom_category,
+            website=self.website if website is _UNSET else website,
+            profile_image_url=self.profile_image_url if profile_image_url is _UNSET else profile_image_url,
+            profile_image_public_id=(
+                self.profile_image_public_id if profile_image_public_id is _UNSET else profile_image_public_id
+            ),
+            cover_image_url=self.cover_image_url if cover_image_url is _UNSET else cover_image_url,
+            cover_image_public_id=self.cover_image_public_id if cover_image_public_id is _UNSET else cover_image_public_id,
+        )
+        changed_fields = (
+            "business_name",
+            "category",
+            "description",
+            "service_area",
+            "contact_email",
+            "contact_phone",
+            "custom_category",
+            "website",
+            "profile_image_url",
+            "profile_image_public_id",
+            "cover_image_url",
+            "cover_image_public_id",
+        )
+        if all(getattr(candidate, field_name) == getattr(self, field_name) for field_name in changed_fields):
+            return
+
+        now = utc_now()
+        candidate = replace(candidate, updated_at=now)
+        self._commit_candidate(
+            candidate,
+            lambda version: VendorProfileUpdated(
+                vendor_id=self.id,
+                user_id=self.user_id,
+                occurred_at=now,
+                aggregate_id=self.id,
+                aggregate_version=version,
+            ),
+        )
 
     def submit_for_review(self) -> None:
         if self.status not in (VendorStatus.DRAFT, VendorStatus.REJECTED):
