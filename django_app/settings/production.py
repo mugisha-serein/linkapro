@@ -17,12 +17,23 @@ if render_external_hostname and render_external_hostname not in ALLOWED_HOSTS:
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured("ALLOWED_HOSTS must be set.")
 
-if not (os.environ.get("DJANGO_DATABASE_URL") or os.environ.get("DATABASE_URL")):
+django_database_url = (
+    os.environ.get("DJANGO_DATABASE_URL")
+    or os.environ.get("DATABASE_URL")
+    or ""
+).strip()
+if not django_database_url:
     raise ImproperlyConfigured("DJANGO_DATABASE_URL must be set.")
+if django_database_url.startswith(("postgresql+asyncpg://", "postgres+asyncpg://")):
+    raise ImproperlyConfigured(
+        "DJANGO_DATABASE_URL must use a Django-compatible PostgreSQL scheme "
+        "such as postgresql:// or postgres://, not asyncpg."
+    )
 
 DATABASES["default"] = dj_database_url.parse(
+    django_database_url,
     conn_max_age=600,
-    ssl_require=True
+    ssl_require=True,
 )
 
 CORS_ALLOWED_ORIGINS = _csv_env("CORS_ALLOWED_ORIGINS")
