@@ -691,6 +691,99 @@ def test_idempotency_payload_conflict_raises_vendor_conflict():
         handler.create_service_package(changed)
 
 
+def test_idempotency_key_is_trimmed_and_limited_to_200_characters():
+    actor = _actor()
+    vendor_id = uuid.uuid4()
+    max_key = "k" * 200
+
+    create_profile = CreateVendorProfileCommand(
+        actor=actor,
+        business_name="New Vendor",
+        category="catering",
+        description="Reliable event catering and planning support.",
+        service_area="Kigali",
+        contact_email="new@example.com",
+        contact_phone="+250700000000",
+        idempotency_key=f"  {max_key}  ",
+    )
+    portfolio = AddPortfolioImageCommand(
+        actor=actor,
+        vendor_id=vendor_id,
+        public_id="asset",
+        secure_url="https://example.com/image.jpg",
+        idempotency_key=max_key,
+    )
+    package = CreateServicePackageCommand(
+        actor=actor,
+        vendor_id=vendor_id,
+        name="Standard",
+        description="Clear package details for a full event.",
+        price=Decimal("5000"),
+        idempotency_key=max_key,
+    )
+    inquiry = SendInquiryCommand(
+        vendor_id=vendor_id,
+        client_name="Planner",
+        client_email="planner@example.com",
+        message="Can you support my event?",
+        idempotency_key=max_key,
+    )
+
+    assert create_profile.idempotency_key == max_key
+    assert portfolio.idempotency_key == max_key
+    assert package.idempotency_key == max_key
+    assert inquiry.idempotency_key == max_key
+
+
+def test_oversized_idempotency_key_raises_stable_field_error_after_trimming():
+    actor = _actor()
+    vendor_id = uuid.uuid4()
+    oversized = f"  {'k' * 201}  "
+    expected_errors = {"idempotency_key": ["Must be 200 characters or fewer."]}
+
+    with pytest.raises(InvalidVendorCommand) as profile_exc:
+        CreateVendorProfileCommand(
+            actor=actor,
+            business_name="New Vendor",
+            category="catering",
+            description="Reliable event catering and planning support.",
+            service_area="Kigali",
+            contact_email="new@example.com",
+            contact_phone="+250700000000",
+            idempotency_key=oversized,
+        )
+    with pytest.raises(InvalidVendorCommand) as image_exc:
+        AddPortfolioImageCommand(
+            actor=actor,
+            vendor_id=vendor_id,
+            public_id="asset",
+            secure_url="https://example.com/image.jpg",
+            idempotency_key=oversized,
+        )
+    with pytest.raises(InvalidVendorCommand) as package_exc:
+        CreateServicePackageCommand(
+            actor=actor,
+            vendor_id=vendor_id,
+            name="Standard",
+            description="Clear package details for a full event.",
+            price=Decimal("5000"),
+            idempotency_key=oversized,
+        )
+    with pytest.raises(InvalidVendorCommand) as inquiry_exc:
+        SendInquiryCommand(
+            vendor_id=vendor_id,
+            client_name="Planner",
+            client_email="planner@example.com",
+            message="Can you support my event?",
+            idempotency_key=oversized,
+        )
+
+    assert profile_exc.value.field_errors == expected_errors
+    assert image_exc.value.field_errors == expected_errors
+    assert package_exc.value.field_errors == expected_errors
+    assert inquiry_exc.value.field_errors == expected_errors
+
+
 def test_vendor_owned_commands_require_authenticated_actor_context():
     vendor_owned_commands = (
         CreateVendorProfileCommand,

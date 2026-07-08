@@ -15,6 +15,7 @@ class _Omitted:
 
 
 OMITTED = _Omitted()
+MAX_IDEMPOTENCY_KEY_LENGTH = 200
 
 
 def _coerce_uuid(value, field_name: str) -> uuid.UUID:
@@ -37,7 +38,10 @@ def _coerce_optional_idempotency_key(value: str | None) -> str | None:
         return None
     if not isinstance(value, str) or not value.strip():
         raise InvalidVendorCommand(field_errors={"idempotency_key": ["Must be a nonblank string."]})
-    return value.strip()
+    key = value.strip()
+    if len(key) > MAX_IDEMPOTENCY_KEY_LENGTH:
+        raise InvalidVendorCommand(field_errors={"idempotency_key": ["Must be 200 characters or fewer."]})
+    return key
 
 
 def _coerce_price(value) -> Decimal:
