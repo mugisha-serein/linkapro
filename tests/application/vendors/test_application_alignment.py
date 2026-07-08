@@ -32,6 +32,7 @@ from application.vendors.commands import (
 from application.vendors.dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 from application.vendors.errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
+from application.vendors.ports import VendorAggregateUnitOfWork
 from application.vendors.queries import (
     GetVendorAnalyticsQuery,
     GetVendorDashboardSummaryQuery,
@@ -150,6 +151,26 @@ class EventDispatcher:
 
     def dispatch(self, event):
         self.events.append(event)
+
+
+class AggregateUow:
+    def __init__(self):
+        self.add_calls = []
+        self.save_calls = []
+        self.events = []
+        self.fail_on_save = False
+
+    def add_with_pending_events(self, aggregate):
+        self.add_calls.append(aggregate)
+        self.events.extend(aggregate.pull_events())
+        return aggregate
+
+    def save_with_pending_events(self, aggregate, *, expected_version):
+        self.save_calls.append((aggregate, expected_version))
+        if self.fail_on_save:
+            raise RuntimeError("persistence failed")
+        self.events.extend(aggregate.pull_events())
+        return aggregate
 
 
 class VendorRepo:
@@ -340,6 +361,7 @@ class ReorderUow:
         self.images = tuple(images)
         self.persist_calls = []
         self.list_calls = []
+        self.events = []
         self.fail = False
 
     def list_vendor_images(self, vendor_id, page):
@@ -351,11 +373,14 @@ class ReorderUow:
         self.persist_calls.append((vendor_id, tuple(images), expected_versions))
         if self.fail:
             raise RuntimeError("transaction failed")
+        for image in images:
+            self.events.extend(image.pull_events())
         return tuple(images)
 
 
 def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_repo=None, dispatcher=None, **kwargs):
     kwargs.setdefault("authorization_port", AuthorizationPort())
+    kwargs.setdefault("aggregate_uow", AggregateUow())
     return VendorCommandHandlers(
         vendor_repo=vendor_repo or VendorRepo(),
         image_repo=image_repo or ImageRepo(),
@@ -366,10 +391,11 @@ def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_r
     )
 
 
-def test_creation_uses_add_not_save_and_idempotency_replays_result():
+def test_creation_uses_aggregate_unit_of_work_and_idempotency_replays_result():
     idem = IdempotencyPort()
     vendor_repo = VendorRepo()
-    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=idem)
+    aggregate_uow = AggregateUow()
+    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=idem, aggregate_uow=aggregate_uow)
     actor = _actor()
     cmd = CreateVendorProfileCommand(
         actor=actor,
@@ -386,8 +412,14 @@ def test_creation_uses_add_not_save_and_idempotency_replays_result():
     second = handler.create_profile(cmd)
 
     assert first is second
-    assert len(vendor_repo.add_calls) == 1
+    assert len(aggregate_uow.add_calls) == 1
+    assert vendor_repo.add_calls == []
     assert vendor_repo.save_calls == []
+
+
+def test_vendor_aggregate_unit_of_work_contract_persists_one_aggregate_with_pending_events():
+    assert hasattr(VendorAggregateUnitOfWork, "add_with_pending_events")
+    assert hasattr(VendorAggregateUnitOfWork, "save_with_pending_events")
 
 
 def test_idempotency_payload_conflict_raises_vendor_conflict():
@@ -623,7 +655,8 @@ def test_add_portfolio_media_allowed_statuses_keep_existing_order_allocation_pat
         existing = _image(profile.id, order=0)
         vendor_repo = VendorRepo([profile])
         image_repo = ImageRepo([existing])
-        handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo)
+        aggregate_uow = AggregateUow()
+        handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo, aggregate_uow=aggregate_uow)
 
         result = handler.add_portfolio_image(
             AddPortfolioImageCommand(
@@ -637,7 +670,7 @@ def test_add_portfolio_media_allowed_statuses_keep_existing_order_allocation_pat
         assert result.order == 1
         assert vendor_repo.get_by_id_calls == [profile.id]
         assert image_repo.allocate_next_order_calls == [profile.id]
-        assert len(image_repo.add_calls) == 1
+        assert len(aggregate_uow.add_calls) == 1
 
 
 def test_expected_version_is_required_and_stale_commands_fail_before_mutation():
@@ -657,11 +690,12 @@ def test_expected_version_is_required_and_stale_commands_fail_before_mutation():
     assert repo.save_calls == []
 
 
-def test_profile_update_uses_domain_transition_saves_expected_version_and_dispatches_domain_event():
+def test_profile_update_uses_domain_transition_and_atomic_uow_persists_event():
     profile = _profile(version=2)
     repo = VendorRepo([profile])
     dispatcher = EventDispatcher()
-    handler = _handlers(vendor_repo=repo, dispatcher=dispatcher)
+    aggregate_uow = AggregateUow()
+    handler = _handlers(vendor_repo=repo, dispatcher=dispatcher, aggregate_uow=aggregate_uow)
 
     result = handler.update_profile(
         UpdateVendorProfileCommand(
@@ -676,17 +710,20 @@ def test_profile_update_uses_domain_transition_saves_expected_version_and_dispat
     assert result.business_name == "Updated Vendor"
     assert result.contact_email == "updated@example.com"
     assert result.version == 3
-    assert repo.save_calls == [(profile, 2)]
-    assert len(dispatcher.events) == 1
-    assert isinstance(dispatcher.events[0], VendorProfileUpdated)
-    assert dispatcher.events[0].aggregate_version == 3
+    assert repo.save_calls == []
+    assert aggregate_uow.save_calls == [(profile, 2)]
+    assert dispatcher.events == []
+    assert len(aggregate_uow.events) == 1
+    assert isinstance(aggregate_uow.events[0], VendorProfileUpdated)
+    assert aggregate_uow.events[0].aggregate_version == 3
 
 
-def test_noop_update_does_not_save_or_dispatch():
+def test_noop_update_does_not_persist_or_emit_events():
     profile = _profile(version=2)
     repo = VendorRepo([profile])
     dispatcher = EventDispatcher()
-    handler = _handlers(vendor_repo=repo, dispatcher=dispatcher)
+    aggregate_uow = AggregateUow()
+    handler = _handlers(vendor_repo=repo, dispatcher=dispatcher, aggregate_uow=aggregate_uow)
 
     result = handler.update_profile(
         UpdateVendorProfileCommand(
@@ -700,21 +737,26 @@ def test_noop_update_does_not_save_or_dispatch():
 
     assert result.version == 2
     assert repo.save_calls == []
+    assert aggregate_uow.save_calls == []
+    assert aggregate_uow.events == []
     assert dispatcher.events == []
 
 
-def test_failed_persistence_dispatches_no_events():
+def test_failed_atomic_persistence_records_no_events():
     profile = _profile(version=1)
     repo = VendorRepo([profile])
-    repo.fail_on_save = True
+    aggregate_uow = AggregateUow()
+    aggregate_uow.fail_on_save = True
     dispatcher = EventDispatcher()
-    handler = _handlers(vendor_repo=repo, dispatcher=dispatcher)
+    handler = _handlers(vendor_repo=repo, dispatcher=dispatcher, aggregate_uow=aggregate_uow)
 
     with pytest.raises(RuntimeError):
         handler.update_profile(
             UpdateVendorProfileCommand(actor=_actor(), vendor_id=profile.id, expected_version=1, business_name="New")
         )
 
+    assert aggregate_uow.save_calls == [(profile, 1)]
+    assert aggregate_uow.events == []
     assert dispatcher.events == []
 
 
@@ -723,32 +765,38 @@ def test_profile_validation_failure_is_atomic():
     original = profile.__dict__.copy()
     repo = VendorRepo([profile])
     dispatcher = EventDispatcher()
+    aggregate_uow = AggregateUow()
 
     with pytest.raises(Exception):
-        _handlers(vendor_repo=repo, dispatcher=dispatcher).update_profile(
+        _handlers(vendor_repo=repo, dispatcher=dispatcher, aggregate_uow=aggregate_uow).update_profile(
             UpdateVendorProfileCommand(actor=_actor(), vendor_id=profile.id, expected_version=1, contact_email="not-email")
         )
 
     assert profile.__dict__ == original
     assert repo.save_calls == []
+    assert aggregate_uow.save_calls == []
+    assert aggregate_uow.events == []
     assert dispatcher.events == []
 
 
-def test_lifecycle_events_are_pulled_from_aggregate_after_save():
+def test_lifecycle_events_are_persisted_by_aggregate_uow():
     profile = _profile(status=VendorStatus.PENDING_REVIEW, version=7)
     repo = VendorRepo([profile])
     dispatcher = EventDispatcher()
-    handler = _handlers(vendor_repo=repo, dispatcher=dispatcher)
+    aggregate_uow = AggregateUow()
+    handler = _handlers(vendor_repo=repo, dispatcher=dispatcher, aggregate_uow=aggregate_uow)
 
     result = handler.approve_vendor(
         ApproveVendorCommand(moderator=_moderator(), vendor_id=profile.id, expected_version=7)
     )
 
     assert result.status == VendorStatus.APPROVED.value
-    assert repo.save_calls == [(profile, 7)]
-    assert len(dispatcher.events) == 1
-    assert isinstance(dispatcher.events[0], VendorApproved)
-    assert dispatcher.events[0].event_id
+    assert repo.save_calls == []
+    assert aggregate_uow.save_calls == [(profile, 7)]
+    assert dispatcher.events == []
+    assert len(aggregate_uow.events) == 1
+    assert isinstance(aggregate_uow.events[0], VendorApproved)
+    assert aggregate_uow.events[0].event_id
     assert profile.pull_events() == []
 
 
@@ -757,7 +805,8 @@ def test_service_package_update_uses_owned_lookup_and_single_domain_path():
     package = _package(vendor_id, version=5)
     repo = PackageRepo([package])
     dispatcher = EventDispatcher()
-    handler = _handlers(package_repo=repo, dispatcher=dispatcher)
+    aggregate_uow = AggregateUow()
+    handler = _handlers(package_repo=repo, dispatcher=dispatcher, aggregate_uow=aggregate_uow)
 
     result = handler.update_service_package(
         UpdateServicePackageCommand(
@@ -770,7 +819,8 @@ def test_service_package_update_uses_owned_lookup_and_single_domain_path():
     )
 
     assert result.version == 6
-    assert repo.save_calls == [(package, 5)]
+    assert repo.save_calls == []
+    assert aggregate_uow.save_calls == [(package, 5)]
 
     with pytest.raises(VendorResourceNotFound):
         handler.update_service_package(
@@ -792,7 +842,14 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
     package_repo = PackageRepo()
     inquiry_repo = InquiryRepo()
     dispatcher = EventDispatcher()
-    handler = _handlers(vendor_repo=vendor_repo, package_repo=package_repo, inquiry_repo=inquiry_repo, dispatcher=dispatcher)
+    aggregate_uow = AggregateUow()
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        package_repo=package_repo,
+        inquiry_repo=inquiry_repo,
+        dispatcher=dispatcher,
+        aggregate_uow=aggregate_uow,
+    )
 
     package_result = handler.create_service_package(
         CreateServicePackageCommand(
@@ -814,10 +871,12 @@ def test_create_service_package_and_inquiry_use_factories_add_and_domain_events(
     )
 
     assert package_result.is_active is False
-    assert len(package_repo.add_calls) == 1
-    assert len(inquiry_repo.add_calls) == 1
+    assert package_repo.add_calls == []
+    assert inquiry_repo.add_calls == []
+    assert len(aggregate_uow.add_calls) == 2
     assert inquiry_result.event_date == date.today() + timedelta(days=40)
-    assert [type(event) for event in dispatcher.events] == [ServicePackageCreated, InquiryReceived]
+    assert dispatcher.events == []
+    assert [type(event) for event in aggregate_uow.events] == [ServicePackageCreated, InquiryReceived]
 
 
 def test_create_service_package_loads_vendor_and_returns_stable_missing_vendor_error():
@@ -825,7 +884,8 @@ def test_create_service_package_loads_vendor_and_returns_stable_missing_vendor_e
     vendor_repo = VendorRepo()
     package_repo = PackageRepo()
     dispatcher = EventDispatcher()
-    handler = _handlers(vendor_repo=vendor_repo, package_repo=package_repo, dispatcher=dispatcher)
+    aggregate_uow = AggregateUow()
+    handler = _handlers(vendor_repo=vendor_repo, package_repo=package_repo, dispatcher=dispatcher, aggregate_uow=aggregate_uow)
 
     with pytest.raises(VendorResourceNotFound) as exc_info:
         handler.create_service_package(
@@ -841,6 +901,7 @@ def test_create_service_package_loads_vendor_and_returns_stable_missing_vendor_e
     assert exc_info.value.code == "vendor_not_found"
     assert vendor_repo.get_by_id_calls == [vendor_id]
     assert package_repo.add_calls == []
+    assert aggregate_uow.add_calls == []
     assert dispatcher.events == []
 
 
@@ -857,7 +918,13 @@ def test_create_service_package_policy_forbids_unapproved_vendor_statuses_before
         vendor_repo = VendorRepo([profile])
         package_repo = PackageRepo()
         dispatcher = EventDispatcher()
-        handler = _handlers(vendor_repo=vendor_repo, package_repo=package_repo, dispatcher=dispatcher)
+        aggregate_uow = AggregateUow()
+        handler = _handlers(
+            vendor_repo=vendor_repo,
+            package_repo=package_repo,
+            dispatcher=dispatcher,
+            aggregate_uow=aggregate_uow,
+        )
 
         with pytest.raises(VendorOperationForbidden) as exc_info:
             handler.create_service_package(
@@ -873,6 +940,7 @@ def test_create_service_package_policy_forbids_unapproved_vendor_statuses_before
         assert exc_info.value.code == "vendor_service_package_creation_forbidden"
         assert vendor_repo.get_by_id_calls == [profile.id]
         assert package_repo.add_calls == []
+        assert aggregate_uow.add_calls == []
         assert dispatcher.events == []
 
 
@@ -894,7 +962,8 @@ def test_delete_and_activate_vendor_owned_commands_require_vendor_id_and_version
     package = _package(vendor_id, version=2, status="approved", active=False)
     package_repo = PackageRepo([package])
     dispatcher = EventDispatcher()
-    handler = _handlers(image_repo=image_repo, package_repo=package_repo, dispatcher=dispatcher)
+    aggregate_uow = AggregateUow()
+    handler = _handlers(image_repo=image_repo, package_repo=package_repo, dispatcher=dispatcher, aggregate_uow=aggregate_uow)
 
     with pytest.raises(InvalidVendorCommand):
         DeletePortfolioImageCommand(actor=_actor(), vendor_id=None, image_id=image.id, expected_version=1)
@@ -906,17 +975,17 @@ def test_delete_and_activate_vendor_owned_commands_require_vendor_id_and_version
         ActivateServicePackageCommand(actor=_actor(), vendor_id=vendor_id, package_id=package.id, expected_version=2)
     )
 
-    assert image_repo.save_calls[0][1] == 1
-    assert package_repo.save_calls[0][1] == 2
+    assert image_repo.save_calls == []
+    assert package_repo.save_calls == []
+    assert [call[1] for call in aggregate_uow.save_calls] == [1, 2]
 
 
-def test_reorder_uses_unit_of_work_and_dispatches_after_success():
+def test_reorder_uses_unit_of_work_to_persist_events_after_success():
     vendor_id = uuid.uuid4()
     first = _image(vendor_id, order=0, version=1)
     second = _image(vendor_id, order=1, version=2)
     uow = ReorderUow([first, second])
-    dispatcher = EventDispatcher()
-    handler = _handlers(dispatcher=dispatcher, reorder_uow=uow)
+    handler = _handlers(reorder_uow=uow)
 
     result = handler.reorder_portfolio_images(
         ReorderPortfolioImagesCommand(
@@ -932,17 +1001,16 @@ def test_reorder_uses_unit_of_work_and_dispatches_after_success():
 
     assert [item.id for item in result.items] == [second.id, first.id]
     assert len(uow.persist_calls) == 1
-    assert [type(event) for event in dispatcher.events] == [PortfolioMediaReordered, PortfolioMediaReordered]
+    assert [type(event) for event in uow.events] == [PortfolioMediaReordered, PortfolioMediaReordered]
 
 
-def test_reorder_failure_dispatches_no_events():
+def test_reorder_failure_records_no_events():
     vendor_id = uuid.uuid4()
     first = _image(vendor_id, order=0, version=1)
     second = _image(vendor_id, order=1, version=2)
     uow = ReorderUow([first, second])
     uow.fail = True
-    dispatcher = EventDispatcher()
-    handler = _handlers(dispatcher=dispatcher, reorder_uow=uow)
+    handler = _handlers(reorder_uow=uow)
 
     with pytest.raises(RuntimeError):
         handler.reorder_portfolio_images(
@@ -954,7 +1022,7 @@ def test_reorder_failure_dispatches_no_events():
             )
         )
 
-    assert dispatcher.events == []
+    assert uow.events == []
 
 
 def test_reorder_rejects_duplicate_missing_or_foreign_ids_before_persisting():
@@ -1143,6 +1211,9 @@ def test_application_vendor_source_has_no_forbidden_imports_private_domain_calls
                     offenders.append(f"{path} imports {name}")
             if isinstance(node, ast.Attribute) and node.attr in {"_commit_candidate", "_record", "_bump_version"}:
                 offenders.append(f"{path} calls private domain attribute {node.attr}")
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr in {"add", "save", "pull_events", "dispatch"}:
+                    offenders.append(f"{path} calls {node.func.attr} directly")
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in manual_event_names:
                 offenders.append(f"{path} manually constructs {node.func.id}")
             if isinstance(node, ast.Assign):

@@ -3,13 +3,14 @@ from __future__ import annotations
 from typing import Callable, Protocol, Sequence, TypeVar
 import uuid
 
-from domain.vendors.entities import PortfolioImage
+from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
 from domain.vendors.interfaces import Page, PageRequest
 
 from .commands import AuthenticatedActor, ModeratorActor
 from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 
 T = TypeVar("T")
+VendorAggregateT = TypeVar("VendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
 
 
 class VendorIdempotencyPort(Protocol):
@@ -42,7 +43,22 @@ class VendorReadPort(Protocol):
     def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[dict]: ...
 
 
+class VendorAggregateUnitOfWork(Protocol):
+    """Atomically persists one vendor aggregate with its pending domain events."""
+
+    def add_with_pending_events(self, aggregate: VendorAggregateT) -> VendorAggregateT: ...
+
+    def save_with_pending_events(
+        self,
+        aggregate: VendorAggregateT,
+        *,
+        expected_version: int,
+    ) -> VendorAggregateT: ...
+
+
 class PortfolioReorderUnitOfWork(Protocol):
+    """Atomically persists reordered portfolio images with their pending domain events."""
+
     def list_vendor_images(self, vendor_id: uuid.UUID, page: PageRequest) -> Page[PortfolioImage]: ...
 
     def persist_reorder(
