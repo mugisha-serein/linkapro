@@ -21,7 +21,6 @@ if not (os.environ.get("DJANGO_DATABASE_URL") or os.environ.get("DATABASE_URL"))
     raise ImproperlyConfigured("DJANGO_DATABASE_URL must be set.")
 
 DATABASES["default"] = dj_database_url.parse(
-    dj_database_url(),
     conn_max_age=600,
     ssl_require=True
 )
