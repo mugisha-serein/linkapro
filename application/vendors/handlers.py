@@ -38,7 +38,12 @@ from .commands import (
     UpdateVendorProfileCommand,
 )
 from .dtos import InquiryDTO, PageDTO, PortfolioImageDTO, ServicePackageDTO, VendorProfileDTO
-from .errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
+from .errors import (
+    InvalidVendorCommand,
+    VendorApplicationConfigurationError,
+    VendorConflict,
+    VendorResourceNotFound,
+)
 from .ports import (
     PortfolioOrderAllocator,
     PortfolioReorderUnitOfWork,
@@ -180,7 +185,9 @@ class VendorCommandHandlers:
             ensure_vendor_can_add_portfolio_media(profile)
             allocator = self.order_allocator or self.image_repo
             if not hasattr(allocator, "allocate_next_order"):
-                raise InvalidVendorCommand(field_errors={"order": ["Portfolio order allocation is not configured."]})
+                raise VendorApplicationConfigurationError(
+                    field_errors={"order": ["Portfolio order allocation is not configured."]}
+                )
             next_order = allocator.allocate_next_order(cmd.vendor_id)
             image = PortfolioImage(
                 id=uuid.uuid4(),
@@ -210,7 +217,7 @@ class VendorCommandHandlers:
     def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> PageDTO[PortfolioImageDTO]:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         if self.reorder_uow is None:
-            raise VendorOperationForbidden("Portfolio reorder requires a unit of work.")
+            raise VendorApplicationConfigurationError("Portfolio reorder requires a unit of work.")
         page = self.reorder_uow.list_vendor_images(cmd.vendor_id, PageRequest(limit=100, offset=0))
         image_map = {image.id: image for image in page.items}
         requested_ids = tuple(cmd.image_ids_in_order)
@@ -328,27 +335,37 @@ class VendorCommandHandlers:
 
     def _add_with_pending_events(self, aggregate):
         if self.aggregate_uow is None:
-            raise InvalidVendorCommand(field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]})
+            raise VendorApplicationConfigurationError(
+                field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]}
+            )
         return self.aggregate_uow.add_with_pending_events(aggregate)
 
     def _add_created_with_pending_events(self, aggregate):
         if self.creation_uow is None:
-            raise InvalidVendorCommand(field_errors={"creation_uow": ["Vendor creation unit of work is required."]})
+            raise VendorApplicationConfigurationError(
+                field_errors={"creation_uow": ["Vendor creation unit of work is required."]}
+            )
         return self.creation_uow.add_with_pending_events(aggregate)
 
     def _save_with_pending_events(self, aggregate, expected_version: int):
         if self.aggregate_uow is None:
-            raise InvalidVendorCommand(field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]})
+            raise VendorApplicationConfigurationError(
+                field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]}
+            )
         return self.aggregate_uow.save_with_pending_events(aggregate, expected_version=expected_version)
 
     def _assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None:
         if self.authorization_port is None:
-            raise InvalidVendorCommand(field_errors={"authorization_port": ["Vendor authorization is required."]})
+            raise VendorApplicationConfigurationError(
+                field_errors={"authorization_port": ["Vendor authorization is required."]}
+            )
         self.authorization_port.assert_actor_owns_vendor(actor, vendor_id)
 
     def _assert_moderator_can_moderate_vendor(self, moderator: ModeratorActor, vendor_id: uuid.UUID) -> None:
         if self.authorization_port is None:
-            raise InvalidVendorCommand(field_errors={"authorization_port": ["Vendor authorization is required."]})
+            raise VendorApplicationConfigurationError(
+                field_errors={"authorization_port": ["Vendor authorization is required."]}
+            )
         self.authorization_port.assert_moderator_can_moderate_vendor(moderator, vendor_id)
 
     @staticmethod
@@ -371,7 +388,9 @@ class VendorCommandHandlers:
         if key is None:
             return operation()
         if self.idempotency_port is None:
-            raise InvalidVendorCommand(field_errors={"idempotency_key": ["Idempotency storage is required."]})
+            raise VendorApplicationConfigurationError(
+                field_errors={"idempotency_key": ["Idempotency storage is required."]}
+            )
         fingerprint = self._payload_fingerprint(cmd)
         return self.idempotency_port.execute_once(
             scope=scope,
@@ -487,7 +506,7 @@ class VendorQueryHandlers:
         authorization_port: VendorAuthorizationPort | None = None,
     ):
         if read_repo is None:
-            raise InvalidVendorCommand(field_errors={"read_repo": ["Vendor read port is required."]})
+            raise VendorApplicationConfigurationError(field_errors={"read_repo": ["Vendor read port is required."]})
         self.vendor_repo = vendor_repo
         self.image_repo = image_repo
         self.inquiry_repo = inquiry_repo
@@ -547,7 +566,9 @@ class VendorQueryHandlers:
         ),
     ) -> None:
         if self.authorization_port is None:
-            raise InvalidVendorCommand(field_errors={"authorization_port": ["Vendor authorization is required."]})
+            raise VendorApplicationConfigurationError(
+                field_errors={"authorization_port": ["Vendor authorization is required."]}
+            )
         self.authorization_port.assert_actor_can_access_vendor(query.actor, query.vendor_id)
 
     @staticmethod
