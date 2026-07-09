@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 
 class VendorApplicationError(Exception):
     default_code = "vendor_application_error"
@@ -27,6 +29,23 @@ class VendorResourceNotFound(VendorApplicationError):
 class VendorConflict(VendorApplicationError):
     default_code = "vendor_conflict"
     default_message = "Vendor resource has changed."
+
+
+class VendorVersionConflict(VendorConflict):
+    default_code = "vendor_version_conflict"
+    default_message = "Vendor resource has changed."
+
+    def __init__(
+        self,
+        *,
+        resource_id: uuid.UUID,
+        expected_version: int,
+        actual_version: int,
+    ) -> None:
+        self.resource_id = resource_id
+        self.expected_version = expected_version
+        self.actual_version = actual_version
+        super().__init__()
 
 
 class DuplicateVendorProfile(VendorApplicationError):
