@@ -7,6 +7,7 @@ import uuid
 from typing import Callable, Sequence
 
 from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile, VendorStatus
+from domain.vendors.errors import VendorProfileValidationError
 from domain.vendors.inquiry_policy import ensure_vendor_can_receive_inquiry
 from domain.vendors.interfaces import (
     IInquiryRepository,
@@ -89,6 +90,13 @@ from .service_package_policy import ensure_vendor_can_create_service_package
 
 
 _PORTFOLIO_CREATION_PORT_UNSET = object()
+
+
+def _translate_profile_update_validation(operation: Callable[[], None]) -> None:
+    try:
+        operation()
+    except VendorProfileValidationError as exc:
+        raise InvalidVendorCommand(field_errors=exc.field_errors) from exc
 
 
 class VendorCommandHandlers:
@@ -174,7 +182,7 @@ class VendorCommandHandlers:
             )
             if getattr(cmd, field_name) is not OMITTED
         }
-        profile.update_details(**updates)
+        _translate_profile_update_validation(lambda: profile.update_details(**updates))
         return self._save_if_changed(profile, original_version, self._to_profile_dto)
 
     def submit_for_review(self, cmd: SubmitVendorForReviewCommand) -> VendorProfileDTO:
