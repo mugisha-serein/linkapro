@@ -7,7 +7,7 @@ import uuid
 
 from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
 from domain.vendors.events import VendorDomainEvent
-from domain.vendors.interfaces import Page, PageRequest
+from domain.vendors.interfaces import PageRequest
 
 from .commands import AuthenticatedActor, ModeratorActor
 from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
@@ -118,9 +118,9 @@ class VendorCreationUnitOfWork(Protocol):
 
 
 class PortfolioReorderUnitOfWork(Protocol):
-    """Atomically persists reordered portfolio images with their pending domain events."""
+    """Loads and atomically persists the complete active portfolio set for one vendor."""
 
-    def list_vendor_images(self, vendor_id: uuid.UUID, page: PageRequest) -> Page[PortfolioImage]: ...
+    def load_active_vendor_images(self, vendor_id: uuid.UUID) -> Sequence[PortfolioImage]: ...
 
     def persist_reorder(
         self,

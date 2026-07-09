@@ -243,8 +243,8 @@ class VendorCommandHandlers:
 
     def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> PageDTO[PortfolioImageDTO]:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        page = self.reorder_uow.list_vendor_images(cmd.vendor_id, PageRequest(limit=100, offset=0))
-        image_map = {image.id: image for image in page.items}
+        images = self._load_active_vendor_images(cmd.vendor_id)
+        image_map = {image.id: image for image in images}
         requested_ids = tuple(cmd.image_ids_in_order)
         self._validate_portfolio_reorder_ids(requested_ids, image_map)
         expected_versions = {item.resource_id: item.expected_version for item in cmd.expected_versions}
@@ -268,7 +268,7 @@ class VendorCommandHandlers:
             image_map.update({image.id: image for image in persisted})
 
         ordered = tuple(self._to_image_dto(image_map[image_id]) for image_id in requested_ids)
-        return PageDTO(items=ordered, total=page.total, limit=page.limit, offset=page.offset, next_cursor=page.next_cursor)
+        return PageDTO(items=ordered, total=len(images), limit=len(images), offset=0)
 
     def create_service_package(self, cmd: CreateServicePackageCommand) -> ServicePackageDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -403,6 +403,23 @@ class VendorCommandHandlers:
     def _assert_expected_version(actual_version: int, expected_version: int) -> None:
         if expected_version != actual_version:
             raise VendorConflict("Vendor resource has changed.", code="vendor_version_conflict")
+
+    def _load_active_vendor_images(self, vendor_id: uuid.UUID) -> tuple[PortfolioImage, ...]:
+        load_complete = getattr(self.reorder_uow, "load_active_vendor_images", None)
+        if callable(load_complete):
+            return tuple(load_complete(vendor_id))
+
+        legacy_loader = getattr(self.reorder_uow, "list_vendor_images", None)
+        if not callable(legacy_loader):
+            raise VendorApplicationConfigurationError(
+                field_errors={"reorder_uow": ["Complete active portfolio loading is required."]}
+            )
+        page = legacy_loader(vendor_id, PageRequest(limit=100, offset=0))
+        if page.total != len(page.items):
+            raise VendorApplicationConfigurationError(
+                field_errors={"reorder_uow": ["Portfolio reorder requires the complete active portfolio set."]}
+            )
+        return tuple(page.items)
 
     @staticmethod
     def _validate_portfolio_reorder_ids(
