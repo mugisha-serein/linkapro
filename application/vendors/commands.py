@@ -100,6 +100,11 @@ def _coerce_resource_versions(value: Iterable[ResourceVersion] | Mapping[uuid.UU
         versions = tuple(value)
     if not versions:
         raise InvalidVendorCommand(field_errors={"expected_versions": ["At least one version is required."]})
+    resource_ids = tuple(version.resource_id for version in versions)
+    if len(resource_ids) != len(set(resource_ids)):
+        raise InvalidVendorCommand(
+            field_errors={"expected_versions": ["Duplicate resource IDs are not allowed."]}
+        )
     return versions
 
 
