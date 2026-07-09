@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import get_args, get_type_hints
+
 import pytest
 
 from application.vendors.dtos import PageDTO
@@ -23,8 +25,88 @@ def test_page_dto_accepts_valid_boundary_values_and_normalizes_next_cursor():
     empty_page = PageDTO(items=(), total=0, limit=50, offset=0)
 
     assert first_page.next_cursor == "next-page-token"
+    assert first_page.pagination_mode == "offset"
     assert maximum_page.next_cursor == "x" * 512
+    assert maximum_page.pagination_mode == "offset"
     assert empty_page.next_cursor is None
+    assert empty_page.pagination_mode == "offset"
+
+
+def test_page_dto_has_one_explicit_typed_pagination_mode():
+    mode_type = get_type_hints(PageDTO)["pagination_mode"]
+
+    assert get_args(mode_type) == ("offset", "cursor")
+    assert PageDTO.__dataclass_fields__["pagination_mode"].default == "offset"
+
+
+def test_page_dto_accepts_cursor_mode_with_zero_offset():
+    page = PageDTO(
+        items=(1,),
+        total=1,
+        limit=10,
+        offset=0,
+        next_cursor=" next-token ",
+        pagination_mode="cursor",
+    )
+
+    assert page.pagination_mode == "cursor"
+    assert page.offset == 0
+    assert page.next_cursor == "next-token"
+
+
+def test_page_dto_cursor_mode_allows_final_page_without_next_cursor():
+    page = PageDTO(
+        items=(),
+        total=0,
+        limit=10,
+        offset=0,
+        pagination_mode="cursor",
+    )
+
+    assert page.pagination_mode == "cursor"
+    assert page.next_cursor is None
+
+
+@pytest.mark.parametrize("pagination_mode", ["", "keyset", "OFFSET", None, 1, True])
+def test_page_dto_rejects_invalid_pagination_mode(pagination_mode):
+    with pytest.raises(
+        ValueError,
+        match="Page pagination_mode must be 'offset' or 'cursor'",
+    ):
+        PageDTO(
+            items=(),
+            total=0,
+            limit=10,
+            offset=0,
+            pagination_mode=pagination_mode,
+        )
+
+
+def test_page_dto_rejects_nonzero_offset_in_cursor_mode():
+    with pytest.raises(
+        ValueError,
+        match="Cursor pagination cannot carry a nonzero offset",
+    ):
+        PageDTO(
+            items=(),
+            total=0,
+            limit=10,
+            offset=1,
+            pagination_mode="cursor",
+        )
+
+
+def test_page_dto_offset_mode_keeps_nonzero_offset_behavior():
+    page = PageDTO(
+        items=(),
+        total=0,
+        limit=10,
+        offset=25,
+        pagination_mode="offset",
+    )
+
+    assert page.pagination_mode == "offset"
+    assert page.offset == 25
 
 
 @pytest.mark.parametrize("total", [-1, 1.5, "1", None, True, False])
