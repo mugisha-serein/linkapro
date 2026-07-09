@@ -6,6 +6,9 @@ from typing import Any
 
 SETUP_ROUTE = "/vendor/profile/setup"
 DASHBOARD_ROUTE = "/vendor/dashboard"
+_SUPPORTED_VENDOR_STATUSES = frozenset(
+    {"draft", "pending_review", "approved", "rejected", "suspended"}
+)
 
 
 @dataclass(frozen=True)
@@ -55,7 +58,7 @@ def build_vendor_onboarding_contract(profile: Any | None) -> VendorOnboardingDTO
             message="Complete your vendor profile before continuing.",
         )
 
-    status = str(getattr(profile, "status", "draft") or "draft")
+    status = _normalize_vendor_status(profile)
     field_errors = _profile_completion_errors(profile)
     is_complete = not field_errors
 
@@ -122,6 +125,17 @@ def vendor_field_errors(profile: Any | None) -> dict[str, list[str]]:
     if profile is None:
         return {}
     return _profile_completion_errors(profile)
+
+
+def _normalize_vendor_status(profile: Any) -> str:
+    raw_status = getattr(profile, "status", "draft")
+    status_value = getattr(raw_status, "value", raw_status)
+    normalized_status = str(status_value or "draft").strip().lower()
+    if not normalized_status:
+        normalized_status = "draft"
+    if normalized_status not in _SUPPORTED_VENDOR_STATUSES:
+        raise ValueError(f"Unsupported vendor status: {normalized_status}")
+    return normalized_status
 
 
 def _profile_completion_errors(profile: Any) -> dict[str, list[str]]:
