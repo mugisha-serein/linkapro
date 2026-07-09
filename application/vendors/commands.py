@@ -397,8 +397,8 @@ class SendInquiryCommand:
     def __post_init__(self) -> None:
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "requester_id", _coerce_uuid(self.requester_id, "requester_id"))
-        if isinstance(self.event_date, datetime):
-            raise InvalidVendorCommand(field_errors={"event_date": ["Use a date, not a datetime."]})
+        if self.event_date is not None and (isinstance(self.event_date, datetime) or type(self.event_date) is not date):
+            raise InvalidVendorCommand(field_errors={"event_date": ["Must be a date or null."]})
         object.__setattr__(self, "idempotency_key", _coerce_required_idempotency_key(self.idempotency_key))
 
 
