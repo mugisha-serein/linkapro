@@ -1,18 +1,68 @@
 from __future__ import annotations
 
-from typing import Callable, Protocol, Sequence, TypeVar
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Callable, Generic, Literal, Protocol, Sequence, TypeAlias, TypeVar
 import uuid
 
-from domain.vendors.entities import PortfolioImage
+from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
+from domain.vendors.events import VendorDomainEvent
 from domain.vendors.interfaces import Page, PageRequest
 
 from .commands import AuthenticatedActor, ModeratorActor
 from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
 
 T = TypeVar("T")
+VendorAggregateT = TypeVar("VendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
+CreatedVendorAggregateT = TypeVar("CreatedVendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
+
+VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER = timedelta(hours=24)
+
+
+@dataclass(frozen=True)
+class VendorIdempotencyCompleted(Generic[T]):
+    payload_fingerprint: str
+    result: T
+    status: Literal["completed"] = "completed"
+
+
+@dataclass(frozen=True)
+class VendorIdempotencyInProgress:
+    payload_fingerprint: str
+    status: Literal["in_progress"] = "in_progress"
+
+
+@dataclass(frozen=True)
+class VendorIdempotencyRetryableFailed:
+    payload_fingerprint: str
+    status: Literal["retryable_failed"] = "retryable_failed"
+
+
+@dataclass(frozen=True)
+class VendorIdempotencyExpired:
+    payload_fingerprint: str
+    status: Literal["expired"] = "expired"
+
+
+VendorIdempotencyOutcome: TypeAlias = (
+    VendorIdempotencyCompleted[T]
+    | VendorIdempotencyInProgress
+    | VendorIdempotencyRetryableFailed
+    | VendorIdempotencyExpired
+)
 
 
 class VendorIdempotencyPort(Protocol):
+    def get_outcome(
+        self,
+        *,
+        scope: str,
+        actor_id: uuid.UUID,
+        key: str,
+        payload_fingerprint: str,
+        expires_after: timedelta = VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER,
+    ) -> VendorIdempotencyOutcome[T] | None: ...
+
     def execute_once(
         self,
         *,
@@ -42,7 +92,34 @@ class VendorReadPort(Protocol):
     def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[dict]: ...
 
 
+class VendorEventDispatcher(Protocol):
+    """Persists a vendor domain event for publication."""
+
+    def dispatch(self, event: VendorDomainEvent) -> None: ...
+
+
+class VendorAggregateUnitOfWork(Protocol):
+    """Atomically persists one vendor aggregate with its pending domain events."""
+
+    def add_with_pending_events(self, aggregate: VendorAggregateT) -> VendorAggregateT: ...
+
+    def save_with_pending_events(
+        self,
+        aggregate: VendorAggregateT,
+        *,
+        expected_version: int,
+    ) -> VendorAggregateT: ...
+
+
+class VendorCreationUnitOfWork(Protocol):
+    """Atomically adds one newly created vendor aggregate with its pending creation events."""
+
+    def add_with_pending_events(self, aggregate: CreatedVendorAggregateT) -> CreatedVendorAggregateT: ...
+
+
 class PortfolioReorderUnitOfWork(Protocol):
+    """Atomically persists reordered portfolio images with their pending domain events."""
+
     def list_vendor_images(self, vendor_id: uuid.UUID, page: PageRequest) -> Page[PortfolioImage]: ...
 
     def persist_reorder(

@@ -39,6 +39,11 @@ class InvalidVendorCommand(VendorApplicationError):
     default_message = "Vendor command is invalid."
 
 
+class VendorApplicationConfigurationError(VendorApplicationError):
+    default_code = "vendor_application_configuration_error"
+    default_message = "Vendor application dependency is not configured."
+
+
 class VendorOperationForbidden(VendorApplicationError):
     default_code = "vendor_operation_forbidden"
     default_message = "Vendor operation is not allowed."
