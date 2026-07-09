@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional, TypeAlias, TypeVar
 import uuid
 
 from .errors import InvalidVendorCommand
@@ -13,6 +13,9 @@ class _Omitted:
     def __repr__(self) -> str:
         return "OMITTED"
 
+
+T = TypeVar("T")
+OmittedValue: TypeAlias = T | _Omitted
 
 OMITTED = _Omitted()
 MAX_IDEMPOTENCY_KEY_LENGTH = 200
@@ -135,14 +138,14 @@ class UpdateVendorProfileCommand:
     actor: AuthenticatedActor
     vendor_id: uuid.UUID
     expected_version: int
-    business_name: object = OMITTED
-    category: object = OMITTED
-    description: object = OMITTED
-    service_area: object = OMITTED
-    contact_email: object = OMITTED
-    contact_phone: object = OMITTED
-    custom_category: object = OMITTED
-    website: object = OMITTED
+    business_name: OmittedValue[str] = OMITTED
+    category: OmittedValue[str] = OMITTED
+    description: OmittedValue[str] = OMITTED
+    service_area: OmittedValue[str] = OMITTED
+    contact_email: OmittedValue[str] = OMITTED
+    contact_phone: OmittedValue[str] = OMITTED
+    custom_category: OmittedValue[str | None] = OMITTED
+    website: OmittedValue[str | None] = OMITTED
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "actor", _coerce_actor(self.actor))
