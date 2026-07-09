@@ -19,6 +19,24 @@ class PageDTO(Generic[T]):
 
 
 @dataclass(frozen=True)
+class VendorDashboardSummaryDTO:
+    profile_completion: int
+    total_inquiries: int
+    inquiries_mtd: int
+    unread_inquiries: int
+    read_inquiries: int
+    response_rate: int
+    total_packages: int
+    active_packages: int
+    approved_packages: int
+    pending_packages: int
+    rejected_packages: int
+    portfolio_count: int
+    account_status: str
+    service_area: str
+
+
+@dataclass(frozen=True)
 class VendorProfileDTO:
     id: uuid.UUID
     user_id: uuid.UUID
