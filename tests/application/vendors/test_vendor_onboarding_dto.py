@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, fields, is_dataclass
+from enum import Enum
 from typing import get_type_hints
 
 import pytest
@@ -29,11 +30,19 @@ class Profile:
         return self._field_errors
 
 
-class StringStatus:
-    value = "not-used"
+class StatusWithConflictingString:
+    value = "approved"
 
     def __str__(self) -> str:
-        return "approved"
+        return "rejected"
+
+
+class VendorStatusValue(str, Enum):
+    DRAFT = "draft"
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SUSPENDED = "suspended"
 
 
 def test_vendor_onboarding_dto_is_frozen_and_has_exact_typed_fields():
@@ -204,9 +213,61 @@ def test_onboarding_status_and_completion_branches_preserve_exact_behavior(profi
     assert result == expected
 
 
-def test_status_normalization_still_uses_string_conversion():
-    result = build_vendor_onboarding_contract(Profile(status=StringStatus()))
+def test_status_normalization_prefers_value_over_string_conversion():
+    result = build_vendor_onboarding_contract(
+        Profile(status=StatusWithConflictingString())
+    )
 
     assert result.profile_status == "approved"
     assert result.can_access_dashboard is True
     assert result.redirect_to == DASHBOARD_ROUTE
+
+
+@pytest.mark.parametrize("status", tuple(VendorStatusValue))
+def test_status_normalization_accepts_supported_enum_values(status):
+    result = build_vendor_onboarding_contract(Profile(status=status))
+
+    assert result.profile_status == status.value
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (" APPROVED ", "approved"),
+        ("Pending_Review", "pending_review"),
+        (None, "draft"),
+        ("", "draft"),
+        ("   ", "draft"),
+    ],
+)
+def test_status_normalization_normalizes_supported_strings_and_preserves_draft_fallback(
+    status,
+    expected,
+):
+    result = build_vendor_onboarding_contract(Profile(status=status))
+
+    assert result.profile_status == expected
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "archived",
+        "incomplete",
+        "missing",
+        7,
+        object(),
+    ],
+)
+def test_status_normalization_rejects_unsupported_statuses(status):
+    with pytest.raises(ValueError, match="Unsupported vendor status"):
+        build_vendor_onboarding_contract(Profile(status=status))
+
+
+def test_invalid_status_is_rejected_before_completion_rules_run():
+    class InvalidProfile(Profile):
+        def get_profile_completion_errors(self):
+            raise AssertionError("Completion rules must not run for an invalid status.")
+
+    with pytest.raises(ValueError, match="Unsupported vendor status: archived"):
+        build_vendor_onboarding_contract(InvalidProfile(status="archived"))
