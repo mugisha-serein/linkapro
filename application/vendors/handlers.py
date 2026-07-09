@@ -42,7 +42,14 @@ from .commands import (
     UpdateServicePackageCommand,
     UpdateVendorProfileCommand,
 )
-from .dtos import InquiryDTO, PageDTO, PortfolioImageDTO, ServicePackageDTO, VendorProfileDTO
+from .dtos import (
+    InquiryDTO,
+    PageDTO,
+    PortfolioImageDTO,
+    ServicePackageDTO,
+    VendorDashboardSummaryDTO,
+    VendorProfileDTO,
+)
 from .errors import (
     DuplicateVendorProfile,
     InvalidVendorCommand,
@@ -688,7 +695,7 @@ class VendorQueryHandlers:
         inquiries = self.inquiry_repo.list_by_vendor(query.vendor_id, query.page or PageRequest())
         return self._map_page(inquiries, VendorCommandHandlers._to_inquiry_dto)
 
-    def get_dashboard_summary(self, query: GetVendorDashboardSummaryQuery) -> dict:
+    def get_dashboard_summary(self, query: GetVendorDashboardSummaryQuery) -> VendorDashboardSummaryDTO:
         self._assert_actor_can_access_vendor(query)
         return self.read_repo.dashboard_summary(query.vendor_id)
 
