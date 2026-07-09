@@ -699,6 +699,8 @@ class VendorQueryHandlers:
 
     def get_dashboard_summary(self, query: GetVendorDashboardSummaryQuery) -> VendorDashboardSummaryDTO:
         self._assert_actor_can_access_vendor(query)
+        if self.vendor_repo.get_by_id(query.vendor_id) is None:
+            raise VendorResourceNotFound("Vendor not found.")
         return self.read_repo.dashboard_summary(query.vendor_id)
 
     def get_analytics(self, query: GetVendorAnalyticsQuery) -> VendorAnalyticsDTO:
