@@ -10,7 +10,7 @@ from domain.vendors.events import VendorDomainEvent
 from domain.vendors.interfaces import PageRequest
 
 from .commands import AuthenticatedActor, ModeratorActor
-from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
+from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO, VendorDashboardSummaryDTO
 
 T = TypeVar("T")
 VendorAggregateT = TypeVar("VendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
@@ -95,7 +95,7 @@ class VendorAuthorizationPort(Protocol):
 class VendorReadPort(Protocol):
     def list_service_packages(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[ServicePackageDTO]: ...
 
-    def dashboard_summary(self, vendor_id: uuid.UUID) -> dict: ...
+    def dashboard_summary(self, vendor_id: uuid.UUID) -> VendorDashboardSummaryDTO: ...
 
     def analytics(self, vendor_id: uuid.UUID) -> dict: ...
 
