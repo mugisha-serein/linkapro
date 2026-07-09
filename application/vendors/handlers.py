@@ -633,6 +633,9 @@ class VendorCommandHandlers:
             is_active=package.is_active,
             is_deleted=package.is_deleted,
             deleted_at=package.deleted_at,
+            last_approved_at=package.last_approved_at,
+            last_vendor_public_edit_at=package.last_vendor_public_edit_at,
+            next_vendor_edit_allowed_at=package.next_vendor_edit_allowed_at,
             version=package.version,
         )
 
