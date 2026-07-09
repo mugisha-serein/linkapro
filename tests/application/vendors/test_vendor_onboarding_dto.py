@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, fields, is_dataclass
 from enum import Enum
+import json
 from typing import get_type_hints
 
 import pytest
 
 from application.vendors.onboarding_policy import (
+    COMPLETE_PROFILE,
     DASHBOARD_ROUTE,
+    OPEN_DASHBOARD,
     SETUP_ROUTE,
     VendorOnboardingDTO,
+    VendorOnboardingRedirectIntent,
     build_vendor_onboarding_contract,
 )
 
@@ -45,6 +49,21 @@ class VendorStatusValue(str, Enum):
     SUSPENDED = "suspended"
 
 
+def test_onboarding_redirect_intents_are_typed_and_contain_no_frontend_routes():
+    assert tuple(VendorOnboardingRedirectIntent) == (
+        VendorOnboardingRedirectIntent.COMPLETE_PROFILE,
+        VendorOnboardingRedirectIntent.OPEN_DASHBOARD,
+    )
+    assert COMPLETE_PROFILE is VendorOnboardingRedirectIntent.COMPLETE_PROFILE
+    assert OPEN_DASHBOARD is VendorOnboardingRedirectIntent.OPEN_DASHBOARD
+    assert SETUP_ROUTE is COMPLETE_PROFILE
+    assert DASHBOARD_ROUTE is OPEN_DASHBOARD
+    assert str(COMPLETE_PROFILE) == "COMPLETE_PROFILE"
+    assert str(OPEN_DASHBOARD) == "OPEN_DASHBOARD"
+    assert not str(COMPLETE_PROFILE).startswith("/")
+    assert not str(OPEN_DASHBOARD).startswith("/")
+
+
 def test_vendor_onboarding_dto_is_frozen_and_has_exact_typed_fields():
     assert is_dataclass(VendorOnboardingDTO)
     assert tuple(field.name for field in fields(VendorOnboardingDTO)) == (
@@ -62,7 +81,7 @@ def test_vendor_onboarding_dto_is_frozen_and_has_exact_typed_fields():
         "must_complete_profile": bool,
         "can_submit_for_review": bool,
         "marketplace_visible": bool,
-        "redirect_to": str,
+        "redirect_to": VendorOnboardingRedirectIntent,
         "message": str,
     }
 
@@ -99,7 +118,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
         "must_complete_profile": True,
         "can_submit_for_review": False,
         "marketplace_visible": False,
-        "redirect_to": SETUP_ROUTE,
+        "redirect_to": COMPLETE_PROFILE,
         "message": "Complete your vendor profile before continuing.",
     }
 
@@ -109,6 +128,8 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
     assert dict(result) == expected
     assert result["message"] == expected["message"]
     assert result.message == expected["message"]
+    assert result.redirect_to is COMPLETE_PROFILE
+    assert json.loads(json.dumps(result))["redirect_to"] == "COMPLETE_PROFILE"
 
 
 @pytest.mark.parametrize(
@@ -122,7 +143,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "must_complete_profile": False,
                 "can_submit_for_review": False,
                 "marketplace_visible": True,
-                "redirect_to": DASHBOARD_ROUTE,
+                "redirect_to": OPEN_DASHBOARD,
                 "message": "Your vendor profile is approved and visible in the marketplace.",
             },
         ),
@@ -134,7 +155,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "must_complete_profile": False,
                 "can_submit_for_review": False,
                 "marketplace_visible": False,
-                "redirect_to": DASHBOARD_ROUTE,
+                "redirect_to": OPEN_DASHBOARD,
                 "message": "Your profile is under review. Marketplace visibility starts after admin approval.",
             },
         ),
@@ -146,7 +167,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "must_complete_profile": False,
                 "can_submit_for_review": False,
                 "marketplace_visible": False,
-                "redirect_to": SETUP_ROUTE,
+                "redirect_to": COMPLETE_PROFILE,
                 "message": "Your vendor account is suspended. Please contact support.",
             },
         ),
@@ -158,7 +179,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "must_complete_profile": True,
                 "can_submit_for_review": True,
                 "marketplace_visible": False,
-                "redirect_to": SETUP_ROUTE,
+                "redirect_to": COMPLETE_PROFILE,
                 "message": "Add verification details.",
             },
         ),
@@ -173,7 +194,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "must_complete_profile": True,
                 "can_submit_for_review": False,
                 "marketplace_visible": False,
-                "redirect_to": SETUP_ROUTE,
+                "redirect_to": COMPLETE_PROFILE,
                 "message": "Your vendor profile needs updates before resubmission.",
             },
         ),
@@ -185,7 +206,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "must_complete_profile": True,
                 "can_submit_for_review": True,
                 "marketplace_visible": False,
-                "redirect_to": SETUP_ROUTE,
+                "redirect_to": COMPLETE_PROFILE,
                 "message": "Submit your vendor profile for admin review.",
             },
         ),
@@ -200,7 +221,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "must_complete_profile": True,
                 "can_submit_for_review": False,
                 "marketplace_visible": False,
-                "redirect_to": SETUP_ROUTE,
+                "redirect_to": COMPLETE_PROFILE,
                 "message": "Complete your vendor profile before continuing.",
             },
         ),
@@ -210,6 +231,7 @@ def test_onboarding_status_and_completion_branches_preserve_exact_behavior(profi
     result = build_vendor_onboarding_contract(profile)
 
     assert isinstance(result, VendorOnboardingDTO)
+    assert isinstance(result.redirect_to, VendorOnboardingRedirectIntent)
     assert result == expected
 
 
@@ -220,7 +242,7 @@ def test_status_normalization_prefers_value_over_string_conversion():
 
     assert result.profile_status == "approved"
     assert result.can_access_dashboard is True
-    assert result.redirect_to == DASHBOARD_ROUTE
+    assert result.redirect_to is OPEN_DASHBOARD
 
 
 @pytest.mark.parametrize("status", tuple(VendorStatusValue))
