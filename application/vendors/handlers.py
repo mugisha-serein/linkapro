@@ -55,6 +55,7 @@ from .errors import (
     VendorVersionConflict,
 )
 from .ports import (
+    InquiryAbuseProtectionPort,
     PortfolioImageCreationPort,
     PortfolioReorderUnitOfWork,
     VendorAggregateUnitOfWork,
@@ -95,6 +96,7 @@ class VendorCommandHandlers:
         creation_uow: VendorCreationUnitOfWork | None = None,
         authorization_port: VendorAuthorizationPort | None = None,
         idempotency_port: VendorIdempotencyPort | None = None,
+        inquiry_abuse_protection_port: InquiryAbuseProtectionPort | None = None,
         portfolio_creation_port: PortfolioImageCreationPort | None | object = _PORTFOLIO_CREATION_PORT_UNSET,
         order_allocator=None,
     ):
@@ -108,6 +110,7 @@ class VendorCommandHandlers:
         self.creation_uow = creation_uow
         self.authorization_port = authorization_port
         self.idempotency_port = idempotency_port
+        self.inquiry_abuse_protection_port = inquiry_abuse_protection_port
         self.reorder_uow = reorder_uow
         if portfolio_creation_port is _PORTFOLIO_CREATION_PORT_UNSET:
             self.portfolio_creation_port = RepositoryPortfolioImageCreationPort(
@@ -357,7 +360,14 @@ class VendorCommandHandlers:
         return self._save_if_changed(package, original_version, self._to_package_dto)
 
     def send_inquiry(self, cmd: SendInquiryCommand) -> InquiryDTO:
+        payload_digest = self._inquiry_payload_digest(cmd)
+
         def operation() -> InquiryDTO:
+            self._assert_inquiry_allowed(
+                requester_identity=cmd.requester_id,
+                vendor_id=cmd.vendor_id,
+                payload_digest=payload_digest,
+            )
             profile = self.vendor_repo.get_by_id(cmd.vendor_id)
             ensure_vendor_can_receive_inquiry(profile)
             inquiry = Inquiry.create(
@@ -442,6 +452,25 @@ class VendorCommandHandlers:
             )
         self.authorization_port.assert_moderator_can_moderate_vendor(moderator, vendor_id)
 
+    def _assert_inquiry_allowed(
+        self,
+        *,
+        requester_identity: uuid.UUID,
+        vendor_id: uuid.UUID,
+        payload_digest: str,
+    ) -> None:
+        if self.inquiry_abuse_protection_port is None:
+            raise VendorApplicationConfigurationError(
+                field_errors={
+                    "inquiry_abuse_protection_port": ["Inquiry abuse protection is required."]
+                }
+            )
+        self.inquiry_abuse_protection_port.assert_inquiry_allowed(
+            requester_identity=requester_identity,
+            vendor_id=vendor_id,
+            payload_digest=payload_digest,
+        )
+
     @staticmethod
     def _assert_expected_version(
         resource_id: uuid.UUID,
@@ -510,6 +539,18 @@ class VendorCommandHandlers:
             payload = dict(cmd)
         payload.pop("idempotency_key", None)
         payload = {key: value for key, value in payload.items() if value is not OMITTED}
+        canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _inquiry_payload_digest(cmd: SendInquiryCommand) -> str:
+        payload = {
+            "client_email": cmd.client_email,
+            "client_name": cmd.client_name,
+            "client_phone": cmd.client_phone,
+            "event_date": cmd.event_date,
+            "message": cmd.message,
+        }
         canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
