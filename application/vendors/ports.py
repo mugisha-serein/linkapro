@@ -131,5 +131,12 @@ class PortfolioReorderUnitOfWork(Protocol):
     ) -> Sequence[PortfolioImage]: ...
 
 
-class PortfolioOrderAllocator(Protocol):
-    def allocate_next_order(self, vendor_id: uuid.UUID) -> int: ...
+class PortfolioImageCreationPort(Protocol):
+    """Atomically assigns the next vendor order and persists one portfolio image with pending events."""
+
+    def create_at_next_order(
+        self,
+        *,
+        vendor_id: uuid.UUID,
+        image_factory: Callable[[int], PortfolioImage],
+    ) -> PortfolioImage: ...

@@ -50,7 +50,7 @@ from .errors import (
     VendorResourceNotFound,
 )
 from .ports import (
-    PortfolioOrderAllocator,
+    PortfolioImageCreationPort,
     PortfolioReorderUnitOfWork,
     VendorAggregateUnitOfWork,
     VendorAuthorizationPort,
@@ -59,6 +59,7 @@ from .ports import (
     VendorIdempotencyPort,
     VendorReadPort,
 )
+from .portfolio_image_creation import RepositoryPortfolioImageCreationPort
 from .portfolio_media_policy import ensure_vendor_can_add_portfolio_media
 from .queries import (
     GetVendorAnalyticsQuery,
@@ -70,6 +71,9 @@ from .queries import (
     ListServicePackagesQuery,
 )
 from .service_package_policy import ensure_vendor_can_create_service_package
+
+
+_PORTFOLIO_CREATION_PORT_UNSET = object()
 
 
 class VendorCommandHandlers:
@@ -86,7 +90,8 @@ class VendorCommandHandlers:
         creation_uow: VendorCreationUnitOfWork | None = None,
         authorization_port: VendorAuthorizationPort | None = None,
         idempotency_port: VendorIdempotencyPort | None = None,
-        order_allocator: PortfolioOrderAllocator | None = None,
+        portfolio_creation_port: PortfolioImageCreationPort | None | object = _PORTFOLIO_CREATION_PORT_UNSET,
+        order_allocator=None,
     ):
         if reorder_uow is None:
             raise VendorApplicationConfigurationError("Portfolio reorder requires a unit of work.")
@@ -99,7 +104,13 @@ class VendorCommandHandlers:
         self.authorization_port = authorization_port
         self.idempotency_port = idempotency_port
         self.reorder_uow = reorder_uow
-        self.order_allocator = order_allocator
+        if portfolio_creation_port is _PORTFOLIO_CREATION_PORT_UNSET:
+            self.portfolio_creation_port = RepositoryPortfolioImageCreationPort(
+                order_allocator=order_allocator or image_repo,
+                aggregate_uow=aggregate_uow,
+            )
+        else:
+            self.portfolio_creation_port = portfolio_creation_port
 
     def create_profile(self, cmd: CreateVendorProfileCommand) -> VendorProfileDTO:
         def operation() -> VendorProfileDTO:
@@ -195,21 +206,25 @@ class VendorCommandHandlers:
         def operation() -> PortfolioImageDTO:
             profile = self.vendor_repo.get_by_id(cmd.vendor_id)
             ensure_vendor_can_add_portfolio_media(profile)
-            allocator = self.order_allocator or self.image_repo
-            if not hasattr(allocator, "allocate_next_order"):
+            if self.portfolio_creation_port is None:
                 raise VendorApplicationConfigurationError(
-                    field_errors={"order": ["Portfolio order allocation is not configured."]}
+                    field_errors={"portfolio_creation_port": ["Portfolio image creation port is required."]}
                 )
-            next_order = allocator.allocate_next_order(cmd.vendor_id)
-            image = PortfolioImage(
-                id=uuid.uuid4(),
+
+            def image_factory(next_order: int) -> PortfolioImage:
+                return PortfolioImage(
+                    id=uuid.uuid4(),
+                    vendor_id=cmd.vendor_id,
+                    public_id=cmd.public_id,
+                    secure_url=cmd.secure_url,
+                    caption=cmd.caption,
+                    order=next_order,
+                )
+
+            saved = self.portfolio_creation_port.create_at_next_order(
                 vendor_id=cmd.vendor_id,
-                public_id=cmd.public_id,
-                secure_url=cmd.secure_url,
-                caption=cmd.caption,
-                order=next_order,
+                image_factory=image_factory,
             )
-            saved = self._add_with_pending_events(image)
             return self._to_image_dto(saved)
 
         return self._run_required_idempotent("portfolio_image.add", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
