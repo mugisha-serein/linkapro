@@ -82,6 +82,8 @@ def _approved_profile(vendor_id: uuid.UUID) -> VendorProfile:
         contact_email="vendor@example.com",
         contact_phone="+250700000000",
         status=VendorStatus.APPROVED,
+        created_at=now,
+        updated_at=now,
         submitted_at=now,
         approved_at=now,
     )
