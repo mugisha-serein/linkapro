@@ -40,6 +40,10 @@ from .commands import (
 )
 from .dtos import InquiryDTO, PageDTO, PortfolioImageDTO, ServicePackageDTO, VendorProfileDTO
 from .errors import (
+    DuplicateVendorProfile,
+    InvalidVendorCommand,
+    VendorConflict,
+    VendorOperationForbidden,
     InvalidVendorCommand,
     VendorApplicationConfigurationError,
     VendorConflict,
@@ -101,7 +105,7 @@ class VendorCommandHandlers:
         def operation() -> VendorProfileDTO:
             existing = self.vendor_repo.get_by_user_id(cmd.actor.user_id)
             if existing:
-                raise VendorConflict("User already has a vendor profile.", code="vendor_profile_exists")
+                raise self._vendor_profile_exists_conflict()
             profile = VendorProfile.create_draft(
                 user_id=cmd.actor.user_id,
                 business_name=cmd.business_name,
@@ -113,6 +117,11 @@ class VendorCommandHandlers:
                 custom_category=cmd.custom_category,
                 website=cmd.website,
             )
+            try:
+                saved = self.vendor_repo.add(profile)
+            except DuplicateVendorProfile as exc:
+                raise self._vendor_profile_exists_conflict() from exc
+            self._dispatch_pending_events(profile)
             saved = self._add_created_with_pending_events(profile)
             return self._to_profile_dto(saved)
 
@@ -356,6 +365,10 @@ class VendorCommandHandlers:
                 field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]}
             )
         return self.aggregate_uow.save_with_pending_events(aggregate, expected_version=expected_version)
+
+    @staticmethod
+    def _vendor_profile_exists_conflict() -> VendorConflict:
+        return VendorConflict("User already has a vendor profile.", code="vendor_profile_exists")
 
     def _assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None:
         if self.authorization_port is None:
