@@ -132,6 +132,9 @@ class ServicePackageDTO:
     is_active: bool
     is_deleted: bool
     deleted_at: Optional[datetime]
+    last_approved_at: Optional[datetime]
+    last_vendor_public_edit_at: Optional[datetime]
+    next_vendor_edit_allowed_at: Optional[datetime]
     version: int
 
 
