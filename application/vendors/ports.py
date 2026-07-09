@@ -74,6 +74,16 @@ class VendorIdempotencyPort(Protocol):
     ) -> T: ...
 
 
+class InquiryAbuseProtectionPort(Protocol):
+    def assert_inquiry_allowed(
+        self,
+        *,
+        requester_identity: uuid.UUID,
+        vendor_id: uuid.UUID,
+        payload_digest: str,
+    ) -> None: ...
+
+
 class VendorAuthorizationPort(Protocol):
     def assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None: ...
 

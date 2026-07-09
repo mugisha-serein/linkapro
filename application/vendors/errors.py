@@ -66,3 +66,8 @@ class VendorApplicationConfigurationError(VendorApplicationError):
 class VendorOperationForbidden(VendorApplicationError):
     default_code = "vendor_operation_forbidden"
     default_message = "Vendor operation is not allowed."
+
+
+class InquiryAbuseDenied(VendorOperationForbidden):
+    default_code = "inquiry_abuse_denied"
+    default_message = "Inquiry request was denied."
