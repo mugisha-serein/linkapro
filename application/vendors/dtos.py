@@ -58,6 +58,14 @@ class VendorAnalyticsDTO:
 
 
 @dataclass(frozen=True)
+class VendorActivityDTO:
+    id: str
+    type: str
+    message: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class VendorProfileDTO:
     id: uuid.UUID
     user_id: uuid.UUID

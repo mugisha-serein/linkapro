@@ -47,6 +47,7 @@ from .dtos import (
     PageDTO,
     PortfolioImageDTO,
     ServicePackageDTO,
+    VendorActivityDTO,
     VendorAnalyticsDTO,
     VendorDashboardSummaryDTO,
     VendorProfileDTO,
@@ -704,7 +705,7 @@ class VendorQueryHandlers:
         self._assert_actor_can_access_vendor(query)
         return self.read_repo.analytics(query.vendor_id)
 
-    def get_recent_activity(self, query: ListRecentVendorActivityQuery) -> PageDTO[dict]:
+    def get_recent_activity(self, query: ListRecentVendorActivityQuery) -> PageDTO[VendorActivityDTO]:
         self._assert_actor_can_access_vendor(query)
         return self.read_repo.recent_activity(query.vendor_id, query.page or PageRequest(limit=10, offset=0))
 

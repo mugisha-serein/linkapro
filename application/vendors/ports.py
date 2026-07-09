@@ -14,6 +14,7 @@ from .dtos import (
     PageDTO,
     PortfolioImageDTO,
     ServicePackageDTO,
+    VendorActivityDTO,
     VendorAnalyticsDTO,
     VendorDashboardSummaryDTO,
 )
@@ -105,7 +106,7 @@ class VendorReadPort(Protocol):
 
     def analytics(self, vendor_id: uuid.UUID) -> VendorAnalyticsDTO: ...
 
-    def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[dict]: ...
+    def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[VendorActivityDTO]: ...
 
 
 class VendorEventDispatcher(Protocol):
