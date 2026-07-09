@@ -313,6 +313,20 @@ class SubmitServicePackageForApprovalCommand:
 
 
 @dataclass(frozen=True)
+class ApproveServicePackageCommand:
+    moderator: ModeratorActor
+    vendor_id: uuid.UUID
+    package_id: uuid.UUID
+    expected_version: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "moderator", _coerce_moderator(self.moderator))
+        object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
+        object.__setattr__(self, "package_id", _coerce_uuid(self.package_id, "package_id"))
+        object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
+
+
+@dataclass(frozen=True)
 class DeactivateServicePackageCommand:
     actor: AuthenticatedActor
     vendor_id: uuid.UUID
