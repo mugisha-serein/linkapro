@@ -31,6 +31,7 @@ from .commands import (
     ModeratorActor,
     OMITTED,
     ReinstateVendorCommand,
+    RejectServicePackageCommand,
     RejectVendorCommand,
     ReorderPortfolioImagesCommand,
     SendInquiryCommand,
@@ -317,6 +318,14 @@ class VendorCommandHandlers:
         self._assert_expected_version(package.id, package.version, cmd.expected_version)
         original_version = package.version
         package.approve()
+        return self._save_if_changed(package, original_version, self._to_package_dto)
+
+    def reject_service_package(self, cmd: RejectServicePackageCommand) -> ServicePackageDTO:
+        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
+        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
+        self._assert_expected_version(package.id, package.version, cmd.expected_version)
+        original_version = package.version
+        package.reject(cmd.reason)
         return self._save_if_changed(package, original_version, self._to_package_dto)
 
     def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
