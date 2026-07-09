@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 
-SETUP_ROUTE = "/vendor/profile/setup"
-DASHBOARD_ROUTE = "/vendor/dashboard"
+class VendorOnboardingRedirectIntent(StrEnum):
+    COMPLETE_PROFILE = "COMPLETE_PROFILE"
+    OPEN_DASHBOARD = "OPEN_DASHBOARD"
+
+
+COMPLETE_PROFILE = VendorOnboardingRedirectIntent.COMPLETE_PROFILE
+OPEN_DASHBOARD = VendorOnboardingRedirectIntent.OPEN_DASHBOARD
+SETUP_ROUTE = COMPLETE_PROFILE
+DASHBOARD_ROUTE = OPEN_DASHBOARD
 _SUPPORTED_VENDOR_STATUSES = frozenset(
     {"draft", "pending_review", "approved", "rejected", "suspended"}
 )
@@ -18,7 +26,7 @@ class VendorOnboardingDTO(dict[str, Any]):
     must_complete_profile: bool
     can_submit_for_review: bool
     marketplace_visible: bool
-    redirect_to: str
+    redirect_to: VendorOnboardingRedirectIntent
     message: str
 
     def __post_init__(self) -> None:
@@ -54,7 +62,7 @@ def build_vendor_onboarding_contract(profile: Any | None) -> VendorOnboardingDTO
             must_complete_profile=True,
             can_submit_for_review=False,
             marketplace_visible=False,
-            redirect_to=SETUP_ROUTE,
+            redirect_to=COMPLETE_PROFILE,
             message="Complete your vendor profile before continuing.",
         )
 
@@ -69,7 +77,7 @@ def build_vendor_onboarding_contract(profile: Any | None) -> VendorOnboardingDTO
             must_complete_profile=False,
             can_submit_for_review=False,
             marketplace_visible=True,
-            redirect_to=DASHBOARD_ROUTE,
+            redirect_to=OPEN_DASHBOARD,
             message="Your vendor profile is approved and visible in the marketplace.",
         )
 
@@ -80,7 +88,7 @@ def build_vendor_onboarding_contract(profile: Any | None) -> VendorOnboardingDTO
             must_complete_profile=False,
             can_submit_for_review=False,
             marketplace_visible=False,
-            redirect_to=DASHBOARD_ROUTE,
+            redirect_to=OPEN_DASHBOARD,
             message="Your profile is under review. Marketplace visibility starts after admin approval.",
         )
 
@@ -91,7 +99,7 @@ def build_vendor_onboarding_contract(profile: Any | None) -> VendorOnboardingDTO
             must_complete_profile=False,
             can_submit_for_review=False,
             marketplace_visible=False,
-            redirect_to=SETUP_ROUTE,
+            redirect_to=COMPLETE_PROFILE,
             message="Your vendor account is suspended. Please contact support.",
         )
 
@@ -102,7 +110,7 @@ def build_vendor_onboarding_contract(profile: Any | None) -> VendorOnboardingDTO
             must_complete_profile=True,
             can_submit_for_review=is_complete,
             marketplace_visible=False,
-            redirect_to=SETUP_ROUTE,
+            redirect_to=COMPLETE_PROFILE,
             message=getattr(profile, "rejection_reason", None)
             or "Your vendor profile needs updates before resubmission.",
         )
@@ -114,7 +122,7 @@ def build_vendor_onboarding_contract(profile: Any | None) -> VendorOnboardingDTO
         must_complete_profile=True,
         can_submit_for_review=is_complete,
         marketplace_visible=False,
-        redirect_to=SETUP_ROUTE,
+        redirect_to=COMPLETE_PROFILE,
         message="Complete your vendor profile before continuing."
         if not is_complete
         else "Submit your vendor profile for admin review.",
