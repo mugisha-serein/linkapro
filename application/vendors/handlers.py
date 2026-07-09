@@ -59,6 +59,7 @@ from .ports import (
     VendorIdempotencyPort,
     VendorReadPort,
 )
+from .portfolio_image_creation import RepositoryPortfolioImageCreationPort
 from .portfolio_media_policy import ensure_vendor_can_add_portfolio_media
 from .queries import (
     GetVendorAnalyticsQuery,
@@ -70,6 +71,9 @@ from .queries import (
     ListServicePackagesQuery,
 )
 from .service_package_policy import ensure_vendor_can_create_service_package
+
+
+_PORTFOLIO_CREATION_PORT_UNSET = object()
 
 
 class VendorCommandHandlers:
@@ -86,7 +90,8 @@ class VendorCommandHandlers:
         creation_uow: VendorCreationUnitOfWork | None = None,
         authorization_port: VendorAuthorizationPort | None = None,
         idempotency_port: VendorIdempotencyPort | None = None,
-        portfolio_creation_port: PortfolioImageCreationPort | None = None,
+        portfolio_creation_port: PortfolioImageCreationPort | None | object = _PORTFOLIO_CREATION_PORT_UNSET,
+        order_allocator=None,
     ):
         if reorder_uow is None:
             raise VendorApplicationConfigurationError("Portfolio reorder requires a unit of work.")
@@ -99,7 +104,13 @@ class VendorCommandHandlers:
         self.authorization_port = authorization_port
         self.idempotency_port = idempotency_port
         self.reorder_uow = reorder_uow
-        self.portfolio_creation_port = portfolio_creation_port
+        if portfolio_creation_port is _PORTFOLIO_CREATION_PORT_UNSET:
+            self.portfolio_creation_port = RepositoryPortfolioImageCreationPort(
+                order_allocator=order_allocator or image_repo,
+                aggregate_uow=aggregate_uow,
+            )
+        else:
+            self.portfolio_creation_port = portfolio_creation_port
 
     def create_profile(self, cmd: CreateVendorProfileCommand) -> VendorProfileDTO:
         def operation() -> VendorProfileDTO:
