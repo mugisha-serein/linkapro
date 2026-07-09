@@ -34,6 +34,7 @@ from .commands import (
     RejectServicePackageCommand,
     RejectVendorCommand,
     ReorderPortfolioImagesCommand,
+    RestoreServicePackageForReviewCommand,
     SendInquiryCommand,
     SubmitServicePackageForApprovalCommand,
     SubmitVendorForReviewCommand,
@@ -326,6 +327,17 @@ class VendorCommandHandlers:
         self._assert_expected_version(package.id, package.version, cmd.expected_version)
         original_version = package.version
         package.reject(cmd.reason)
+        return self._save_if_changed(package, original_version, self._to_package_dto)
+
+    def restore_service_package_for_review(
+        self,
+        cmd: RestoreServicePackageForReviewCommand,
+    ) -> ServicePackageDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
+        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
+        self._assert_expected_version(package.id, package.version, cmd.expected_version)
+        original_version = package.version
+        package.restore_to_waiting_approval()
         return self._save_if_changed(package, original_version, self._to_package_dto)
 
     def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
