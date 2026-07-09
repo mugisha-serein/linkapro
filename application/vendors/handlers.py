@@ -47,6 +47,7 @@ from .dtos import (
     PageDTO,
     PortfolioImageDTO,
     ServicePackageDTO,
+    VendorAnalyticsDTO,
     VendorDashboardSummaryDTO,
     VendorProfileDTO,
 )
@@ -699,7 +700,7 @@ class VendorQueryHandlers:
         self._assert_actor_can_access_vendor(query)
         return self.read_repo.dashboard_summary(query.vendor_id)
 
-    def get_analytics(self, query: GetVendorAnalyticsQuery) -> dict:
+    def get_analytics(self, query: GetVendorAnalyticsQuery) -> VendorAnalyticsDTO:
         self._assert_actor_can_access_vendor(query)
         return self.read_repo.analytics(query.vendor_id)
 
