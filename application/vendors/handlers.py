@@ -48,6 +48,7 @@ from .errors import (
     VendorApplicationConfigurationError,
     VendorConflict,
     VendorResourceNotFound,
+    VendorVersionConflict,
 )
 from .ports import (
     PortfolioImageCreationPort,
@@ -141,7 +142,7 @@ class VendorCommandHandlers:
     def update_profile(self, cmd: UpdateVendorProfileCommand) -> VendorProfileDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.version, cmd.expected_version)
+        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
         original_version = profile.version
         updates = {
             field_name: getattr(cmd, field_name)
@@ -163,7 +164,7 @@ class VendorCommandHandlers:
     def submit_for_review(self, cmd: SubmitVendorForReviewCommand) -> VendorProfileDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.version, cmd.expected_version)
+        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
         original_version = profile.version
         profile.submit_for_review()
         return self._save_if_changed(profile, original_version, self._to_profile_dto)
@@ -171,7 +172,7 @@ class VendorCommandHandlers:
     def approve_vendor(self, cmd: ApproveVendorCommand) -> VendorProfileDTO:
         self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.version, cmd.expected_version)
+        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
         original_version = profile.version
         profile.approve()
         return self._save_if_changed(profile, original_version, self._to_profile_dto)
@@ -179,7 +180,7 @@ class VendorCommandHandlers:
     def reject_vendor(self, cmd: RejectVendorCommand) -> VendorProfileDTO:
         self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.version, cmd.expected_version)
+        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
         original_version = profile.version
         profile.reject(cmd.reason)
         return self._save_if_changed(profile, original_version, self._to_profile_dto)
@@ -187,7 +188,7 @@ class VendorCommandHandlers:
     def suspend_vendor(self, cmd: SuspendVendorCommand) -> VendorProfileDTO:
         self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.version, cmd.expected_version)
+        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
         original_version = profile.version
         profile.suspend(cmd.reason)
         return self._save_if_changed(profile, original_version, self._to_profile_dto)
@@ -195,7 +196,7 @@ class VendorCommandHandlers:
     def reinstate_vendor(self, cmd: ReinstateVendorCommand) -> VendorProfileDTO:
         self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
         profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.version, cmd.expected_version)
+        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
         original_version = profile.version
         profile.reinstate()
         return self._save_if_changed(profile, original_version, self._to_profile_dto)
@@ -234,7 +235,7 @@ class VendorCommandHandlers:
         image = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.image_id)
         if not image:
             raise VendorResourceNotFound("Image not found.")
-        self._assert_expected_version(image.version, cmd.expected_version)
+        self._assert_expected_version(image.id, image.version, cmd.expected_version)
         original_version = image.version
         image.deactivate()
         if image.version == original_version:
@@ -251,7 +252,7 @@ class VendorCommandHandlers:
         if set(expected_versions) != set(requested_ids):
             raise InvalidVendorCommand(field_errors={"expected_versions": ["Expected versions must match image order."]})
         for image_id, expected_version in expected_versions.items():
-            self._assert_expected_version(image_map[image_id].version, expected_version)
+            self._assert_expected_version(image_id, image_map[image_id].version, expected_version)
 
         changed: list[PortfolioImage] = []
         for index, image_id in enumerate(requested_ids):
@@ -292,7 +293,7 @@ class VendorCommandHandlers:
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
-        self._assert_expected_version(package.version, cmd.expected_version)
+        self._assert_expected_version(package.id, package.version, cmd.expected_version)
         original_version = package.version
         package.update_details(cmd.name, cmd.description, cmd.price, cmd.currency, cmd.package_tier)
         return self._save_if_changed(package, original_version, self._to_package_dto)
@@ -300,7 +301,7 @@ class VendorCommandHandlers:
     def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
-        self._assert_expected_version(package.version, cmd.expected_version)
+        self._assert_expected_version(package.id, package.version, cmd.expected_version)
         original_version = package.version
         package.deactivate()
         return self._save_if_changed(package, original_version, self._to_package_dto)
@@ -308,7 +309,7 @@ class VendorCommandHandlers:
     def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
         package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
-        self._assert_expected_version(package.version, cmd.expected_version)
+        self._assert_expected_version(package.id, package.version, cmd.expected_version)
         original_version = package.version
         package.activate()
         return self._save_if_changed(package, original_version, self._to_package_dto)
@@ -337,7 +338,7 @@ class VendorCommandHandlers:
         inquiry = self.inquiry_repo.get_for_vendor(cmd.vendor_id, cmd.inquiry_id)
         if not inquiry:
             raise VendorResourceNotFound("Inquiry not found.")
-        self._assert_expected_version(inquiry.version, cmd.expected_version)
+        self._assert_expected_version(inquiry.id, inquiry.version, cmd.expected_version)
         original_version = inquiry.version
         inquiry.mark_read()
         return self._save_if_changed(inquiry, original_version, self._to_inquiry_dto)
@@ -400,9 +401,17 @@ class VendorCommandHandlers:
         self.authorization_port.assert_moderator_can_moderate_vendor(moderator, vendor_id)
 
     @staticmethod
-    def _assert_expected_version(actual_version: int, expected_version: int) -> None:
+    def _assert_expected_version(
+        resource_id: uuid.UUID,
+        actual_version: int,
+        expected_version: int,
+    ) -> None:
         if expected_version != actual_version:
-            raise VendorConflict("Vendor resource has changed.", code="vendor_version_conflict")
+            raise VendorVersionConflict(
+                resource_id=resource_id,
+                expected_version=expected_version,
+                actual_version=actual_version,
+            )
 
     def _load_active_vendor_images(self, vendor_id: uuid.UUID) -> tuple[PortfolioImage, ...]:
         load_complete = getattr(self.reorder_uow, "load_active_vendor_images", None)
