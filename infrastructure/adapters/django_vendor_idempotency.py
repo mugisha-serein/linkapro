@@ -12,7 +12,7 @@ from django.utils import timezone
 import json
 
 from application.vendors.dtos import InquiryDTO, PortfolioImageDTO, ServicePackageDTO, VendorProfileDTO
-from application.vendors.errors import VendorConflict
+from application.vendors.errors import VendorConflict, VendorIdempotencyConflict
 from django_app.vendors.models import VendorIdempotencyRecord
 
 T = TypeVar("T")
@@ -63,10 +63,7 @@ class DjangoVendorIdempotencyAdapter:
             record = VendorIdempotencyRecord.objects.select_for_update().get(scope=scope, actor_id=actor_id, key=key)
             created = False
         if not created and record.payload_fingerprint != fingerprint:
-            raise VendorConflict(
-                "Idempotency key was already used with a different payload.",
-                code="vendor_idempotency_conflict",
-            )
+            raise VendorIdempotencyConflict()
         if record.status == VendorIdempotencyRecord.Status.FAILED:
             record.status = VendorIdempotencyRecord.Status.IN_PROGRESS
             record.last_error = None
