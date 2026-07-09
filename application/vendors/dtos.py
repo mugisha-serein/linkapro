@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Generic, Optional, TypeVar
+from typing import Generic, Literal, Optional, TypeVar
 import uuid
 
 T = TypeVar("T")
@@ -16,6 +16,7 @@ class PageDTO(Generic[T]):
     limit: int
     offset: int
     next_cursor: str | None = None
+    pagination_mode: Literal["offset", "cursor"] = "offset"
 
     def __post_init__(self) -> None:
         if not isinstance(self.total, int) or isinstance(self.total, bool) or self.total < 0:
@@ -28,6 +29,10 @@ class PageDTO(Generic[T]):
             raise ValueError("Page limit must be between 1 and 100.")
         if self.offset < 0 or self.offset > 10_000:
             raise ValueError("Page offset must be between 0 and 10000.")
+        if self.pagination_mode not in {"offset", "cursor"}:
+            raise ValueError("Page pagination_mode must be 'offset' or 'cursor'.")
+        if self.pagination_mode == "cursor" and self.offset != 0:
+            raise ValueError("Cursor pagination cannot carry a nonzero offset.")
         if len(self.items) > self.limit:
             raise ValueError("Page items cannot exceed the page limit.")
         if self.total < len(self.items):
