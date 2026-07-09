@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -7,79 +8,114 @@ SETUP_ROUTE = "/vendor/profile/setup"
 DASHBOARD_ROUTE = "/vendor/dashboard"
 
 
-def build_vendor_onboarding_contract(profile: Any | None) -> dict[str, Any]:
+@dataclass(frozen=True)
+class VendorOnboardingDTO(dict[str, Any]):
+    profile_status: str
+    can_access_dashboard: bool
+    must_complete_profile: bool
+    can_submit_for_review: bool
+    marketplace_visible: bool
+    redirect_to: str
+    message: str
+
+    def __post_init__(self) -> None:
+        dict.__init__(
+            self,
+            profile_status=self.profile_status,
+            can_access_dashboard=self.can_access_dashboard,
+            must_complete_profile=self.must_complete_profile,
+            can_submit_for_review=self.can_submit_for_review,
+            marketplace_visible=self.marketplace_visible,
+            redirect_to=self.redirect_to,
+            message=self.message,
+        )
+
+    def _reject_mutation(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("VendorOnboardingDTO is immutable.")
+
+    __setitem__ = _reject_mutation
+    __delitem__ = _reject_mutation
+    __ior__ = _reject_mutation
+    clear = _reject_mutation
+    pop = _reject_mutation
+    popitem = _reject_mutation
+    setdefault = _reject_mutation
+    update = _reject_mutation
+
+
+def build_vendor_onboarding_contract(profile: Any | None) -> VendorOnboardingDTO:
     if profile is None:
-        return {
-            "profile_status": "missing",
-            "can_access_dashboard": False,
-            "must_complete_profile": True,
-            "can_submit_for_review": False,
-            "marketplace_visible": False,
-            "redirect_to": SETUP_ROUTE,
-            "message": "Complete your vendor profile before continuing.",
-        }
+        return VendorOnboardingDTO(
+            profile_status="missing",
+            can_access_dashboard=False,
+            must_complete_profile=True,
+            can_submit_for_review=False,
+            marketplace_visible=False,
+            redirect_to=SETUP_ROUTE,
+            message="Complete your vendor profile before continuing.",
+        )
 
     status = str(getattr(profile, "status", "draft") or "draft")
     field_errors = _profile_completion_errors(profile)
     is_complete = not field_errors
 
     if status == "approved":
-        return {
-            "profile_status": status,
-            "can_access_dashboard": True,
-            "must_complete_profile": False,
-            "can_submit_for_review": False,
-            "marketplace_visible": True,
-            "redirect_to": DASHBOARD_ROUTE,
-            "message": "Your vendor profile is approved and visible in the marketplace.",
-        }
+        return VendorOnboardingDTO(
+            profile_status=status,
+            can_access_dashboard=True,
+            must_complete_profile=False,
+            can_submit_for_review=False,
+            marketplace_visible=True,
+            redirect_to=DASHBOARD_ROUTE,
+            message="Your vendor profile is approved and visible in the marketplace.",
+        )
 
     if status == "pending_review":
-        return {
-            "profile_status": status,
-            "can_access_dashboard": True,
-            "must_complete_profile": False,
-            "can_submit_for_review": False,
-            "marketplace_visible": False,
-            "redirect_to": DASHBOARD_ROUTE,
-            "message": "Your profile is under review. Marketplace visibility starts after admin approval.",
-        }
+        return VendorOnboardingDTO(
+            profile_status=status,
+            can_access_dashboard=True,
+            must_complete_profile=False,
+            can_submit_for_review=False,
+            marketplace_visible=False,
+            redirect_to=DASHBOARD_ROUTE,
+            message="Your profile is under review. Marketplace visibility starts after admin approval.",
+        )
 
     if status == "suspended":
-        return {
-            "profile_status": status,
-            "can_access_dashboard": False,
-            "must_complete_profile": False,
-            "can_submit_for_review": False,
-            "marketplace_visible": False,
-            "redirect_to": SETUP_ROUTE,
-            "message": "Your vendor account is suspended. Please contact support.",
-        }
+        return VendorOnboardingDTO(
+            profile_status=status,
+            can_access_dashboard=False,
+            must_complete_profile=False,
+            can_submit_for_review=False,
+            marketplace_visible=False,
+            redirect_to=SETUP_ROUTE,
+            message="Your vendor account is suspended. Please contact support.",
+        )
 
     if status == "rejected":
-        return {
-            "profile_status": status,
-            "can_access_dashboard": False,
-            "must_complete_profile": True,
-            "can_submit_for_review": is_complete,
-            "marketplace_visible": False,
-            "redirect_to": SETUP_ROUTE,
-            "message": getattr(profile, "rejection_reason", None)
+        return VendorOnboardingDTO(
+            profile_status=status,
+            can_access_dashboard=False,
+            must_complete_profile=True,
+            can_submit_for_review=is_complete,
+            marketplace_visible=False,
+            redirect_to=SETUP_ROUTE,
+            message=getattr(profile, "rejection_reason", None)
             or "Your vendor profile needs updates before resubmission.",
-        }
+        )
 
     incomplete_status = "incomplete" if not is_complete else status
-    return {
-        "profile_status": incomplete_status,
-        "can_access_dashboard": False,
-        "must_complete_profile": True,
-        "can_submit_for_review": is_complete,
-        "marketplace_visible": False,
-        "redirect_to": SETUP_ROUTE,
-        "message": "Complete your vendor profile before continuing."
+    return VendorOnboardingDTO(
+        profile_status=incomplete_status,
+        can_access_dashboard=False,
+        must_complete_profile=True,
+        can_submit_for_review=is_complete,
+        marketplace_visible=False,
+        redirect_to=SETUP_ROUTE,
+        message="Complete your vendor profile before continuing."
         if not is_complete
         else "Submit your vendor profile for admin review.",
-    }
+    )
 
 
 def vendor_field_errors(profile: Any | None) -> dict[str, list[str]]:
