@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Callable, Generic, Literal, Protocol, Sequence, TypeAlias, TypeVar
+from typing import Callable, Generic, Literal, Mapping, Protocol, Sequence, TypeAlias, TypeVar
 import uuid
 
 from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
@@ -22,6 +22,7 @@ from .dtos import (
 T = TypeVar("T")
 VendorAggregateT = TypeVar("VendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
 CreatedVendorAggregateT = TypeVar("CreatedVendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
+ProfileCompletionErrors: TypeAlias = Mapping[str, Sequence[str]]
 
 VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER = timedelta(hours=24)
 
@@ -89,6 +90,10 @@ class InquiryAbuseProtectionPort(Protocol):
         vendor_id: uuid.UUID,
         payload_digest: str,
     ) -> None: ...
+
+
+class VendorProfileCompletionProvider(Protocol):
+    def get_profile_completion_errors(self, profile: object) -> ProfileCompletionErrors: ...
 
 
 class VendorAuthorizationPort(Protocol):
