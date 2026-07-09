@@ -17,6 +17,31 @@ class PageDTO(Generic[T]):
     offset: int
     next_cursor: str | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.total, int) or isinstance(self.total, bool) or self.total < 0:
+            raise ValueError("Page total must be a nonnegative integer.")
+        if not isinstance(self.limit, int) or isinstance(self.limit, bool):
+            raise ValueError("Page limit must be an integer.")
+        if not isinstance(self.offset, int) or isinstance(self.offset, bool):
+            raise ValueError("Page offset must be an integer.")
+        if self.limit < 1 or self.limit > 100:
+            raise ValueError("Page limit must be between 1 and 100.")
+        if self.offset < 0 or self.offset > 10_000:
+            raise ValueError("Page offset must be between 0 and 10000.")
+        if len(self.items) > self.limit:
+            raise ValueError("Page items cannot exceed the page limit.")
+        if self.total < len(self.items):
+            raise ValueError("Page total cannot be less than the number of items.")
+        if self.next_cursor is not None:
+            if not isinstance(self.next_cursor, str):
+                raise ValueError("Page next_cursor must be a string.")
+            next_cursor = self.next_cursor.strip()
+            if not next_cursor:
+                raise ValueError("Page next_cursor cannot be blank.")
+            if len(next_cursor) > 512:
+                raise ValueError("Page next_cursor must be 512 characters or fewer.")
+            object.__setattr__(self, "next_cursor", next_cursor)
+
 
 @dataclass(frozen=True)
 class VendorDashboardSummaryDTO:
