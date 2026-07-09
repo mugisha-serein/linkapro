@@ -99,6 +99,7 @@ class PortfolioImageDTO:
     quality_status: str
     visibility_status: str
     is_active: bool
+    version: int
     upload_error: Optional[str] = None
     failure_reason: Optional[str] = None
     rejection_reason: Optional[str] = None
@@ -115,7 +116,6 @@ class PortfolioImageDTO:
     analyzer_summary: Optional[str] = None
     is_deleted: bool = False
     deleted_at: Optional[datetime] = None
-    version: int = 0
 
 
 @dataclass(frozen=True)
