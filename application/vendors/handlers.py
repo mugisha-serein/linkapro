@@ -38,7 +38,13 @@ from .commands import (
     UpdateVendorProfileCommand,
 )
 from .dtos import InquiryDTO, PageDTO, PortfolioImageDTO, ServicePackageDTO, VendorProfileDTO
-from .errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
+from .errors import (
+    DuplicateVendorProfile,
+    InvalidVendorCommand,
+    VendorConflict,
+    VendorOperationForbidden,
+    VendorResourceNotFound,
+)
 from .ports import (
     PortfolioOrderAllocator,
     PortfolioReorderUnitOfWork,
@@ -87,7 +93,7 @@ class VendorCommandHandlers:
         def operation() -> VendorProfileDTO:
             existing = self.vendor_repo.get_by_user_id(cmd.actor.user_id)
             if existing:
-                raise VendorConflict("User already has a vendor profile.", code="vendor_profile_exists")
+                raise self._vendor_profile_exists_conflict()
             profile = VendorProfile.create_draft(
                 user_id=cmd.actor.user_id,
                 business_name=cmd.business_name,
@@ -99,7 +105,10 @@ class VendorCommandHandlers:
                 custom_category=cmd.custom_category,
                 website=cmd.website,
             )
-            saved = self.vendor_repo.add(profile)
+            try:
+                saved = self.vendor_repo.add(profile)
+            except DuplicateVendorProfile as exc:
+                raise self._vendor_profile_exists_conflict() from exc
             self._dispatch_pending_events(profile)
             return self._to_profile_dto(saved)
 
@@ -331,6 +340,10 @@ class VendorCommandHandlers:
     def _dispatch_pending_events(self, aggregate) -> None:
         for event in aggregate.pull_events():
             self.event_dispatcher.dispatch(event)
+
+    @staticmethod
+    def _vendor_profile_exists_conflict() -> VendorConflict:
+        return VendorConflict("User already has a vendor profile.", code="vendor_profile_exists")
 
     def _assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None:
         if self.authorization_port is None:

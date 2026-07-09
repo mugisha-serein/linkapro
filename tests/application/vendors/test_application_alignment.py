@@ -30,7 +30,13 @@ from application.vendors.commands import (
     UpdateVendorProfileCommand,
 )
 from application.vendors.dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
-from application.vendors.errors import InvalidVendorCommand, VendorConflict, VendorOperationForbidden, VendorResourceNotFound
+from application.vendors.errors import (
+    DuplicateVendorProfile,
+    InvalidVendorCommand,
+    VendorConflict,
+    VendorOperationForbidden,
+    VendorResourceNotFound,
+)
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
 from application.vendors.queries import (
     GetVendorAnalyticsQuery,
@@ -159,9 +165,12 @@ class VendorRepo:
         self.save_calls = []
         self.get_by_id_calls = []
         self.fail_on_save = False
+        self.fail_duplicate_on_add = False
 
     def add(self, profile):
         self.add_calls.append(profile)
+        if self.fail_duplicate_on_add:
+            raise DuplicateVendorProfile()
         self.profiles[profile.id] = profile
         return profile
 
@@ -388,6 +397,41 @@ def test_creation_uses_add_not_save_and_idempotency_replays_result():
     assert first is second
     assert len(vendor_repo.add_calls) == 1
     assert vendor_repo.save_calls == []
+
+
+def test_create_profile_duplicate_precheck_and_concurrent_insert_use_same_stable_conflict():
+    actor = _actor()
+    existing = _profile()
+    existing.user_id = actor.user_id
+    precheck_repo = VendorRepo([existing])
+    precheck_handler = _handlers(vendor_repo=precheck_repo)
+    cmd = CreateVendorProfileCommand(
+        actor=actor,
+        business_name="New Vendor",
+        category="catering",
+        description="Reliable event catering and planning support.",
+        service_area="Kigali",
+        contact_email="new@example.com",
+        contact_phone="+250700000000",
+    )
+
+    with pytest.raises(VendorConflict) as precheck_error:
+        precheck_handler.create_profile(cmd)
+
+    concurrent_repo = VendorRepo()
+    concurrent_repo.fail_duplicate_on_add = True
+    concurrent_dispatcher = EventDispatcher()
+    concurrent_handler = _handlers(vendor_repo=concurrent_repo, dispatcher=concurrent_dispatcher)
+
+    with pytest.raises(VendorConflict) as concurrent_error:
+        concurrent_handler.create_profile(cmd)
+
+    assert precheck_error.value.code == "vendor_profile_exists"
+    assert concurrent_error.value.code == "vendor_profile_exists"
+    assert precheck_error.value.message == concurrent_error.value.message
+    assert precheck_repo.add_calls == []
+    assert len(concurrent_repo.add_calls) == 1
+    assert concurrent_dispatcher.events == []
 
 
 def test_idempotency_payload_conflict_raises_vendor_conflict():

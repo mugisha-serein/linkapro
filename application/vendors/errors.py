@@ -29,6 +29,11 @@ class VendorConflict(VendorApplicationError):
     default_message = "Vendor resource has changed."
 
 
+class DuplicateVendorProfile(VendorApplicationError):
+    default_code = "duplicate_vendor_profile"
+    default_message = "User already has a vendor profile."
+
+
 class InvalidVendorCommand(VendorApplicationError):
     default_code = "vendor_command_invalid"
     default_message = "Vendor command is invalid."
