@@ -31,6 +31,11 @@ class VendorConflict(VendorApplicationError):
     default_message = "Vendor resource has changed."
 
 
+class VendorIdempotencyConflict(VendorConflict):
+    default_code = "vendor_idempotency_conflict"
+    default_message = "Idempotency key was already used with a different payload."
+
+
 class VendorVersionConflict(VendorConflict):
     default_code = "vendor_version_conflict"
     default_message = "Vendor resource has changed."
