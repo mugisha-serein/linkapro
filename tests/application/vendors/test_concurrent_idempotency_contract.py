@@ -17,6 +17,25 @@ class _IdempotencyRecord:
     error: BaseException | None = None
 
 
+class StrictUnusedDependency:
+    def _unexpected(self, name):
+        raise AssertionError(f"Unexpected dependency access: {name}")
+
+    def get_by_id(self, *args, **kwargs): self._unexpected("get_by_id")
+    def get_by_user_id(self, *args, **kwargs): self._unexpected("get_by_user_id")
+    def get_for_vendor(self, *args, **kwargs): self._unexpected("get_for_vendor")
+    def add_with_pending_events(self, *args, **kwargs): self._unexpected("add_with_pending_events")
+    def save_with_pending_events(self, *args, **kwargs): self._unexpected("save_with_pending_events")
+    def assert_actor_owns_vendor(self, *args, **kwargs): self._unexpected("assert_actor_owns_vendor")
+    def assert_actor_can_access_vendor(self, *args, **kwargs): self._unexpected("assert_actor_can_access_vendor")
+    def assert_moderator_can_moderate_vendor(self, *args, **kwargs): self._unexpected("assert_moderator_can_moderate_vendor")
+    def execute_once(self, *args, **kwargs): self._unexpected("execute_once")
+    def assert_inquiry_allowed(self, *args, **kwargs): self._unexpected("assert_inquiry_allowed")
+    def load_active_vendor_images(self, *args, **kwargs): self._unexpected("load_active_vendor_images")
+    def persist_reorder(self, *args, **kwargs): self._unexpected("persist_reorder")
+    def create_at_next_order(self, *args, **kwargs): self._unexpected("create_at_next_order")
+
+
 class StrictConcurrentIdempotencyPort:
     """Test fake that serializes one operation per idempotency identity."""
 
@@ -71,13 +90,17 @@ class StrictConcurrentIdempotencyPort:
 
 
 def _handler(idempotency_port: StrictConcurrentIdempotencyPort) -> VendorCommandHandlers:
+    unused = StrictUnusedDependency()
     return VendorCommandHandlers(
-        vendor_repo=object(),
-        image_repo=object(),
-        package_repo=object(),
-        inquiry_repo=object(),
-        portfolio_creation_port=object(),
-        reorder_uow=object(),
+        vendor_repo=unused,
+        image_repo=unused,
+        package_repo=unused,
+        inquiry_repo=unused,
+        aggregate_uow=unused,
+        authorization_port=unused,
+        inquiry_abuse_protection_port=unused,
+        portfolio_creation_port=unused,
+        reorder_uow=unused,
         idempotency_port=idempotency_port,
     )
 
