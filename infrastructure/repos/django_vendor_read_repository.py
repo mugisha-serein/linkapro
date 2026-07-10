@@ -13,11 +13,12 @@ from application.vendors.dtos import (
     VendorDashboardSummaryDTO,
 )
 from application.vendors.errors import VendorResourceNotFound
+from application.vendors.ports import VendorReadPort
 from domain.vendors.interfaces import PageRequest
 from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile
 
 
-class DjangoVendorReadRepository:
+class DjangoVendorReadRepository(VendorReadPort):
     def list_service_packages(
         self,
         vendor_id: uuid.UUID,
@@ -26,7 +27,7 @@ class DjangoVendorReadRepository:
         self._require_vendor(vendor_id)
         page = page or PageRequest()
         queryset = (
-            ServicePackage.all_objects.filter(vendor_id=vendor_id)
+            ServicePackage.all_objects.filter(vendor_id=vendor_id, is_deleted=False)
             .order_by("-created_at", "id")
             .values(
                 "id",
