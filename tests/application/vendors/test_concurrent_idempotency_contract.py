@@ -76,6 +76,7 @@ def _handler(idempotency_port: StrictConcurrentIdempotencyPort) -> VendorCommand
         image_repo=object(),
         package_repo=object(),
         inquiry_repo=object(),
+        portfolio_creation_port=object(),
         reorder_uow=object(),
         idempotency_port=idempotency_port,
     )
