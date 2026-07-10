@@ -1,11 +1,5 @@
-from infrastructure.repos.django_vendor_profile_repository import DjangoVendorProfileRepository
-from infrastructure.repos.django_portfolio_image_repository import DjangoPortfolioImageRepository
-from infrastructure.repos.django_service_package_repository import DjangoServicePackageRepository
-from infrastructure.repos.django_inquiry_repository import DjangoInquiryRepository
-from infrastructure.repos.django_portfolio_reorder_uow import DjangoPortfolioReorderUnitOfWork
-from infrastructure.repos.django_vendor_read_repository import DjangoVendorReadRepository
-from infrastructure.adapters.django_vendor_idempotency import DjangoVendorIdempotencyAdapter
-from application.vendors.errors import VendorApplicationConfigurationError
+from __future__ import annotations
+
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
 from application.vendors.ports import (
     InquiryAbuseProtectionPort,
@@ -13,40 +7,59 @@ from application.vendors.ports import (
     VendorAggregateUnitOfWork,
     VendorAuthorizationPort,
 )
+from infrastructure.adapters.django_vendor_idempotency import DjangoVendorIdempotencyAdapter
+from infrastructure.repos.django_inquiry_repository import DjangoInquiryRepository
+from infrastructure.repos.django_portfolio_image_creation import DjangoPortfolioImageCreationPort
+from infrastructure.repos.django_portfolio_image_repository import DjangoPortfolioImageRepository
+from infrastructure.repos.django_portfolio_reorder_uow import DjangoPortfolioReorderUnitOfWork
+from infrastructure.repos.django_service_package_repository import DjangoServicePackageRepository
+from infrastructure.repos.django_vendor_aggregate_uow import DjangoVendorAggregateUnitOfWork
+from infrastructure.repos.django_vendor_profile_repository import DjangoVendorProfileRepository
+from infrastructure.repos.django_vendor_read_repository import DjangoVendorReadRepository
+
+from .adapters import DjangoInquiryAbuseProtectionAdapter, DjangoVendorAuthorizationAdapter
 
 
 def get_command_handlers(
     *,
-    aggregate_uow: VendorAggregateUnitOfWork,
-    authorization_port: VendorAuthorizationPort,
-    inquiry_abuse_protection_port: InquiryAbuseProtectionPort,
+    aggregate_uow: VendorAggregateUnitOfWork | None = None,
+    authorization_port: VendorAuthorizationPort | None = None,
+    inquiry_abuse_protection_port: InquiryAbuseProtectionPort | None = None,
     portfolio_creation_port: PortfolioImageCreationPort | None = None,
 ) -> VendorCommandHandlers:
-    """Return fully initialized VendorCommandHandlers with all dependencies."""
-    if portfolio_creation_port is None:
-        raise VendorApplicationConfigurationError(
-            field_errors={"portfolio_creation_port": ["Portfolio image creation port is required."]}
-        )
-    image_repo = DjangoPortfolioImageRepository()
+    """Build the production vendor command composition with explicit override seams."""
+    resolved_uow = aggregate_uow or DjangoVendorAggregateUnitOfWork()
+    resolved_authorization = authorization_port or DjangoVendorAuthorizationAdapter()
+    resolved_abuse_protection = (
+        inquiry_abuse_protection_port or DjangoInquiryAbuseProtectionAdapter()
+    )
+    resolved_creation = portfolio_creation_port or DjangoPortfolioImageCreationPort(
+        aggregate_uow=resolved_uow
+    )
+
     return VendorCommandHandlers(
         vendor_repo=DjangoVendorProfileRepository(),
-        image_repo=image_repo,
+        image_repo=DjangoPortfolioImageRepository(),
         package_repo=DjangoServicePackageRepository(),
         inquiry_repo=DjangoInquiryRepository(),
-        aggregate_uow=aggregate_uow,
-        authorization_port=authorization_port,
-        idempotency_port=DjangoVendorIdempotencyAdapter(),
-        inquiry_abuse_protection_port=inquiry_abuse_protection_port,
         reorder_uow=DjangoPortfolioReorderUnitOfWork(),
-        portfolio_creation_port=portfolio_creation_port,
+        aggregate_uow=resolved_uow,
+        authorization_port=resolved_authorization,
+        idempotency_port=DjangoVendorIdempotencyAdapter(),
+        inquiry_abuse_protection_port=resolved_abuse_protection,
+        portfolio_creation_port=resolved_creation,
     )
 
 
-def get_query_handlers() -> VendorQueryHandlers:
-    """Return fully initialized VendorQueryHandlers with all dependencies."""
+def get_query_handlers(
+    *,
+    authorization_port: VendorAuthorizationPort | None = None,
+) -> VendorQueryHandlers:
+    """Build the production vendor query composition with authorization enabled."""
     return VendorQueryHandlers(
         vendor_repo=DjangoVendorProfileRepository(),
         image_repo=DjangoPortfolioImageRepository(),
         inquiry_repo=DjangoInquiryRepository(),
         read_repo=DjangoVendorReadRepository(),
+        authorization_port=authorization_port or DjangoVendorAuthorizationAdapter(),
     )
