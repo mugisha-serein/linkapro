@@ -109,24 +109,16 @@ class VendorCommandHandlers:
         inquiry_abuse_protection_port: InquiryAbuseProtectionPort,
         portfolio_creation_port: PortfolioImageCreationPort,
     ):
-        self._require_dependency("vendor_repo", vendor_repo, ("get_by_id", "get_by_user_id"))
-        self._require_dependency("image_repo", image_repo, ("get_for_vendor",))
-        self._require_dependency("package_repo", package_repo, ("get_for_vendor",))
-        self._require_dependency("inquiry_repo", inquiry_repo, ("get_for_vendor",))
+        self._require_dependency("vendor_repo", vendor_repo, ())
+        self._require_dependency("image_repo", image_repo, ())
+        self._require_dependency("package_repo", package_repo, ())
+        self._require_dependency("inquiry_repo", inquiry_repo, ())
         self._require_dependency(
             "aggregate_uow",
             aggregate_uow,
             ("add_with_pending_events", "save_with_pending_events"),
         )
-        self._require_dependency(
-            "authorization_port",
-            authorization_port,
-            (
-                "assert_actor_owns_vendor",
-                "assert_actor_can_access_vendor",
-                "assert_moderator_can_moderate_vendor",
-            ),
-        )
+        self._require_dependency("authorization_port", authorization_port, ())
         self._require_dependency("idempotency_port", idempotency_port, ("execute_once",))
         self._require_dependency(
             "inquiry_abuse_protection_port",
