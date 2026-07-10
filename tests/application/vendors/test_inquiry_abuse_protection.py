@@ -132,7 +132,7 @@ def _handler(*, vendor_repo, aggregate_uow, idempotency_port, abuse_port):
         aggregate_uow=aggregate_uow,
         idempotency_port=idempotency_port,
         inquiry_abuse_protection_port=abuse_port,
-        portfolio_creation_port=None,
+        portfolio_creation_port=unused,
     )
 
 
