@@ -77,7 +77,6 @@ def _handler(image_repo, aggregate_uow, authorization):
         image_repo=image_repo,
         package_repo=unused,
         inquiry_repo=unused,
-        event_dispatcher=unused,
         reorder_uow=UnusedReorderUow(),
         aggregate_uow=aggregate_uow,
         authorization_port=authorization,
