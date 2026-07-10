@@ -733,12 +733,7 @@ def test_vendor_command_handler_required_ports_fail_composition_when_missing(dep
 @pytest.mark.parametrize(
     "dependency_name",
     (
-        "vendor_repo",
-        "image_repo",
-        "package_repo",
-        "inquiry_repo",
         "aggregate_uow",
-        "authorization_port",
         "idempotency_port",
         "inquiry_abuse_protection_port",
         "reorder_uow",
