@@ -21,7 +21,6 @@ from .dtos import (
 
 T = TypeVar("T")
 VendorAggregateT = TypeVar("VendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
-CreatedVendorAggregateT = TypeVar("CreatedVendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
 ProfileCompletionErrors: TypeAlias = Mapping[str, Sequence[str]]
 
 VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER = timedelta(hours=24)
@@ -131,12 +130,6 @@ class VendorAggregateUnitOfWork(Protocol):
         *,
         expected_version: int,
     ) -> VendorAggregateT: ...
-
-
-class VendorCreationUnitOfWork(Protocol):
-    """Atomically adds one newly created vendor aggregate with its pending creation events."""
-
-    def add_with_pending_events(self, aggregate: CreatedVendorAggregateT) -> CreatedVendorAggregateT: ...
 
 
 class PortfolioReorderUnitOfWork(Protocol):
