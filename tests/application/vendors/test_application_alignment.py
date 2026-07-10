@@ -47,7 +47,6 @@ from application.vendors.ports import (
     PortfolioReorderUnitOfWork,
     VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER,
     VendorAggregateUnitOfWork,
-    VendorCreationUnitOfWork,
     VendorEventDispatcher,
     VendorIdempotencyCompleted,
     VendorIdempotencyExpired,
@@ -177,12 +176,14 @@ class EventDispatcher:
         self.events.append(event)
 
 
-class CreationUow:
+class AggregateUow:
     def __init__(self):
         self.add_calls = []
+        self.save_calls = []
         self.events = []
         self.fail_on_add = False
         self.fail_duplicate_on_add = False
+        self.fail_on_save = False
 
     def add_with_pending_events(self, aggregate):
         self.add_calls.append(aggregate)
@@ -190,19 +191,6 @@ class CreationUow:
             raise DuplicateVendorProfile()
         if self.fail_on_add:
             raise RuntimeError("creation transaction failed")
-        self.events.extend(aggregate.pull_events())
-        return aggregate
-
-
-class AggregateUow:
-    def __init__(self):
-        self.add_calls = []
-        self.save_calls = []
-        self.events = []
-        self.fail_on_save = False
-
-    def add_with_pending_events(self, aggregate):
-        self.add_calls.append(aggregate)
         self.events.extend(aggregate.pull_events())
         return aggregate
 
@@ -427,7 +415,6 @@ class ReorderUow:
 def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_repo=None, dispatcher=None, **kwargs):
     kwargs.setdefault("authorization_port", AuthorizationPort())
     kwargs.setdefault("aggregate_uow", AggregateUow())
-    kwargs.setdefault("creation_uow", CreationUow())
     kwargs.setdefault("reorder_uow", ReorderUow(()))
     return VendorCommandHandlers(
         vendor_repo=vendor_repo or VendorRepo(),
@@ -442,13 +429,13 @@ def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_r
 def test_profile_creation_uses_creation_unit_of_work_and_idempotency_replays_result():
     idem = IdempotencyPort()
     vendor_repo = VendorRepo()
-    creation_uow = CreationUow()
+    aggregate_uow = AggregateUow()
     dispatcher = EventDispatcher()
     handler = _handlers(
         vendor_repo=vendor_repo,
         dispatcher=dispatcher,
         idempotency_port=idem,
-        creation_uow=creation_uow,
+        aggregate_uow=aggregate_uow,
     )
     actor = _actor()
     cmd = CreateVendorProfileCommand(
@@ -466,7 +453,7 @@ def test_profile_creation_uses_creation_unit_of_work_and_idempotency_replays_res
     second = handler.create_profile(cmd)
 
     assert first is second
-    assert len(creation_uow.add_calls) == 1
+    assert len(aggregate_uow.add_calls) == 1
     assert vendor_repo.add_calls == []
     assert vendor_repo.save_calls == []
     assert dispatcher.events == []
@@ -477,14 +464,14 @@ def test_profile_creation_uses_creation_unit_of_work_and_idempotency_replays_res
 
 def test_profile_creation_translates_duplicate_conflict_from_creation_unit_of_work():
     vendor_repo = VendorRepo()
-    creation_uow = CreationUow()
-    creation_uow.fail_duplicate_on_add = True
+    aggregate_uow = AggregateUow()
+    aggregate_uow.fail_duplicate_on_add = True
     dispatcher = EventDispatcher()
     handler = _handlers(
         vendor_repo=vendor_repo,
         dispatcher=dispatcher,
         idempotency_port=IdempotencyPort(),
-        creation_uow=creation_uow,
+        aggregate_uow=aggregate_uow,
     )
 
     with pytest.raises(VendorConflict) as exc_info:
@@ -502,23 +489,23 @@ def test_profile_creation_translates_duplicate_conflict_from_creation_unit_of_wo
         )
 
     assert exc_info.value.code == "vendor_profile_exists"
-    assert len(creation_uow.add_calls) == 1
+    assert len(aggregate_uow.add_calls) == 1
     assert vendor_repo.add_calls == []
     assert vendor_repo.profiles == {}
     assert dispatcher.events == []
 
 
-def test_profile_creation_uow_failure_leaves_no_partial_profile_or_dispatched_events():
+def test_profile_aggregate_uow_failure_leaves_no_partial_profile_or_dispatched_events():
     vendor_repo = VendorRepo()
-    creation_uow = CreationUow()
-    creation_uow.fail_on_add = True
+    aggregate_uow = AggregateUow()
+    aggregate_uow.fail_on_add = True
     dispatcher = EventDispatcher()
     idempotency_port = IdempotencyPort()
     handler = _handlers(
         vendor_repo=vendor_repo,
         dispatcher=dispatcher,
         idempotency_port=idempotency_port,
-        creation_uow=creation_uow,
+        aggregate_uow=aggregate_uow,
     )
 
     with pytest.raises(RuntimeError, match="creation transaction failed"):
@@ -535,8 +522,8 @@ def test_profile_creation_uow_failure_leaves_no_partial_profile_or_dispatched_ev
             )
         )
 
-    assert len(creation_uow.add_calls) == 1
-    assert creation_uow.events == []
+    assert len(aggregate_uow.add_calls) == 1
+    assert aggregate_uow.events == []
     assert vendor_repo.add_calls == []
     assert vendor_repo.profiles == {}
     assert dispatcher.events == []
@@ -617,10 +604,6 @@ def test_idempotency_payload_extraction_excludes_original_omitted_command_attrib
 def test_vendor_aggregate_unit_of_work_contract_persists_one_aggregate_with_pending_events():
     assert hasattr(VendorAggregateUnitOfWork, "add_with_pending_events")
     assert hasattr(VendorAggregateUnitOfWork, "save_with_pending_events")
-
-
-def test_vendor_creation_unit_of_work_contract_adds_one_created_aggregate_with_pending_events():
-    assert hasattr(VendorCreationUnitOfWork, "add_with_pending_events")
 
 
 def test_vendor_idempotency_contract_defines_expiration_and_typed_record_outcomes():
@@ -710,7 +693,7 @@ def test_profile_creation_requires_creation_unit_of_work():
     handler = _handlers(
         vendor_repo=vendor_repo,
         dispatcher=dispatcher,
-        creation_uow=None,
+        aggregate_uow=None,
         idempotency_port=IdempotencyPort(),
     )
 
@@ -728,7 +711,7 @@ def test_profile_creation_requires_creation_unit_of_work():
             )
         )
 
-    assert exc_info.value.field_errors == {"creation_uow": ["Vendor creation unit of work is required."]}
+    assert exc_info.value.field_errors == {"aggregate_uow": ["Vendor aggregate unit of work is required."]}
     assert vendor_repo.add_calls == []
     assert vendor_repo.save_calls == []
     assert dispatcher.events == []
@@ -926,12 +909,12 @@ def test_profile_creation_unit_of_work_failure_is_not_cached_or_dispatched():
     idem = IdempotencyPort()
     vendor_repo = VendorRepo()
     dispatcher = EventDispatcher()
-    creation_uow = CreationUow()
-    creation_uow.fail_on_add = True
+    aggregate_uow = AggregateUow()
+    aggregate_uow.fail_on_add = True
     handler = _handlers(
         vendor_repo=vendor_repo,
         dispatcher=dispatcher,
-        creation_uow=creation_uow,
+        aggregate_uow=aggregate_uow,
         idempotency_port=idem,
     )
     cmd = CreateVendorProfileCommand(
@@ -948,8 +931,8 @@ def test_profile_creation_unit_of_work_failure_is_not_cached_or_dispatched():
     with pytest.raises(RuntimeError):
         handler.create_profile(cmd)
 
-    assert len(creation_uow.add_calls) == 1
-    assert creation_uow.events == []
+    assert len(aggregate_uow.add_calls) == 1
+    assert aggregate_uow.events == []
     assert vendor_repo.add_calls == []
     assert vendor_repo.save_calls == []
     assert dispatcher.events == []
@@ -976,9 +959,14 @@ def test_create_profile_duplicate_precheck_and_concurrent_insert_use_same_stable
         precheck_handler.create_profile(cmd)
 
     concurrent_repo = VendorRepo()
-    concurrent_repo.fail_duplicate_on_add = True
+    concurrent_uow = AggregateUow()
+    concurrent_uow.fail_duplicate_on_add = True
     concurrent_dispatcher = EventDispatcher()
-    concurrent_handler = _handlers(vendor_repo=concurrent_repo, dispatcher=concurrent_dispatcher)
+    concurrent_handler = _handlers(
+        vendor_repo=concurrent_repo,
+        aggregate_uow=concurrent_uow,
+        dispatcher=concurrent_dispatcher,
+    )
 
     with pytest.raises(VendorConflict) as concurrent_error:
         concurrent_handler.create_profile(cmd)
@@ -987,7 +975,8 @@ def test_create_profile_duplicate_precheck_and_concurrent_insert_use_same_stable
     assert concurrent_error.value.code == "vendor_profile_exists"
     assert precheck_error.value.message == concurrent_error.value.message
     assert precheck_repo.add_calls == []
-    assert len(concurrent_repo.add_calls) == 1
+    assert concurrent_repo.add_calls == []
+    assert len(concurrent_uow.add_calls) == 1
     assert concurrent_dispatcher.events == []
 
 

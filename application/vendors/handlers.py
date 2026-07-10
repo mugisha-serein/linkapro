@@ -70,7 +70,6 @@ from .ports import (
     PortfolioReorderUnitOfWork,
     VendorAggregateUnitOfWork,
     VendorAuthorizationPort,
-    VendorCreationUnitOfWork,
     VendorEventDispatcher,
     VendorIdempotencyPort,
     VendorReadPort,
@@ -110,7 +109,6 @@ class VendorCommandHandlers:
         *,
         reorder_uow: PortfolioReorderUnitOfWork,
         aggregate_uow: VendorAggregateUnitOfWork | None = None,
-        creation_uow: VendorCreationUnitOfWork | None = None,
         authorization_port: VendorAuthorizationPort | None = None,
         idempotency_port: VendorIdempotencyPort | None = None,
         inquiry_abuse_protection_port: InquiryAbuseProtectionPort | None = None,
@@ -124,7 +122,6 @@ class VendorCommandHandlers:
         self.package_repo = package_repo
         self.inquiry_repo = inquiry_repo
         self.aggregate_uow = aggregate_uow
-        self.creation_uow = creation_uow
         self.authorization_port = authorization_port
         self.idempotency_port = idempotency_port
         self.inquiry_abuse_protection_port = inquiry_abuse_protection_port
@@ -154,7 +151,7 @@ class VendorCommandHandlers:
                 website=cmd.website,
             )
             try:
-                saved = self._add_created_with_pending_events(profile)
+                saved = self._add_with_pending_events(profile)
             except DuplicateVendorProfile as exc:
                 raise self._vendor_profile_exists_conflict() from exc
             return self._to_profile_dto(saved)
@@ -434,13 +431,6 @@ class VendorCommandHandlers:
                 field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]}
             )
         return self.aggregate_uow.add_with_pending_events(aggregate)
-
-    def _add_created_with_pending_events(self, aggregate):
-        if self.creation_uow is None:
-            raise VendorApplicationConfigurationError(
-                field_errors={"creation_uow": ["Vendor creation unit of work is required."]}
-            )
-        return self.creation_uow.add_with_pending_events(aggregate)
 
     def _save_with_pending_events(self, aggregate, expected_version: int):
         if self.aggregate_uow is None:
