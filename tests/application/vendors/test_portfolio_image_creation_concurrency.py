@@ -146,13 +146,15 @@ def test_handler_composition_requires_atomic_portfolio_creation_port():
             package_repo=unused,
             inquiry_repo=unused,
             reorder_uow=unused,
+            aggregate_uow=unused,
             authorization_port=AllowOwner(),
             idempotency_port=PassThroughIdempotency(),
+            inquiry_abuse_protection_port=unused,
             portfolio_creation_port=None,
         )
 
     assert exc_info.value.field_errors == {
-        "portfolio_creation_port": ["Portfolio image creation port is required."]
+        "portfolio_creation_port": ["Required dependency is missing."]
     }
 
 
