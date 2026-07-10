@@ -4,7 +4,6 @@ from infrastructure.repos.django_service_package_repository import DjangoService
 from infrastructure.repos.django_inquiry_repository import DjangoInquiryRepository
 from infrastructure.repos.django_portfolio_reorder_uow import DjangoPortfolioReorderUnitOfWork
 from infrastructure.repos.django_vendor_read_repository import DjangoVendorReadRepository
-from infrastructure.adapters.django_vendor_event_outbox import DjangoVendorEventOutboxDispatcher
 from infrastructure.adapters.django_vendor_idempotency import DjangoVendorIdempotencyAdapter
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
 
@@ -17,7 +16,6 @@ def get_command_handlers() -> VendorCommandHandlers:
         image_repo=image_repo,
         package_repo=DjangoServicePackageRepository(),
         inquiry_repo=DjangoInquiryRepository(),
-        event_dispatcher=DjangoVendorEventOutboxDispatcher(),
         idempotency_port=DjangoVendorIdempotencyAdapter(),
         reorder_uow=DjangoPortfolioReorderUnitOfWork(),
         order_allocator=image_repo,
