@@ -154,11 +154,9 @@ class VendorCommandHandlers:
                 website=cmd.website,
             )
             try:
-                saved = self.vendor_repo.add(profile)
+                saved = self._add_created_with_pending_events(profile)
             except DuplicateVendorProfile as exc:
                 raise self._vendor_profile_exists_conflict() from exc
-            self._dispatch_pending_events(profile)
-            saved = self._add_created_with_pending_events(profile)
             return self._to_profile_dto(saved)
 
         return self._run_required_idempotent("vendor_profile.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
