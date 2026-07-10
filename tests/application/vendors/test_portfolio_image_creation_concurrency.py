@@ -115,31 +115,25 @@ def test_portfolio_image_creation_port_replaces_order_allocator_contract():
     assert hints["vendor_id"] is uuid.UUID
     assert hints["return"] is PortfolioImage
 
+    handler_signature = inspect.signature(VendorCommandHandlers.__init__)
+    assert handler_signature.parameters["portfolio_creation_port"].default is inspect.Parameter.empty
 
-def test_add_portfolio_image_requires_atomic_creation_port_before_persistence():
+
+def test_handler_composition_requires_atomic_portfolio_creation_port():
     vendor_id = uuid.uuid4()
     profile = _approved_profile(vendor_id)
     unused = StrictUnusedDependency()
-    handler = VendorCommandHandlers(
-        vendor_repo=VendorRepo(profile),
-        image_repo=unused,
-        package_repo=unused,
-        inquiry_repo=unused,
-        reorder_uow=unused,
-        authorization_port=AllowOwner(),
-        idempotency_port=PassThroughIdempotency(),
-        portfolio_creation_port=None,
-    )
 
     with pytest.raises(VendorApplicationConfigurationError) as exc_info:
-        handler.add_portfolio_image(
-            AddPortfolioImageCommand(
-                actor=AuthenticatedActor(user_id=profile.user_id),
-                vendor_id=vendor_id,
-                public_id="asset",
-                secure_url="https://example.com/image.jpg",
-                idempotency_key="missing-portfolio-creation-port",
-            )
+        VendorCommandHandlers(
+            vendor_repo=VendorRepo(profile),
+            image_repo=unused,
+            package_repo=unused,
+            inquiry_repo=unused,
+            reorder_uow=unused,
+            authorization_port=AllowOwner(),
+            idempotency_port=PassThroughIdempotency(),
+            portfolio_creation_port=None,
         )
 
     assert exc_info.value.field_errors == {
