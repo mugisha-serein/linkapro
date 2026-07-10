@@ -8,7 +8,6 @@ from application.vendors.commands import AuthenticatedActor
 from application.vendors.errors import VendorVersionConflict
 from application.vendors.handlers import VendorCommandHandlers
 from application.vendors.portfolio_media_commands import UpdatePortfolioCaptionCommand
-import application.vendors.portfolio_caption_update_handler  # noqa: F401 - registers handler method
 from domain.vendors.entities import PortfolioImage, PortfolioQualityStatus, PortfolioUploadStatus, PortfolioVisibilityStatus
 
 
