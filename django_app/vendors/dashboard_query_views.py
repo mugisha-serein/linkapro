@@ -13,5 +13,3 @@ from application.vendors.queries import (
     GetVendorDashboardSummaryQuery,
     ListRecentVendorActivityQuery,
 )
-from django_app.common.permissions import IsVendor
-from domain
