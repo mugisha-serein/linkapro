@@ -16,7 +16,8 @@ from application.vendors.errors import (
 from application.vendors.ports import InquiryAbuseProtectionPort, VendorAuthorizationPort
 from django_app.identity.models import User
 
-from .models import InquiryAbuseRecord, VendorProfile
+from .abuse_models import InquiryAbuseRecord
+from .models import VendorProfile
 
 
 class DjangoVendorAuthorizationAdapter(VendorAuthorizationPort):
