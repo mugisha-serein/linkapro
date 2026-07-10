@@ -6,7 +6,6 @@ from typing import Callable, Generic, Literal, Mapping, Protocol, Sequence, Type
 import uuid
 
 from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
-from domain.vendors.events import VendorDomainEvent
 from domain.vendors.interfaces import PageRequest
 
 from .commands import AuthenticatedActor, ModeratorActor
@@ -111,12 +110,6 @@ class VendorReadPort(Protocol):
     def analytics(self, vendor_id: uuid.UUID) -> VendorAnalyticsDTO: ...
 
     def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[VendorActivityDTO]: ...
-
-
-class VendorEventDispatcher(Protocol):
-    """Persists a vendor domain event for publication."""
-
-    def dispatch(self, event: VendorDomainEvent) -> None: ...
 
 
 class VendorAggregateUnitOfWork(Protocol):

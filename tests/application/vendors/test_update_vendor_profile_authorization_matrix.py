@@ -135,7 +135,6 @@ def test_update_vendor_profile_authorization_matrix(actor_kind: str, is_allowed:
         image_repo=object(),
         package_repo=object(),
         inquiry_repo=object(),
-        event_dispatcher=object(),
         reorder_uow=object(),
         aggregate_uow=aggregate_uow,
         authorization_port=authorization,

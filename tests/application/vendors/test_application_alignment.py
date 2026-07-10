@@ -42,12 +42,12 @@ from application.vendors.errors import (
     VendorOperationForbidden,
     VendorResourceNotFound,
 )
+from application.vendors import ports as vendor_ports
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
 from application.vendors.ports import (
     PortfolioReorderUnitOfWork,
     VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER,
     VendorAggregateUnitOfWork,
-    VendorEventDispatcher,
     VendorIdempotencyCompleted,
     VendorIdempotencyExpired,
     VendorIdempotencyInProgress,
@@ -79,7 +79,6 @@ from domain.vendors.events import (
     PortfolioMediaReordered,
     ServicePackageCreated,
     VendorApproved,
-    VendorDomainEvent,
     VendorProfileUpdated,
 )
 from domain.vendors.interfaces import Page, PageRequest
@@ -421,7 +420,6 @@ def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_r
         image_repo=image_repo or ImageRepo(),
         package_repo=package_repo or PackageRepo(),
         inquiry_repo=inquiry_repo or InquiryRepo(),
-        event_dispatcher=dispatcher or EventDispatcher(),
         **kwargs,
     )
 
@@ -659,19 +657,14 @@ def test_vendor_idempotency_port_contract_exposes_outcome_lookup_with_applicatio
     assert type(None) in return_args
 
 
-def test_vendor_event_dispatcher_contract_persists_one_vendor_domain_event_for_publication():
-    signature = inspect.signature(VendorEventDispatcher.dispatch)
-    hints = get_type_hints(VendorEventDispatcher.dispatch)
-
-    assert tuple(signature.parameters) == ("self", "event")
-    assert hints["event"] is VendorDomainEvent
-    assert hints["return"] is type(None)
+def test_vendor_event_dispatcher_application_port_is_removed():
+    assert not hasattr(vendor_ports, "VendorEventDispatcher")
 
 
-def test_vendor_command_handlers_constructor_types_event_dispatcher_port():
-    hints = get_type_hints(VendorCommandHandlers.__init__)
+def test_vendor_command_handlers_constructor_has_no_event_dispatcher_dependency():
+    signature = inspect.signature(VendorCommandHandlers.__init__)
 
-    assert hints["event_dispatcher"] is VendorEventDispatcher
+    assert "event_dispatcher" not in signature.parameters
 
 
 def test_vendor_command_handlers_constructor_requires_reorder_unit_of_work_port():

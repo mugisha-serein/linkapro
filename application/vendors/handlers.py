@@ -70,7 +70,6 @@ from .ports import (
     PortfolioReorderUnitOfWork,
     VendorAggregateUnitOfWork,
     VendorAuthorizationPort,
-    VendorEventDispatcher,
     VendorIdempotencyPort,
     VendorReadPort,
 )
@@ -105,7 +104,6 @@ class VendorCommandHandlers:
         image_repo: IPortfolioImageRepository,
         package_repo: IServicePackageRepository,
         inquiry_repo: IInquiryRepository,
-        event_dispatcher: VendorEventDispatcher,
         *,
         reorder_uow: PortfolioReorderUnitOfWork,
         aggregate_uow: VendorAggregateUnitOfWork | None = None,

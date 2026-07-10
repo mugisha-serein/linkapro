@@ -64,7 +64,6 @@ def _handler(reorder_uow, authorization_port):
         image_repo=unused,
         package_repo=unused,
         inquiry_repo=unused,
-        event_dispatcher=unused,
         reorder_uow=reorder_uow,
         authorization_port=authorization_port,
         portfolio_creation_port=None,
