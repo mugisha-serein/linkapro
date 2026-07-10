@@ -99,7 +99,6 @@ def _handler(*, profile: VendorProfile, creation_port) -> VendorCommandHandlers:
         event_dispatcher=unused,
         reorder_uow=unused,
         aggregate_uow=unused,
-        creation_uow=unused,
         authorization_port=AllowOwner(),
         idempotency_port=PassThroughIdempotency(),
         portfolio_creation_port=creation_port,
