@@ -103,14 +103,38 @@ class VendorCommandHandlers:
         inquiry_repo: IInquiryRepository,
         *,
         reorder_uow: PortfolioReorderUnitOfWork,
-        aggregate_uow: VendorAggregateUnitOfWork | None = None,
-        authorization_port: VendorAuthorizationPort | None = None,
-        idempotency_port: VendorIdempotencyPort | None = None,
-        inquiry_abuse_protection_port: InquiryAbuseProtectionPort | None = None,
+        aggregate_uow: VendorAggregateUnitOfWork,
+        authorization_port: VendorAuthorizationPort,
+        idempotency_port: VendorIdempotencyPort,
+        inquiry_abuse_protection_port: InquiryAbuseProtectionPort,
         portfolio_creation_port: PortfolioImageCreationPort,
     ):
-        if reorder_uow is None:
-            raise VendorApplicationConfigurationError("Portfolio reorder requires a unit of work.")
+        self._require_dependency("vendor_repo", vendor_repo, ())
+        self._require_dependency("image_repo", image_repo, ())
+        self._require_dependency("package_repo", package_repo, ())
+        self._require_dependency("inquiry_repo", inquiry_repo, ())
+        self._require_dependency(
+            "aggregate_uow",
+            aggregate_uow,
+            ("add_with_pending_events", "save_with_pending_events"),
+        )
+        self._require_dependency("authorization_port", authorization_port, ())
+        self._require_dependency("idempotency_port", idempotency_port, ("execute_once",))
+        self._require_dependency(
+            "inquiry_abuse_protection_port",
+            inquiry_abuse_protection_port,
+            ("assert_inquiry_allowed",),
+        )
+        self._require_dependency(
+            "reorder_uow",
+            reorder_uow,
+            ("load_active_vendor_images", "persist_reorder"),
+        )
+        self._require_dependency(
+            "portfolio_creation_port",
+            portfolio_creation_port,
+            ("create_at_next_order",),
+        )
         self.vendor_repo = vendor_repo
         self.image_repo = image_repo
         self.package_repo = package_repo
@@ -120,10 +144,6 @@ class VendorCommandHandlers:
         self.idempotency_port = idempotency_port
         self.inquiry_abuse_protection_port = inquiry_abuse_protection_port
         self.reorder_uow = reorder_uow
-        if portfolio_creation_port is None:
-            raise VendorApplicationConfigurationError(
-                field_errors={"portfolio_creation_port": ["Portfolio image creation port is required."]}
-            )
         self.portfolio_creation_port = portfolio_creation_port
 
     def create_profile(self, cmd: CreateVendorProfileCommand) -> VendorProfileDTO:
@@ -394,6 +414,22 @@ class VendorCommandHandlers:
         inquiry.mark_read()
         return self._save_if_changed(inquiry, original_version, self._to_inquiry_dto)
 
+    @staticmethod
+    def _require_dependency(name: str, dependency, required_methods: Sequence[str]) -> None:
+        missing_methods = []
+        for method_name in required_methods:
+            try:
+                method = getattr(dependency, method_name)
+            except (AttributeError, AssertionError):
+                method = None
+            if not callable(method):
+                missing_methods.append(method_name)
+        if dependency is None or missing_methods:
+            detail = "Required dependency is missing."
+            if missing_methods:
+                detail = f"Required callable methods are missing: {', '.join(missing_methods)}."
+            raise VendorApplicationConfigurationError(field_errors={name: [detail]})
+
     def _get_vendor_or_raise(self, vendor_id: uuid.UUID) -> VendorProfile:
         profile = self.vendor_repo.get_by_id(vendor_id)
         if not profile:
@@ -413,17 +449,9 @@ class VendorCommandHandlers:
         return to_dto(saved)
 
     def _add_with_pending_events(self, aggregate):
-        if self.aggregate_uow is None:
-            raise VendorApplicationConfigurationError(
-                field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]}
-            )
         return self.aggregate_uow.add_with_pending_events(aggregate)
 
     def _save_with_pending_events(self, aggregate, expected_version: int):
-        if self.aggregate_uow is None:
-            raise VendorApplicationConfigurationError(
-                field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]}
-            )
         return self.aggregate_uow.save_with_pending_events(aggregate, expected_version=expected_version)
 
     @staticmethod
@@ -431,17 +459,9 @@ class VendorCommandHandlers:
         return VendorConflict("User already has a vendor profile.", code="vendor_profile_exists")
 
     def _assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None:
-        if self.authorization_port is None:
-            raise VendorApplicationConfigurationError(
-                field_errors={"authorization_port": ["Vendor authorization is required."]}
-            )
         self.authorization_port.assert_actor_owns_vendor(actor, vendor_id)
 
     def _assert_moderator_can_moderate_vendor(self, moderator: ModeratorActor, vendor_id: uuid.UUID) -> None:
-        if self.authorization_port is None:
-            raise VendorApplicationConfigurationError(
-                field_errors={"authorization_port": ["Vendor authorization is required."]}
-            )
         self.authorization_port.assert_moderator_can_moderate_vendor(moderator, vendor_id)
 
     def _assert_inquiry_allowed(
@@ -451,12 +471,6 @@ class VendorCommandHandlers:
         vendor_id: uuid.UUID,
         payload_digest: str,
     ) -> None:
-        if self.inquiry_abuse_protection_port is None:
-            raise VendorApplicationConfigurationError(
-                field_errors={
-                    "inquiry_abuse_protection_port": ["Inquiry abuse protection is required."]
-                }
-            )
         self.inquiry_abuse_protection_port.assert_inquiry_allowed(
             requester_identity=requester_identity,
             vendor_id=vendor_id,
@@ -477,21 +491,7 @@ class VendorCommandHandlers:
             )
 
     def _load_active_vendor_images(self, vendor_id: uuid.UUID) -> tuple[PortfolioImage, ...]:
-        load_complete = getattr(self.reorder_uow, "load_active_vendor_images", None)
-        if callable(load_complete):
-            return tuple(load_complete(vendor_id))
-
-        legacy_loader = getattr(self.reorder_uow, "list_vendor_images", None)
-        if not callable(legacy_loader):
-            raise VendorApplicationConfigurationError(
-                field_errors={"reorder_uow": ["Complete active portfolio loading is required."]}
-            )
-        page = legacy_loader(vendor_id, PageRequest(limit=100, offset=0))
-        if page.total != len(page.items):
-            raise VendorApplicationConfigurationError(
-                field_errors={"reorder_uow": ["Portfolio reorder requires the complete active portfolio set."]}
-            )
-        return tuple(page.items)
+        return tuple(self.reorder_uow.load_active_vendor_images(vendor_id))
 
     @staticmethod
     def _validate_portfolio_reorder_ids(
@@ -510,10 +510,6 @@ class VendorCommandHandlers:
         return self._run_required_idempotent(scope, actor_id, key, cmd, operation)
 
     def _run_required_idempotent(self, scope: str, actor_id: uuid.UUID, key: str, cmd, operation: Callable):
-        if self.idempotency_port is None:
-            raise VendorApplicationConfigurationError(
-                field_errors={"idempotency_key": ["Idempotency storage is required."]}
-            )
         fingerprint = self._payload_fingerprint(cmd)
         return self.idempotency_port.execute_once(
             scope=scope,

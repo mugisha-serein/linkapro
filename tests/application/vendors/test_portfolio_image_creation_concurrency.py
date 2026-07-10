@@ -21,6 +21,20 @@ class StrictUnusedDependency:
     def __getattr__(self, name):
         raise AssertionError(f"Unexpected dependency access: {name}")
 
+    def get_by_id(self, *args, **kwargs): self.__getattr__("get_by_id")
+    def get_by_user_id(self, *args, **kwargs): self.__getattr__("get_by_user_id")
+    def get_for_vendor(self, *args, **kwargs): self.__getattr__("get_for_vendor")
+    def add_with_pending_events(self, *args, **kwargs): self.__getattr__("add_with_pending_events")
+    def save_with_pending_events(self, *args, **kwargs): self.__getattr__("save_with_pending_events")
+    def assert_actor_owns_vendor(self, *args, **kwargs): self.__getattr__("assert_actor_owns_vendor")
+    def assert_actor_can_access_vendor(self, *args, **kwargs): self.__getattr__("assert_actor_can_access_vendor")
+    def assert_moderator_can_moderate_vendor(self, *args, **kwargs): self.__getattr__("assert_moderator_can_moderate_vendor")
+    def execute_once(self, *args, **kwargs): self.__getattr__("execute_once")
+    def assert_inquiry_allowed(self, *args, **kwargs): self.__getattr__("assert_inquiry_allowed")
+    def load_active_vendor_images(self, *args, **kwargs): self.__getattr__("load_active_vendor_images")
+    def persist_reorder(self, *args, **kwargs): self.__getattr__("persist_reorder")
+    def create_at_next_order(self, *args, **kwargs): self.__getattr__("create_at_next_order")
+
 
 class VendorRepo:
     def __init__(self, profile: VendorProfile):
@@ -100,6 +114,7 @@ def _handler(*, profile: VendorProfile, creation_port) -> VendorCommandHandlers:
         aggregate_uow=unused,
         authorization_port=AllowOwner(),
         idempotency_port=PassThroughIdempotency(),
+        inquiry_abuse_protection_port=unused,
         portfolio_creation_port=creation_port,
     )
 
@@ -131,13 +146,15 @@ def test_handler_composition_requires_atomic_portfolio_creation_port():
             package_repo=unused,
             inquiry_repo=unused,
             reorder_uow=unused,
+            aggregate_uow=unused,
             authorization_port=AllowOwner(),
             idempotency_port=PassThroughIdempotency(),
+            inquiry_abuse_protection_port=unused,
             portfolio_creation_port=None,
         )
 
     assert exc_info.value.field_errors == {
-        "portfolio_creation_port": ["Portfolio image creation port is required."]
+        "portfolio_creation_port": ["Required dependency is missing."]
     }
 
 

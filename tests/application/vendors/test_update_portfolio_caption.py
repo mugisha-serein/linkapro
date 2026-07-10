@@ -16,6 +16,20 @@ class StrictUnusedDependency:
     def __getattr__(self, name):
         raise AssertionError(f"Unexpected dependency access: {name}")
 
+    def get_by_id(self, *args, **kwargs): self.__getattr__("get_by_id")
+    def get_by_user_id(self, *args, **kwargs): self.__getattr__("get_by_user_id")
+    def get_for_vendor(self, *args, **kwargs): self.__getattr__("get_for_vendor")
+    def add_with_pending_events(self, *args, **kwargs): self.__getattr__("add_with_pending_events")
+    def save_with_pending_events(self, *args, **kwargs): self.__getattr__("save_with_pending_events")
+    def assert_actor_owns_vendor(self, *args, **kwargs): self.__getattr__("assert_actor_owns_vendor")
+    def assert_actor_can_access_vendor(self, *args, **kwargs): self.__getattr__("assert_actor_can_access_vendor")
+    def assert_moderator_can_moderate_vendor(self, *args, **kwargs): self.__getattr__("assert_moderator_can_moderate_vendor")
+    def execute_once(self, *args, **kwargs): self.__getattr__("execute_once")
+    def assert_inquiry_allowed(self, *args, **kwargs): self.__getattr__("assert_inquiry_allowed")
+    def load_active_vendor_images(self, *args, **kwargs): self.__getattr__("load_active_vendor_images")
+    def persist_reorder(self, *args, **kwargs): self.__getattr__("persist_reorder")
+    def create_at_next_order(self, *args, **kwargs): self.__getattr__("create_at_next_order")
+
 
 class AllowOwner:
     def __init__(self):
@@ -86,6 +100,8 @@ def _handler(image_repo, aggregate_uow, authorization):
         reorder_uow=UnusedReorderUow(),
         aggregate_uow=aggregate_uow,
         authorization_port=authorization,
+        idempotency_port=unused,
+        inquiry_abuse_protection_port=unused,
         portfolio_creation_port=unused,
     )
 

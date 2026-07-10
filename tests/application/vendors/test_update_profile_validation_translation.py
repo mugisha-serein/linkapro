@@ -11,6 +11,25 @@ from application.vendors.handlers import VendorCommandHandlers, _translate_profi
 from domain.vendors.errors import InvalidVendorTransition, VendorProfileValidationError
 
 
+class StrictUnusedDependency:
+    def _unexpected(self, name):
+        raise AssertionError(f"Unexpected dependency access: {name}")
+
+    def get_by_id(self, *args, **kwargs): self._unexpected("get_by_id")
+    def get_by_user_id(self, *args, **kwargs): self._unexpected("get_by_user_id")
+    def get_for_vendor(self, *args, **kwargs): self._unexpected("get_for_vendor")
+    def add_with_pending_events(self, *args, **kwargs): self._unexpected("add_with_pending_events")
+    def save_with_pending_events(self, *args, **kwargs): self._unexpected("save_with_pending_events")
+    def assert_actor_owns_vendor(self, *args, **kwargs): self._unexpected("assert_actor_owns_vendor")
+    def assert_actor_can_access_vendor(self, *args, **kwargs): self._unexpected("assert_actor_can_access_vendor")
+    def assert_moderator_can_moderate_vendor(self, *args, **kwargs): self._unexpected("assert_moderator_can_moderate_vendor")
+    def execute_once(self, *args, **kwargs): self._unexpected("execute_once")
+    def assert_inquiry_allowed(self, *args, **kwargs): self._unexpected("assert_inquiry_allowed")
+    def load_active_vendor_images(self, *args, **kwargs): self._unexpected("load_active_vendor_images")
+    def persist_reorder(self, *args, **kwargs): self._unexpected("persist_reorder")
+    def create_at_next_order(self, *args, **kwargs): self._unexpected("create_at_next_order")
+
+
 class AuthorizationPort:
     def assert_actor_owns_vendor(self, actor, vendor_id):
         return None
@@ -58,13 +77,16 @@ class TransitionFailingProfile:
 
 
 def _handler(vendor_repo, aggregate_uow=None):
+    unused = StrictUnusedDependency()
     return VendorCommandHandlers(
         vendor_repo=vendor_repo,
-        image_repo=object(),
-        package_repo=object(),
-        inquiry_repo=object(),
-        portfolio_creation_port=object(),
-        reorder_uow=object(),
+        image_repo=unused,
+        package_repo=unused,
+        inquiry_repo=unused,
+        idempotency_port=unused,
+        inquiry_abuse_protection_port=unused,
+        portfolio_creation_port=unused,
+        reorder_uow=unused,
         aggregate_uow=aggregate_uow or AggregateUnitOfWork(),
         authorization_port=AuthorizationPort(),
     )
