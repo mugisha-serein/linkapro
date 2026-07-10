@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from domain.vendors.profile_completion import get_vendor_profile_completion_errors
+
 from .ports import VendorProfileCompletionProvider
 
 
@@ -19,6 +21,16 @@ DASHBOARD_ROUTE = OPEN_DASHBOARD
 _SUPPORTED_VENDOR_STATUSES = frozenset(
     {"draft", "pending_review", "approved", "rejected", "suspended"}
 )
+
+
+class DomainVendorProfileCompletionProvider:
+    """Application adapter for the domain-owned profile completion policy."""
+
+    def get_profile_completion_errors(self, profile: object):
+        return get_vendor_profile_completion_errors(profile)
+
+
+DEFAULT_VENDOR_PROFILE_COMPLETION_PROVIDER = DomainVendorProfileCompletionProvider()
 
 
 @dataclass(frozen=True)
@@ -58,7 +70,7 @@ class VendorOnboardingDTO(dict[str, Any]):
 
 def build_vendor_onboarding_contract(
     profile: Any | None,
-    completion_provider: VendorProfileCompletionProvider,
+    completion_provider: VendorProfileCompletionProvider = DEFAULT_VENDOR_PROFILE_COMPLETION_PROVIDER,
 ) -> VendorOnboardingDTO:
     if profile is None:
         return VendorOnboardingDTO(
@@ -136,7 +148,7 @@ def build_vendor_onboarding_contract(
 
 def vendor_field_errors(
     profile: Any | None,
-    completion_provider: VendorProfileCompletionProvider,
+    completion_provider: VendorProfileCompletionProvider = DEFAULT_VENDOR_PROFILE_COMPLETION_PROVIDER,
 ) -> dict[str, list[str]]:
     if profile is None:
         return {}
