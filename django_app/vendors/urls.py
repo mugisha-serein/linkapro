@@ -8,4 +8,5 @@ from .contract_views import (
     VendorVerificationDocumentView,
 )
 from .dashboard_summary_view import VendorDashboardSummaryView
-from .vendor_dashboard_query_views import
+from .vendor_dashboard_query_views import VendorAnalyticsView, VendorActivityView
+from .views impor
