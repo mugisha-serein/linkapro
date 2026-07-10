@@ -1,9 +1,7 @@
-from django.urls import path
-from .contract_views import PortfolioImageView,ServicePackageActivateView,ServicePackageDetailView,ServicePackageListView,VendorProfileStatusView,VendorVerificationDocumentView
-from .dashboard_summary_view import VendorDashboardSummaryView
-from .vendor_dashboard_query_views import VendorAnalyticsView,VendorActivityView
-from .views import VendorProfileView,VendorSubmitForReviewView,PortfolioImageReorderView,InquiryListView,PublicInquiryView,VendorBrandingMediaView,VendorCoverImageView,PublicVendorProfileView
-urlpatterns=[
-path("profile/",VendorProfileView.as_view(),name="vendor-profile"),
-path("profile/status/",VendorProfileStatusView.as_view(),name="vendor-profile-status"),
-path("profile/submi
+from .url_patterns_dashboard import urlpatterns as dashboard_urls
+from .url_patterns_packages2 import urlpatterns as package_urls
+from .url_patterns_portfolio import urlpatterns as portfolio_urls
+from .url_patterns_profile import urlpatterns as profile_urls
+from .url_patterns_public2 import urlpatterns as public_urls
+
+urlpatterns = profile_urls + portfolio_urls + package_urls + dashboard_urls + public_urls
