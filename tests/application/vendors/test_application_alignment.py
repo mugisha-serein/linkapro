@@ -182,9 +182,12 @@ class CreationUow:
         self.add_calls = []
         self.events = []
         self.fail_on_add = False
+        self.fail_duplicate_on_add = False
 
     def add_with_pending_events(self, aggregate):
         self.add_calls.append(aggregate)
+        if self.fail_duplicate_on_add:
+            raise DuplicateVendorProfile()
         if self.fail_on_add:
             raise RuntimeError("creation transaction failed")
         self.events.extend(aggregate.pull_events())
@@ -440,7 +443,13 @@ def test_profile_creation_uses_creation_unit_of_work_and_idempotency_replays_res
     idem = IdempotencyPort()
     vendor_repo = VendorRepo()
     creation_uow = CreationUow()
-    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=idem, creation_uow=creation_uow)
+    dispatcher = EventDispatcher()
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        dispatcher=dispatcher,
+        idempotency_port=idem,
+        creation_uow=creation_uow,
+    )
     actor = _actor()
     cmd = CreateVendorProfileCommand(
         actor=actor,
@@ -460,9 +469,78 @@ def test_profile_creation_uses_creation_unit_of_work_and_idempotency_replays_res
     assert len(creation_uow.add_calls) == 1
     assert vendor_repo.add_calls == []
     assert vendor_repo.save_calls == []
+    assert dispatcher.events == []
     fingerprint = idem.executions[0][3]
     assert len(fingerprint) == 64
     assert set(fingerprint) <= set("0123456789abcdef")
+
+
+def test_profile_creation_translates_duplicate_conflict_from_creation_unit_of_work():
+    vendor_repo = VendorRepo()
+    creation_uow = CreationUow()
+    creation_uow.fail_duplicate_on_add = True
+    dispatcher = EventDispatcher()
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        dispatcher=dispatcher,
+        idempotency_port=IdempotencyPort(),
+        creation_uow=creation_uow,
+    )
+
+    with pytest.raises(VendorConflict) as exc_info:
+        handler.create_profile(
+            CreateVendorProfileCommand(
+                actor=_actor(),
+                business_name="Duplicate Vendor",
+                category="catering",
+                description="Reliable event catering and planning support.",
+                service_area="Kigali",
+                contact_email="duplicate@example.com",
+                contact_phone="+250700000000",
+                idempotency_key="duplicate-profile",
+            )
+        )
+
+    assert exc_info.value.code == "vendor_profile_exists"
+    assert len(creation_uow.add_calls) == 1
+    assert vendor_repo.add_calls == []
+    assert vendor_repo.profiles == {}
+    assert dispatcher.events == []
+
+
+def test_profile_creation_uow_failure_leaves_no_partial_profile_or_dispatched_events():
+    vendor_repo = VendorRepo()
+    creation_uow = CreationUow()
+    creation_uow.fail_on_add = True
+    dispatcher = EventDispatcher()
+    idempotency_port = IdempotencyPort()
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        dispatcher=dispatcher,
+        idempotency_port=idempotency_port,
+        creation_uow=creation_uow,
+    )
+
+    with pytest.raises(RuntimeError, match="creation transaction failed"):
+        handler.create_profile(
+            CreateVendorProfileCommand(
+                actor=_actor(),
+                business_name="Atomic Vendor",
+                category="catering",
+                description="Reliable event catering and planning support.",
+                service_area="Kigali",
+                contact_email="atomic@example.com",
+                contact_phone="+250700000000",
+                idempotency_key="failed-profile",
+            )
+        )
+
+    assert len(creation_uow.add_calls) == 1
+    assert creation_uow.events == []
+    assert vendor_repo.add_calls == []
+    assert vendor_repo.profiles == {}
+    assert dispatcher.events == []
+    assert idempotency_port.executions == []
 
 
 def test_idempotency_payload_fingerprint_is_stable_sha256_hex_digest():
