@@ -73,6 +73,7 @@ def test_vendor_mutation_fails_atomically_when_event_persistence_fails_after_agg
         image_repo=object(),
         package_repo=object(),
         inquiry_repo=object(),
+        portfolio_creation_port=object(),
         reorder_uow=object(),
         aggregate_uow=unit_of_work,
         authorization_port=AuthorizationPort(),

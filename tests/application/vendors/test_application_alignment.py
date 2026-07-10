@@ -272,6 +272,26 @@ class ImageRepo:
         return len([image for image in self.images.values() if image.vendor_id == vendor_id])
 
 
+class StrictPortfolioImageCreationPort:
+    def __init__(self, order_allocator, aggregate_uow):
+        self.order_allocator = order_allocator
+        self.aggregate_uow = aggregate_uow
+        self.calls = []
+
+    def create_at_next_order(self, *, vendor_id, image_factory):
+        if self.aggregate_uow is None:
+            raise VendorApplicationConfigurationError(
+                field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]}
+            )
+        allocate_next_order = getattr(self.order_allocator, "allocate_next_order", None)
+        if not callable(allocate_next_order):
+            raise AssertionError("Strict portfolio creation fake requires an order allocator.")
+        next_order = allocate_next_order(vendor_id)
+        image = image_factory(next_order)
+        self.calls.append((vendor_id, image))
+        return self.aggregate_uow.add_with_pending_events(image)
+
+
 class PackageRepo:
     def __init__(self, packages=()):
         self.packages = {package.id: package for package in packages}
@@ -412,12 +432,17 @@ class ReorderUow:
 
 
 def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_repo=None, dispatcher=None, **kwargs):
+    image_repo = image_repo or ImageRepo()
     kwargs.setdefault("authorization_port", AuthorizationPort())
     kwargs.setdefault("aggregate_uow", AggregateUow())
     kwargs.setdefault("reorder_uow", ReorderUow(()))
+    kwargs.setdefault(
+        "portfolio_creation_port",
+        StrictPortfolioImageCreationPort(image_repo, kwargs["aggregate_uow"]),
+    )
     return VendorCommandHandlers(
         vendor_repo=vendor_repo or VendorRepo(),
-        image_repo=image_repo or ImageRepo(),
+        image_repo=image_repo,
         package_repo=package_repo or PackageRepo(),
         inquiry_repo=inquiry_repo or InquiryRepo(),
         **kwargs,
@@ -873,29 +898,17 @@ def test_missing_aggregate_unit_of_work_raises_configuration_error_for_create_an
     assert vendor_repo.save_calls == []
 
 
-def test_portfolio_dependencies_raise_configuration_error_when_missing_or_misconfigured():
-    vendor_id = uuid.uuid4()
-    profile = _profile(status=VendorStatus.APPROVED)
-    profile.id = vendor_id
-    vendor_repo = VendorRepo([profile])
-
+def test_portfolio_dependencies_require_reorder_uow_and_injected_creation_port():
     with pytest.raises(VendorApplicationConfigurationError) as reorder_exc:
         _handlers(reorder_uow=None)
 
-    with pytest.raises(VendorApplicationConfigurationError) as order_exc:
-        _handlers(vendor_repo=vendor_repo, order_allocator=object(), idempotency_port=IdempotencyPort()).add_portfolio_image(
-            AddPortfolioImageCommand(
-                actor=_actor(),
-                vendor_id=vendor_id,
-                public_id="asset",
-                secure_url="https://example.com/image.jpg",
-                idempotency_key="misconfigured-order-allocation",
-            )
-        )
+    signature = inspect.signature(VendorCommandHandlers.__init__)
 
     assert reorder_exc.value.code == "vendor_application_configuration_error"
     assert str(reorder_exc.value) == "Portfolio reorder requires a unit of work."
-    assert order_exc.value.field_errors == {"order": ["Portfolio order allocation is not configured."]}
+    assert signature.parameters["portfolio_creation_port"].default is inspect.Parameter.empty
+    assert "order_allocator" not in signature.parameters
+    assert not Path("application/vendors/portfolio_image_creation.py").exists()
 
 
 def test_profile_creation_unit_of_work_failure_is_not_cached_or_dispatched():
@@ -1483,7 +1496,7 @@ def test_add_portfolio_media_policy_forbids_suspended_vendor_before_order_alloca
     assert dispatcher.events == []
 
 
-def test_add_portfolio_media_allowed_statuses_keep_existing_order_allocation_path():
+def test_add_portfolio_media_allowed_statuses_use_injected_creation_port():
     allowed_statuses = (
         VendorStatus.DRAFT,
         VendorStatus.PENDING_REVIEW,

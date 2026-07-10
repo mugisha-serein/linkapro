@@ -73,7 +73,6 @@ from .ports import (
     VendorIdempotencyPort,
     VendorReadPort,
 )
-from .portfolio_image_creation import RepositoryPortfolioImageCreationPort
 from .portfolio_media_policy import ensure_vendor_can_add_portfolio_media
 from .queries import (
     GetVendorAnalyticsQuery,
@@ -86,8 +85,6 @@ from .queries import (
 )
 from .service_package_policy import ensure_vendor_can_create_service_package
 
-
-_PORTFOLIO_CREATION_PORT_UNSET = object()
 
 
 def _translate_profile_update_validation(operation: Callable[[], None]) -> None:
@@ -110,8 +107,7 @@ class VendorCommandHandlers:
         authorization_port: VendorAuthorizationPort | None = None,
         idempotency_port: VendorIdempotencyPort | None = None,
         inquiry_abuse_protection_port: InquiryAbuseProtectionPort | None = None,
-        portfolio_creation_port: PortfolioImageCreationPort | None | object = _PORTFOLIO_CREATION_PORT_UNSET,
-        order_allocator=None,
+        portfolio_creation_port: PortfolioImageCreationPort,
     ):
         if reorder_uow is None:
             raise VendorApplicationConfigurationError("Portfolio reorder requires a unit of work.")
@@ -124,13 +120,11 @@ class VendorCommandHandlers:
         self.idempotency_port = idempotency_port
         self.inquiry_abuse_protection_port = inquiry_abuse_protection_port
         self.reorder_uow = reorder_uow
-        if portfolio_creation_port is _PORTFOLIO_CREATION_PORT_UNSET:
-            self.portfolio_creation_port = RepositoryPortfolioImageCreationPort(
-                order_allocator=order_allocator or image_repo,
-                aggregate_uow=aggregate_uow,
+        if portfolio_creation_port is None:
+            raise VendorApplicationConfigurationError(
+                field_errors={"portfolio_creation_port": ["Portfolio image creation port is required."]}
             )
-        else:
-            self.portfolio_creation_port = portfolio_creation_port
+        self.portfolio_creation_port = portfolio_creation_port
 
     def create_profile(self, cmd: CreateVendorProfileCommand) -> VendorProfileDTO:
         def operation() -> VendorProfileDTO:
@@ -224,11 +218,6 @@ class VendorCommandHandlers:
         def operation() -> PortfolioImageDTO:
             profile = self.vendor_repo.get_by_id(cmd.vendor_id)
             ensure_vendor_can_add_portfolio_media(profile)
-            if self.portfolio_creation_port is None:
-                raise VendorApplicationConfigurationError(
-                    field_errors={"portfolio_creation_port": ["Portfolio image creation port is required."]}
-                )
-
             def image_factory(next_order: int) -> PortfolioImage:
                 return PortfolioImage(
                     id=uuid.uuid4(),

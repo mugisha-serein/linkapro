@@ -138,7 +138,7 @@ def test_update_vendor_profile_authorization_matrix(actor_kind: str, is_allowed:
         reorder_uow=object(),
         aggregate_uow=aggregate_uow,
         authorization_port=authorization,
-        portfolio_creation_port=None,
+        portfolio_creation_port=object(),
     )
     command = _command(actor=actor, vendor_id=profile.id)
 

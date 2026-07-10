@@ -81,7 +81,7 @@ def _handler(package_repo, aggregate_uow, authorization):
         reorder_uow=UnusedReorderUow(),
         aggregate_uow=aggregate_uow,
         authorization_port=authorization,
-        portfolio_creation_port=None,
+        portfolio_creation_port=unused,
     )
 
 

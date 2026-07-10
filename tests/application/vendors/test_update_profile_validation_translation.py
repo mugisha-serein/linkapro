@@ -63,6 +63,7 @@ def _handler(vendor_repo, aggregate_uow=None):
         image_repo=object(),
         package_repo=object(),
         inquiry_repo=object(),
+        portfolio_creation_port=object(),
         reorder_uow=object(),
         aggregate_uow=aggregate_uow or AggregateUnitOfWork(),
         authorization_port=AuthorizationPort(),

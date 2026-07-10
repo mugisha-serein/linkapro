@@ -5,11 +5,19 @@ from infrastructure.repos.django_inquiry_repository import DjangoInquiryReposito
 from infrastructure.repos.django_portfolio_reorder_uow import DjangoPortfolioReorderUnitOfWork
 from infrastructure.repos.django_vendor_read_repository import DjangoVendorReadRepository
 from infrastructure.adapters.django_vendor_idempotency import DjangoVendorIdempotencyAdapter
+from application.vendors.errors import VendorApplicationConfigurationError
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
+from application.vendors.ports import PortfolioImageCreationPort
 
 
-def get_command_handlers() -> VendorCommandHandlers:
+def get_command_handlers(
+    *, portfolio_creation_port: PortfolioImageCreationPort | None = None
+) -> VendorCommandHandlers:
     """Return fully initialized VendorCommandHandlers with all dependencies."""
+    if portfolio_creation_port is None:
+        raise VendorApplicationConfigurationError(
+            field_errors={"portfolio_creation_port": ["Portfolio image creation port is required."]}
+        )
     image_repo = DjangoPortfolioImageRepository()
     return VendorCommandHandlers(
         vendor_repo=DjangoVendorProfileRepository(),
@@ -18,7 +26,7 @@ def get_command_handlers() -> VendorCommandHandlers:
         inquiry_repo=DjangoInquiryRepository(),
         idempotency_port=DjangoVendorIdempotencyAdapter(),
         reorder_uow=DjangoPortfolioReorderUnitOfWork(),
-        order_allocator=image_repo,
+        portfolio_creation_port=portfolio_creation_port,
     )
 
 
