@@ -128,7 +128,6 @@ def _handler(*, vendor_repo, aggregate_uow, idempotency_port, abuse_port):
         image_repo=unused,
         package_repo=unused,
         inquiry_repo=unused,
-        event_dispatcher=unused,
         reorder_uow=UnusedReorderUow(),
         aggregate_uow=aggregate_uow,
         idempotency_port=idempotency_port,
