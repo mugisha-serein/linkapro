@@ -10,6 +10,25 @@ from domain.vendors.entities import VendorProfile
 from domain.vendors.events import VendorProfileUpdated
 
 
+class StrictUnusedDependency:
+    def _unexpected(self, name):
+        raise AssertionError(f"Unexpected dependency access: {name}")
+
+    def get_by_id(self, *args, **kwargs): self._unexpected("get_by_id")
+    def get_by_user_id(self, *args, **kwargs): self._unexpected("get_by_user_id")
+    def get_for_vendor(self, *args, **kwargs): self._unexpected("get_for_vendor")
+    def add_with_pending_events(self, *args, **kwargs): self._unexpected("add_with_pending_events")
+    def save_with_pending_events(self, *args, **kwargs): self._unexpected("save_with_pending_events")
+    def assert_actor_owns_vendor(self, *args, **kwargs): self._unexpected("assert_actor_owns_vendor")
+    def assert_actor_can_access_vendor(self, *args, **kwargs): self._unexpected("assert_actor_can_access_vendor")
+    def assert_moderator_can_moderate_vendor(self, *args, **kwargs): self._unexpected("assert_moderator_can_moderate_vendor")
+    def execute_once(self, *args, **kwargs): self._unexpected("execute_once")
+    def assert_inquiry_allowed(self, *args, **kwargs): self._unexpected("assert_inquiry_allowed")
+    def load_active_vendor_images(self, *args, **kwargs): self._unexpected("load_active_vendor_images")
+    def persist_reorder(self, *args, **kwargs): self._unexpected("persist_reorder")
+    def create_at_next_order(self, *args, **kwargs): self._unexpected("create_at_next_order")
+
+
 class EventPersistenceFailed(RuntimeError):
     pass
 
@@ -68,13 +87,16 @@ def test_vendor_mutation_fails_atomically_when_event_persistence_fails_after_agg
     )
     repository = VendorRepository(profile)
     unit_of_work = StrictMutationUnitOfWork(profile)
+    unused = StrictUnusedDependency()
     handler = VendorCommandHandlers(
         vendor_repo=repository,
-        image_repo=object(),
-        package_repo=object(),
-        inquiry_repo=object(),
-        portfolio_creation_port=object(),
-        reorder_uow=object(),
+        image_repo=unused,
+        package_repo=unused,
+        inquiry_repo=unused,
+        idempotency_port=unused,
+        inquiry_abuse_protection_port=unused,
+        portfolio_creation_port=unused,
+        reorder_uow=unused,
         aggregate_uow=unit_of_work,
         authorization_port=AuthorizationPort(),
     )
