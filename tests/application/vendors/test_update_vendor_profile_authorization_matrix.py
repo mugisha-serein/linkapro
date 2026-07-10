@@ -14,6 +14,25 @@ from tests.application.vendors.strict_vendor_profile_repository import (
 from tests.application.vendors.test_application_alignment import AuthorizationPort
 
 
+class StrictUnusedDependency:
+    def _unexpected(self, name):
+        raise AssertionError(f"Unexpected dependency access: {name}")
+
+    def get_by_id(self, *args, **kwargs): self._unexpected("get_by_id")
+    def get_by_user_id(self, *args, **kwargs): self._unexpected("get_by_user_id")
+    def get_for_vendor(self, *args, **kwargs): self._unexpected("get_for_vendor")
+    def add_with_pending_events(self, *args, **kwargs): self._unexpected("add_with_pending_events")
+    def save_with_pending_events(self, *args, **kwargs): self._unexpected("save_with_pending_events")
+    def assert_actor_owns_vendor(self, *args, **kwargs): self._unexpected("assert_actor_owns_vendor")
+    def assert_actor_can_access_vendor(self, *args, **kwargs): self._unexpected("assert_actor_can_access_vendor")
+    def assert_moderator_can_moderate_vendor(self, *args, **kwargs): self._unexpected("assert_moderator_can_moderate_vendor")
+    def execute_once(self, *args, **kwargs): self._unexpected("execute_once")
+    def assert_inquiry_allowed(self, *args, **kwargs): self._unexpected("assert_inquiry_allowed")
+    def load_active_vendor_images(self, *args, **kwargs): self._unexpected("load_active_vendor_images")
+    def persist_reorder(self, *args, **kwargs): self._unexpected("persist_reorder")
+    def create_at_next_order(self, *args, **kwargs): self._unexpected("create_at_next_order")
+
+
 class VendorProfileRepositoryDelegate:
     def __init__(self, profile: VendorProfile) -> None:
         self.profile = profile
@@ -130,15 +149,18 @@ def test_update_vendor_profile_authorization_matrix(actor_kind: str, is_allowed:
     repository_delegate = VendorProfileRepositoryDelegate(profile)
     repository = StrictVendorProfileRepository(repository_delegate)
     aggregate_uow = AggregateMutationUnitOfWork()
+    unused = StrictUnusedDependency()
     handler = VendorCommandHandlers(
         vendor_repo=repository,
-        image_repo=object(),
-        package_repo=object(),
-        inquiry_repo=object(),
-        reorder_uow=object(),
+        image_repo=unused,
+        package_repo=unused,
+        inquiry_repo=unused,
+        reorder_uow=unused,
         aggregate_uow=aggregate_uow,
         authorization_port=authorization,
-        portfolio_creation_port=object(),
+        idempotency_port=unused,
+        inquiry_abuse_protection_port=unused,
+        portfolio_creation_port=unused,
     )
     command = _command(actor=actor, vendor_id=profile.id)
 
