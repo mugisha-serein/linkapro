@@ -8,7 +8,6 @@ from application.vendors.commands import AuthenticatedActor
 from application.vendors.errors import VendorVersionConflict
 from application.vendors.handlers import VendorCommandHandlers
 from application.vendors.portfolio_media_commands import MarkPortfolioMediaProcessingCommand
-import application.vendors.portfolio_media_processing_handler  # noqa: F401 - registers handler method
 from domain.vendors.entities import PortfolioImage, PortfolioQualityStatus, PortfolioUploadStatus, PortfolioVisibilityStatus
 from domain.vendors.errors import InvalidPortfolioTransition
 
