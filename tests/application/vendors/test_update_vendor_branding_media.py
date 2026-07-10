@@ -8,7 +8,6 @@ from application.vendors.commands import AuthenticatedActor
 from application.vendors.errors import VendorOperationForbidden, VendorVersionConflict
 from application.vendors.handlers import VendorCommandHandlers
 from application.vendors.vendor_branding_commands import UpdateVendorBrandingMediaCommand
-import application.vendors.vendor_branding_update_handler  # noqa: F401 - registers handler method
 from domain.vendors.entities import ServiceCategory, VendorProfile
 from domain.vendors.errors import VendorProfileValidationError
 
