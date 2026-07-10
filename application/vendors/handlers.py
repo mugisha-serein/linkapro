@@ -73,7 +73,14 @@ from .ports import (
     VendorIdempotencyPort,
     VendorReadPort,
 )
+from .portfolio_media_commands import (
+    MarkPortfolioMediaProcessingCommand,
+    MarkPortfolioMediaUploadedCommand,
+    QueuePortfolioMediaCommand,
+    UpdatePortfolioCaptionCommand,
+)
 from .portfolio_media_policy import ensure_vendor_can_add_portfolio_media
+from .vendor_branding_commands import UpdateVendorBrandingMediaCommand
 from .queries import (
     GetVendorAnalyticsQuery,
     GetVendorDashboardSummaryQuery,
@@ -255,6 +262,71 @@ class VendorCommandHandlers:
             return self._to_image_dto(saved)
 
         return self._run_required_idempotent("portfolio_image.add", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
+
+    def queue_portfolio_media(self, cmd: QueuePortfolioMediaCommand) -> PortfolioImageDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
+        media = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.media_id)
+        if not media:
+            raise VendorResourceNotFound("Image not found.")
+        self._assert_expected_version(media.id, media.version, cmd.expected_version)
+        original_version = media.version
+        media.mark_queued()
+        return self._save_if_changed(media, original_version, self._to_image_dto)
+
+    def mark_portfolio_media_processing(
+        self,
+        cmd: MarkPortfolioMediaProcessingCommand,
+    ) -> PortfolioImageDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
+        media = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.media_id)
+        if not media:
+            raise VendorResourceNotFound("Image not found.")
+        self._assert_expected_version(media.id, media.version, cmd.expected_version)
+        original_version = media.version
+        media.mark_processing()
+        return self._save_if_changed(media, original_version, self._to_image_dto)
+
+    def mark_portfolio_media_uploaded(
+        self,
+        cmd: MarkPortfolioMediaUploadedCommand,
+    ) -> PortfolioImageDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
+        media = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.media_id)
+        if not media:
+            raise VendorResourceNotFound("Image not found.")
+        self._assert_expected_version(media.id, media.version, cmd.expected_version)
+        original_version = media.version
+        media.mark_uploaded(public_id=cmd.public_id, secure_url=cmd.secure_url)
+        return self._save_if_changed(media, original_version, self._to_image_dto)
+
+    def update_portfolio_caption(
+        self,
+        cmd: UpdatePortfolioCaptionCommand,
+    ) -> PortfolioImageDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
+        media = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.media_id)
+        if not media:
+            raise VendorResourceNotFound("Image not found.")
+        self._assert_expected_version(media.id, media.version, cmd.expected_version)
+        original_version = media.version
+        media.update_caption(cmd.caption)
+        return self._save_if_changed(media, original_version, self._to_image_dto)
+
+    def update_vendor_branding_media(
+        self,
+        cmd: UpdateVendorBrandingMediaCommand,
+    ) -> VendorProfileDTO:
+        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
+        profile = self._get_vendor_or_raise(cmd.vendor_id)
+        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
+        original_version = profile.version
+        profile.update_details(
+            profile_image_url=cmd.profile_image_url,
+            profile_image_public_id=cmd.profile_image_public_id,
+            cover_image_url=cmd.cover_image_url,
+            cover_image_public_id=cmd.cover_image_public_id,
+        )
+        return self._save_if_changed(profile, original_version, self._to_profile_dto)
 
     def delete_portfolio_image(self, cmd: DeletePortfolioImageCommand) -> None:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
