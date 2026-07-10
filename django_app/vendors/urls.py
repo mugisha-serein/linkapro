@@ -7,13 +7,13 @@ from .contract_views import (
     VendorProfileStatusView,
     VendorVerificationDocumentView,
 )
+from .dashboard_summary_view import VendorDashboardSummaryView
 from .views import (
     VendorProfileView,
     VendorSubmitForReviewView,
     PortfolioImageReorderView,
     InquiryListView,
     PublicInquiryView,
-    VendorDashboardSummaryView,
     VendorAnalyticsView,
     VendorActivityView,
     VendorBrandingMediaView,
