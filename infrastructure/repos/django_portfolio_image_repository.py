@@ -1,8 +1,9 @@
 import uuid
 from typing import Optional
+
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import IntegrityError, transaction
-from django.db.models import F, Max
+from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from domain.vendors.errors import ConcurrentVendorUpdate
@@ -50,40 +51,33 @@ class DjangoPortfolioImageRepository(IPortfolioImageRepository):
 
     def get_by_id(self, image_id: uuid.UUID) -> Optional[DomainImage]:
         try:
-            obj = DjangoImage.objects.select_related("vendor").get(id=image_id)
-            return self._to_domain(obj)
+            return self._to_domain(DjangoImage.all_objects.select_related("vendor").get(id=image_id))
         except ObjectDoesNotExist:
             return None
 
     def get_for_vendor(self, vendor_id: uuid.UUID, image_id: uuid.UUID) -> Optional[DomainImage]:
         try:
-            obj = DjangoImage.objects.select_related("vendor").get(id=image_id, vendor_id=vendor_id)
-            return self._to_domain(obj)
+            return self._to_domain(
+                DjangoImage.all_objects.select_related("vendor").get(id=image_id, vendor_id=vendor_id)
+            )
         except ObjectDoesNotExist:
             return None
 
     def list_by_vendor(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> Page[DomainImage]:
         page = page or PageRequest()
-        queryset = DjangoImage.objects.filter(vendor_id=vendor_id).order_by("order", "id")
+        queryset = DjangoImage.all_objects.filter(vendor_id=vendor_id).order_by("order", "id")
         total = queryset.count()
         objs = list(queryset[page.offset : page.offset + page.limit])
         return Page(items=[self._to_domain(o) for o in objs], total=total, limit=page.limit, offset=page.offset)
 
-    def allocate_next_order(self, vendor_id: uuid.UUID) -> int:
-        self._get_vendor(vendor_id)
-        with transaction.atomic():
-            DjangoVendor.objects.select_for_update().get(id=vendor_id)
-            max_order = (
-                DjangoImage.all_objects.filter(vendor_id=vendor_id, is_active=True, is_deleted=False)
-                .aggregate(max_order=Max("order"))["max_order"]
-            )
-            return (max_order if max_order is not None else -1) + 1
-
     def save(self, domain: DomainImage, *, expected_version: int) -> DomainImage:
         self._get_vendor(domain.vendor_id)
         with transaction.atomic():
-            updated = DjangoImage.all_objects.filter(id=domain.id, version=expected_version).update(
+            updated = DjangoImage.all_objects.filter(
+                id=domain.id,
                 vendor_id=domain.vendor_id,
+                version=expected_version,
+            ).update(
                 public_id=domain.public_id,
                 secure_url=domain.secure_url,
                 media_type=domain.media_type,
@@ -112,25 +106,35 @@ class DjangoPortfolioImageRepository(IPortfolioImageRepository):
                 version=F("version") + 1,
                 updated_at=domain.updated_at,
             )
-            if updated == 0:
+            if updated != 1:
                 raise ConcurrentVendorUpdate(
-                    "Portfolio item was updated by another request.",
+                    "Portfolio item was updated or ownership no longer matches.",
                     field_errors={"version": ["Portfolio item was updated by another request."]},
                 )
-            obj = DjangoImage.all_objects.select_related("vendor").get(id=domain.id)
+            obj = DjangoImage.all_objects.select_related("vendor").get(
+                id=domain.id,
+                vendor_id=domain.vendor_id,
+            )
         return self._to_domain(obj)
 
     def delete(self, image_id: uuid.UUID, deleted_by_id: Optional[uuid.UUID] = None) -> None:
-        try:
-            obj = DjangoImage.all_objects.get(id=image_id)
-        except DjangoImage.DoesNotExist:
-            return
-
-        obj.is_active = False
-        obj.is_deleted = True
-        obj.deleted_at = timezone.now()
-        obj.deleted_by_id = deleted_by_id
-        obj.save(update_fields=["is_active", "is_deleted", "deleted_at", "deleted_by", "updated_at"])
+        with transaction.atomic():
+            obj = DjangoImage.all_objects.select_for_update().filter(id=image_id).first()
+            if obj is None:
+                return
+            updated = DjangoImage.all_objects.filter(id=obj.id, version=obj.version).update(
+                is_active=False,
+                is_deleted=True,
+                deleted_at=timezone.now(),
+                deleted_by_id=deleted_by_id,
+                version=F("version") + 1,
+                updated_at=timezone.now(),
+            )
+            if updated != 1:
+                raise ConcurrentVendorUpdate(
+                    "Portfolio item changed during deletion.",
+                    field_errors={"version": ["Portfolio item was updated by another request."]},
+                )
 
     def delete_for_vendor(
         self,
@@ -138,16 +142,30 @@ class DjangoPortfolioImageRepository(IPortfolioImageRepository):
         image_id: uuid.UUID,
         deleted_by_id: Optional[uuid.UUID] = None,
     ) -> None:
-        try:
-            obj = DjangoImage.all_objects.get(id=image_id, vendor_id=vendor_id)
-        except DjangoImage.DoesNotExist:
-            return
-
-        obj.is_active = False
-        obj.is_deleted = True
-        obj.deleted_at = timezone.now()
-        obj.deleted_by_id = deleted_by_id
-        obj.save(update_fields=["is_active", "is_deleted", "deleted_at", "deleted_by", "updated_at"])
+        with transaction.atomic():
+            obj = DjangoImage.all_objects.select_for_update().filter(
+                id=image_id,
+                vendor_id=vendor_id,
+            ).first()
+            if obj is None:
+                return
+            updated = DjangoImage.all_objects.filter(
+                id=obj.id,
+                vendor_id=vendor_id,
+                version=obj.version,
+            ).update(
+                is_active=False,
+                is_deleted=True,
+                deleted_at=timezone.now(),
+                deleted_by_id=deleted_by_id,
+                version=F("version") + 1,
+                updated_at=timezone.now(),
+            )
+            if updated != 1:
+                raise ConcurrentVendorUpdate(
+                    "Portfolio item changed during deletion.",
+                    field_errors={"version": ["Portfolio item was updated by another request."]},
+                )
 
     def _get_vendor(self, vendor_id: uuid.UUID):
         try:

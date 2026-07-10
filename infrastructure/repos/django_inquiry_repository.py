@@ -1,5 +1,6 @@
 import uuid
 from typing import Optional
+
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.db.models import F
@@ -51,8 +52,11 @@ class DjangoInquiryRepository(IInquiryRepository):
     def save(self, domain: DomainInquiry, *, expected_version: int) -> DomainInquiry:
         self._get_vendor(domain.vendor_id)
         with transaction.atomic():
-            updated = DjangoInquiry.objects.filter(id=domain.id, version=expected_version).update(
+            updated = DjangoInquiry.objects.filter(
+                id=domain.id,
                 vendor_id=domain.vendor_id,
+                version=expected_version,
+            ).update(
                 client_name=domain.client_name,
                 client_email=domain.client_email,
                 client_phone=domain.client_phone,
@@ -61,12 +65,15 @@ class DjangoInquiryRepository(IInquiryRepository):
                 is_read=domain.is_read,
                 version=F("version") + 1,
             )
-            if updated == 0:
+            if updated != 1:
                 raise ConcurrentVendorUpdate(
-                    "Inquiry was updated by another request.",
+                    "Inquiry was updated or ownership no longer matches.",
                     field_errors={"version": ["Inquiry was updated by another request."]},
                 )
-            obj = DjangoInquiry.objects.select_related("vendor").get(id=domain.id)
+            obj = DjangoInquiry.objects.select_related("vendor").get(
+                id=domain.id,
+                vendor_id=domain.vendor_id,
+            )
         return self._to_domain(obj)
 
     def delete(self, inquiry_id: uuid.UUID) -> None:
