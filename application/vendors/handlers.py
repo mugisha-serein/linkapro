@@ -499,21 +499,7 @@ class VendorCommandHandlers:
             )
 
     def _load_active_vendor_images(self, vendor_id: uuid.UUID) -> tuple[PortfolioImage, ...]:
-        load_complete = getattr(self.reorder_uow, "load_active_vendor_images", None)
-        if callable(load_complete):
-            return tuple(load_complete(vendor_id))
-
-        legacy_loader = getattr(self.reorder_uow, "list_vendor_images", None)
-        if not callable(legacy_loader):
-            raise VendorApplicationConfigurationError(
-                field_errors={"reorder_uow": ["Complete active portfolio loading is required."]}
-            )
-        page = legacy_loader(vendor_id, PageRequest(limit=100, offset=0))
-        if page.total != len(page.items):
-            raise VendorApplicationConfigurationError(
-                field_errors={"reorder_uow": ["Portfolio reorder requires the complete active portfolio set."]}
-            )
-        return tuple(page.items)
+        return tuple(self.reorder_uow.load_active_vendor_images(vendor_id))
 
     @staticmethod
     def _validate_portfolio_reorder_ids(
