@@ -7,7 +7,6 @@ from application.vendors.ports import (
     VendorAggregateUnitOfWork,
     VendorAuthorizationPort,
 )
-from application.vendors.strict_query_handlers import StrictVendorQueryHandlers
 from infrastructure.adapters.django_vendor_idempotency import DjangoVendorIdempotencyAdapter
 from infrastructure.repos.django_inquiry_repository import DjangoInquiryRepository
 from infrastructure.repos.django_portfolio_image_creation import DjangoPortfolioImageCreationPort
@@ -56,8 +55,8 @@ def get_query_handlers(
     *,
     authorization_port: VendorAuthorizationPort | None = None,
 ) -> VendorQueryHandlers:
-    """Build production query handling with authorization and input validation."""
-    return StrictVendorQueryHandlers(
+    """Build the production vendor query composition with authorization enabled."""
+    return VendorQueryHandlers(
         vendor_repo=DjangoVendorProfileRepository(),
         image_repo=DjangoPortfolioImageRepository(),
         inquiry_repo=DjangoInquiryRepository(),
