@@ -1,5 +1,6 @@
 from django.urls import path
-from . import contract_views as c, portfolio_views as v
+from . import contract_views as c
+from .views import portfolio as v
 urlpatterns = [
     path("portfolio/", c.PortfolioImageView.as_view(), name="portfolio-list"),
     path("portfolio/<uuid:image_id>/", c.PortfolioImageView.as_view(), name="portfolio-detail"),

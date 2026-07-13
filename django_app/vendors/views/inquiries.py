@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from .vendor_view_common import *
+from ..vendor_view_common import *
+from ..vendor_view_common import _get_current_vendor_profile
+from ..vendor_view_common import _actor
 
 
 class InquiryListView(APIView):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .vendor_view_common import *
+from ..vendor_view_common import *
 
 
 class AdminPendingVendorListView(APIView):

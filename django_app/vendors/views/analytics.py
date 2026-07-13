@@ -5,15 +5,42 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from application.vendors.queries import GetVendorAnalyticsQuery, ListRecentVendorActivityQuery
+from application.vendors.queries import (
+    GetVendorAnalyticsQuery,
+    GetVendorDashboardSummaryQuery,
+    ListRecentVendorActivityQuery,
+)
 from django_app.common.api_responses import api_error
 from django_app.common.permissions import IsVendor
 from domain.vendors.interfaces import PageRequest
 
-from .api_contracts import map_vendor_exception
-from .services import get_query_handlers
-from .vendor_view_common import _actor
-from .views import _get_current_vendor_profile
+from ..api_contracts import map_vendor_exception
+from ..services import get_query_handlers
+from ..vendor_view_common import _actor, _get_current_vendor_profile
+
+
+class VendorDashboardSummaryView(APIView):
+    permission_classes = [IsAuthenticated, IsVendor]
+
+    def get(self, request):
+        profile, error_response = _get_current_vendor_profile(
+            request,
+            require_workspace=True,
+        )
+        if error_response:
+            return error_response
+        try:
+            query = GetVendorDashboardSummaryQuery(
+                actor=_actor(request),
+                vendor_id=profile.id,
+            )
+            result = get_query_handlers().get_dashboard_summary(query)
+            return Response(asdict(result))
+        except Exception as exc:
+            mapped = map_vendor_exception(exc)
+            if mapped is not None:
+                return mapped
+            raise
 
 
 class VendorAnalyticsView(APIView):

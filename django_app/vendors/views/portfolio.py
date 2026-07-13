@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from .vendor_view_common import *
+from ..vendor_view_common import *
+from ..vendor_view_common import _get_current_vendor_profile
+from ..vendor_view_common import _actor
+from ..vendor_view_common import _portfolio_media_error
+from ..vendor_view_common import _log_portfolio_validation_failure
+from ..vendor_view_common import _safe_portfolio_display_url
 
 
 class PortfolioImageView(APIView):
