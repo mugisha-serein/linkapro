@@ -4,8 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 import uuid
 
-from infrastructure.repos import django_service_package_repository as repo_module
-from infrastructure.repos.django_service_package_repository import DjangoServicePackageRepository
+from infrastructure.repos.packages import django_repository as repo_module
+from infrastructure.repos.packages.django_repository import DjangoServicePackageRepository
 
 
 def test_delete_marks_package_inactive_deleted_and_records_deleter(monkeypatch):

@@ -1,6 +1,6 @@
 from django.urls import path
-from . import inquiry_views as inquiry_v
-from . import profile_views as profile_v
+from .views import inquiries as inquiry_v
+from .views import profile as profile_v
 urlpatterns = [
 path("inquiries/", inquiry_v.InquiryListView.as_view(), name="inquiry-list"),
 path("public/<uuid:vendor_id>/", profile_v.PublicVendorProfileView.as_view(), name="public-vendor-profile"),

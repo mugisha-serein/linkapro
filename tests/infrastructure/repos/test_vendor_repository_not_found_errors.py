@@ -11,14 +11,14 @@ from domain.vendors.entities import (
     ServicePackage,
     VendorProfile,
 )
-from infrastructure.repos import django_inquiry_repository as inquiry_repo_module
-from infrastructure.repos import django_portfolio_image_repository as image_repo_module
-from infrastructure.repos import django_service_package_repository as package_repo_module
-from infrastructure.repos import django_vendor_profile_repository as profile_repo_module
-from infrastructure.repos.django_inquiry_repository import DjangoInquiryRepository
-from infrastructure.repos.django_portfolio_image_repository import DjangoPortfolioImageRepository
-from infrastructure.repos.django_service_package_repository import DjangoServicePackageRepository
-from infrastructure.repos.django_vendor_profile_repository import DjangoVendorProfileRepository
+from infrastructure.repos.inquiries import django_repository as inquiry_repo_module
+from infrastructure.repos.inquiries.django_repository import DjangoInquiryRepository
+from infrastructure.repos.packages import django_repository as package_repo_module
+from infrastructure.repos.packages.django_repository import DjangoServicePackageRepository
+from infrastructure.repos.portfolio import django_repository as image_repo_module
+from infrastructure.repos.portfolio.django_repository import DjangoPortfolioImageRepository
+from infrastructure.repos.profile import django_repository as profile_repo_module
+from infrastructure.repos.profile.django_repository import DjangoVendorProfileRepository
 from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 

@@ -59,7 +59,7 @@ from application.vendors.dtos import (
     ServicePackageDTO,
     InquiryDTO,
 )
-from application.vendors.onboarding_policy import (
+from application.vendors.profile.onboarding_policy import (
     SETUP_ROUTE,
     build_vendor_onboarding_contract,
     vendor_field_errors,

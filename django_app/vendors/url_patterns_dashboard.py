@@ -1,6 +1,5 @@
 from django.urls import path
-from .dashboard_summary_view import VendorDashboardSummaryView
-from .vendor_dashboard_query_views import VendorActivityView, VendorAnalyticsView
+from .views.analytics import VendorActivityView, VendorAnalyticsView, VendorDashboardSummaryView
 urlpatterns = [
     path("dashboard-summary/", VendorDashboardSummaryView.as_view(), name="vendor-dashboard-summary"),
     path("analytics/", VendorAnalyticsView.as_view(), name="vendor-analytics"),

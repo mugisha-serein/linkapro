@@ -4,8 +4,8 @@ from unittest.mock import Mock
 import uuid
 
 from domain.vendors.entities import PortfolioImage
-from infrastructure.repos import django_portfolio_image_repository as repo_module
-from infrastructure.repos.django_portfolio_image_repository import DjangoPortfolioImageRepository
+from infrastructure.repos.portfolio import django_repository as repo_module
+from infrastructure.repos.portfolio.django_repository import DjangoPortfolioImageRepository
 
 
 def _portfolio_model(image_id=None, vendor_id=None):

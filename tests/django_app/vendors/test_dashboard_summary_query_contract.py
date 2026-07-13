@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 from application.vendors.commands import AuthenticatedActor
 from application.vendors.dtos import VendorDashboardSummaryDTO
 from application.vendors.queries import GetVendorDashboardSummaryQuery
-from django_app.vendors.dashboard_summary_view import VendorDashboardSummaryView
+from django_app.vendors.views.analytics import VendorDashboardSummaryView
 
 
 def test_dashboard_summary_view_builds_actor_aware_query():
@@ -35,10 +35,10 @@ def test_dashboard_summary_view_builds_actor_aware_query():
     handlers.get_dashboard_summary.return_value = summary
 
     with patch(
-        "django_app.vendors.dashboard_summary_view._get_current_vendor_profile",
+        "django_app.vendors.views.analytics._get_current_vendor_profile",
         return_value=(profile, None),
     ), patch(
-        "django_app.vendors.dashboard_summary_view.get_query_handlers",
+        "django_app.vendors.views.analytics.get_query_handlers",
         return_value=handlers,
     ):
         response = VendorDashboardSummaryView().get(request)

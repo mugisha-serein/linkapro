@@ -20,13 +20,13 @@ from .document_upload_views import VendorVerificationDocumentView as BaseVendorV
 from .models import ServicePackage as ServicePackageModel
 from .serializers import ServicePackageSerializer
 from .services import get_command_handlers
-from .package_views import (
+from .views.packages import (
     ServicePackageActivateView as BaseServicePackageActivateView,
     ServicePackageDetailView as BaseServicePackageDetailView,
     ServicePackageListView as BaseServicePackageListView,
 )
-from .portfolio_views import PortfolioImageView as BasePortfolioImageView
-from .profile_views import VendorProfileStatusView as BaseVendorProfileStatusView
+from .views.portfolio import PortfolioImageView as BasePortfolioImageView
+from .views.profile import VendorProfileStatusView as BaseVendorProfileStatusView
 from .vendor_view_common import (
     _actor,
     _get_current_vendor_profile,

@@ -6,8 +6,8 @@ from django_app.vendors.adapters import (
     DjangoVendorAuthorizationAdapter,
 )
 from django_app.vendors.services import get_command_handlers, get_query_handlers
-from infrastructure.repos.django_portfolio_image_creation import DjangoPortfolioImageCreationPort
-from infrastructure.repos.django_vendor_aggregate_uow import DjangoVendorAggregateUnitOfWork
+from infrastructure.repos.portfolio.django_creation import DjangoPortfolioImageCreationPort
+from infrastructure.repos.profile.django_aggregate_uow import DjangoVendorAggregateUnitOfWork
 
 
 def test_command_handlers_use_complete_production_composition():
