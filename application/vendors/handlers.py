@@ -280,53 +280,49 @@ class VendorCommandHandlers:
         return self._run_required_idempotent("portfolio_image.add", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def queue_portfolio_media(self, cmd: QueuePortfolioMediaCommand) -> PortfolioImageDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        media = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.media_id)
-        if not media:
-            raise VendorResourceNotFound("Image not found.")
-        self._assert_expected_version(media.id, media.version, cmd.expected_version)
-        original_version = media.version
-        media.mark_queued()
-        return self._save_if_changed(media, original_version, self._to_image_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_image_or_raise(cmd.vendor_id, cmd.media_id),
+            expected_version=cmd.expected_version,
+            transition=lambda media: media.mark_queued(),
+            to_dto=self._to_image_dto,
+        )
 
     def mark_portfolio_media_processing(
         self,
         cmd: MarkPortfolioMediaProcessingCommand,
     ) -> PortfolioImageDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        media = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.media_id)
-        if not media:
-            raise VendorResourceNotFound("Image not found.")
-        self._assert_expected_version(media.id, media.version, cmd.expected_version)
-        original_version = media.version
-        media.mark_processing()
-        return self._save_if_changed(media, original_version, self._to_image_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_image_or_raise(cmd.vendor_id, cmd.media_id),
+            expected_version=cmd.expected_version,
+            transition=lambda media: media.mark_processing(),
+            to_dto=self._to_image_dto,
+        )
 
     def mark_portfolio_media_uploaded(
         self,
         cmd: MarkPortfolioMediaUploadedCommand,
     ) -> PortfolioImageDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        media = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.media_id)
-        if not media:
-            raise VendorResourceNotFound("Image not found.")
-        self._assert_expected_version(media.id, media.version, cmd.expected_version)
-        original_version = media.version
-        media.mark_uploaded(public_id=cmd.public_id, secure_url=cmd.secure_url)
-        return self._save_if_changed(media, original_version, self._to_image_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_image_or_raise(cmd.vendor_id, cmd.media_id),
+            expected_version=cmd.expected_version,
+            transition=lambda media: media.mark_uploaded(public_id=cmd.public_id, secure_url=cmd.secure_url),
+            to_dto=self._to_image_dto,
+        )
 
     def update_portfolio_caption(
         self,
         cmd: UpdatePortfolioCaptionCommand,
     ) -> PortfolioImageDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        media = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.media_id)
-        if not media:
-            raise VendorResourceNotFound("Image not found.")
-        self._assert_expected_version(media.id, media.version, cmd.expected_version)
-        original_version = media.version
-        media.update_caption(cmd.caption)
-        return self._save_if_changed(media, original_version, self._to_image_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_image_or_raise(cmd.vendor_id, cmd.media_id),
+            expected_version=cmd.expected_version,
+            transition=lambda media: media.update_caption(cmd.caption),
+            to_dto=self._to_image_dto,
+        )
 
     def update_vendor_branding_media(
         self,
@@ -346,16 +342,13 @@ class VendorCommandHandlers:
         )
 
     def delete_portfolio_image(self, cmd: DeletePortfolioImageCommand) -> None:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        image = self.image_repo.get_for_vendor(cmd.vendor_id, cmd.image_id)
-        if not image:
-            raise VendorResourceNotFound("Image not found.")
-        self._assert_expected_version(image.id, image.version, cmd.expected_version)
-        original_version = image.version
-        image.deactivate()
-        if image.version == original_version:
-            return
-        self._save_with_pending_events(image, original_version)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_image_or_raise(cmd.vendor_id, cmd.image_id),
+            expected_version=cmd.expected_version,
+            transition=lambda image: image.deactivate(),
+            to_dto=lambda image: None,
+        )
 
     def reorder_portfolio_images(self, cmd: ReorderPortfolioImagesCommand) -> PageDTO[PortfolioImageDTO]:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -507,14 +500,13 @@ class VendorCommandHandlers:
         )
 
     def mark_inquiry_read(self, cmd: MarkInquiryReadCommand) -> InquiryDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        inquiry = self.inquiry_repo.get_for_vendor(cmd.vendor_id, cmd.inquiry_id)
-        if not inquiry:
-            raise VendorResourceNotFound("Inquiry not found.")
-        self._assert_expected_version(inquiry.id, inquiry.version, cmd.expected_version)
-        original_version = inquiry.version
-        inquiry.mark_read()
-        return self._save_if_changed(inquiry, original_version, self._to_inquiry_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_inquiry_or_raise(cmd.vendor_id, cmd.inquiry_id),
+            expected_version=cmd.expected_version,
+            transition=lambda inquiry: inquiry.mark_read(),
+            to_dto=self._to_inquiry_dto,
+        )
 
     @staticmethod
     def _require_dependency(name: str, dependency, required_methods: Sequence[str]) -> None:
@@ -543,6 +535,18 @@ class VendorCommandHandlers:
         if not package:
             raise VendorResourceNotFound("Package not found.")
         return package
+
+    def _get_image_or_raise(self, vendor_id: uuid.UUID, image_id: uuid.UUID) -> PortfolioImage:
+        image = self.image_repo.get_for_vendor(vendor_id, image_id)
+        if not image:
+            raise VendorResourceNotFound("Image not found.")
+        return image
+
+    def _get_inquiry_or_raise(self, vendor_id: uuid.UUID, inquiry_id: uuid.UUID) -> Inquiry:
+        inquiry = self.inquiry_repo.get_for_vendor(vendor_id, inquiry_id)
+        if not inquiry:
+            raise VendorResourceNotFound("Inquiry not found.")
+        return inquiry
 
     @staticmethod
     def _vendor_profile_exists_conflict() -> VendorConflict:
