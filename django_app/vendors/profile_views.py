@@ -22,7 +22,7 @@ class VendorProfileView(APIView):
         data = serializer.validated_data
 
         cmd = CreateVendorProfileCommand(
-            user_id=request.user.id,
+            actor=_actor(request),
             business_name=data["business_name"],
             category=data["category"],
             description=data["description"],
@@ -31,7 +31,7 @@ class VendorProfileView(APIView):
             contact_phone=data["contact_phone"],
             custom_category=data.get("custom_category"),
             website=data.get("website"),
-            idempotency_key=request.headers.get("Idempotency-Key"),
+            idempotency_key=request.headers.get("Idempotency-Key") or str(uuid.uuid4()),
         )
 
         try:
@@ -67,6 +67,7 @@ class VendorProfileView(APIView):
             return data[name] if name in data else OMITTED
 
         cmd = UpdateVendorProfileCommand(
+            actor=_actor(request),
             vendor_id=profile.id,
             expected_version=expected_version,
             business_name=_field("business_name"),
@@ -161,7 +162,7 @@ class VendorBrandingMediaView(APIView):
         if self.media_kind == "cover":
             self._enqueue_projection_update(vendor)
 
-        updated_profile = get_query_handlers().get_vendor(vendor.id)
+        updated_profile = get_query_handlers().get_vendor(GetVendorQuery(actor=_actor(request), vendor_id=vendor.id))
         return Response(_serialize_profile(updated_profile, message="Vendor profile media saved."))
 
     def delete(self, request):
@@ -184,7 +185,7 @@ class VendorBrandingMediaView(APIView):
         if self.media_kind == "cover":
             self._enqueue_projection_update(vendor)
 
-        updated_profile = get_query_handlers().get_vendor(vendor.id)
+        updated_profile = get_query_handlers().get_vendor(GetVendorQuery(actor=_actor(request), vendor_id=vendor.id))
         return Response(_serialize_profile(updated_profile, message="Vendor profile media removed."))
 
     def _validate_branding_image(self, uploaded_media) -> Response | None:
@@ -317,7 +318,11 @@ class VendorSubmitForReviewView(APIView):
         if version_error:
             return version_error
 
-        cmd = SubmitVendorForReviewCommand(vendor_id=profile.id, expected_version=expected_version)
+        cmd = SubmitVendorForReviewCommand(
+            actor=_actor(request),
+            vendor_id=profile.id,
+            expected_version=expected_version,
+        )
         try:
             command_handlers = get_command_handlers()
             updated_profile = command_handlers.submit_for_review(cmd)
@@ -523,60 +528,5 @@ class PublicVendorProfileView(APIView):
             code="vendor_public_profile_loaded",
             message="Vendor profile loaded.",
             data=VendorPublicProfileSerializer(vendor, context=marketplace_stats).data,
-            request=request,
-        )
-
-
-class VendorDashboardSummaryView(APIView):
-    permission_classes = [IsAuthenticated, IsVendor]
-
-    def get(self, request):
-        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
-        if error_response:
-            return error_response
-        query_handlers = get_query_handlers()
-        return Response(query_handlers.get_dashboard_summary(profile.id))
-
-
-class VendorAnalyticsView(APIView):
-    permission_classes = [IsAuthenticated, IsVendor]
-
-    def get(self, request):
-        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
-        if error_response:
-            return error_response
-        query_handlers = get_query_handlers()
-        return Response(query_handlers.get_analytics(profile.id))
-
-
-class VendorActivityView(APIView):
-    permission_classes = [IsAuthenticated, IsVendor]
-
-    def get(self, request):
-        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
-        if error_response:
-            return error_response
-        query_handlers = get_query_handlers()
-        limit, limit_error = self._activity_limit(request)
-        if limit_error:
-            return limit_error
-        return Response(query_handlers.get_recent_activity(profile.id, limit=limit))
-
-    def _activity_limit(self, request) -> tuple[int | None, Response | None]:
-        raw_limit = request.query_params.get("limit", "10")
-        try:
-            limit = int(raw_limit)
-        except (TypeError, ValueError):
-            return None, self._invalid_limit_response(request)
-        if limit < 1 or limit > 100:
-            return None, self._invalid_limit_response(request)
-        return limit, None
-
-    def _invalid_limit_response(self, request) -> Response:
-        return api_error(
-            code="vendor_activity_limit_invalid",
-            message="Activity limit must be an integer from 1 to 100.",
-            field_errors={"limit": ["Enter an integer from 1 to 100."]},
-            status=status.HTTP_400_BAD_REQUEST,
             request=request,
         )

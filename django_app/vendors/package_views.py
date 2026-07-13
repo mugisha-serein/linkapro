@@ -16,7 +16,8 @@ class ServicePackageListView(APIView):
         if pagination_error:
             return pagination_error
 
-        page = query_handlers.list_service_packages(profile.id, page_request)
+        query = ListServicePackagesQuery(actor=_actor(request), vendor_id=profile.id, page=page_request)
+        page = query_handlers.list_service_packages(query)
         next_offset = page.offset + page.limit if page.offset + page.limit < page.total else None
         return Response(
             {
@@ -39,13 +40,14 @@ class ServicePackageListView(APIView):
         data = serializer.validated_data
 
         cmd = CreateServicePackageCommand(
+            actor=_actor(request),
             vendor_id=profile.id,
             name=data["name"],
             description=data["description"],
             price=data["price"],
             currency=data.get("currency", "RWF"),
             package_tier=data["package_tier"],
-            idempotency_key=request.headers.get("Idempotency-Key"),
+            idempotency_key=request.headers.get("Idempotency-Key") or str(uuid.uuid4()),
         )
 
         command_handlers = get_command_handlers()
@@ -90,7 +92,8 @@ class ServicePackageDetailView(APIView):
         query_handlers = get_query_handlers()
 
         # Verify ownership
-        packages = query_handlers.list_service_packages(profile.id)
+        query = ListServicePackagesQuery(actor=_actor(request), vendor_id=profile.id)
+        packages = query_handlers.list_service_packages(query)
         pkg = next((p for p in packages.items if p.id == package_id), None)
         if not pkg:
             return Response(
@@ -106,6 +109,7 @@ class ServicePackageDetailView(APIView):
             return version_error
 
         cmd = UpdateServicePackageCommand(
+            actor=_actor(request),
             vendor_id=profile.id,
             package_id=package_id,
             expected_version=expected_version,
@@ -134,7 +138,8 @@ class ServicePackageDetailView(APIView):
             return error_response
         query_handlers = get_query_handlers()
 
-        packages = query_handlers.list_service_packages(profile.id)
+        query = ListServicePackagesQuery(actor=_actor(request), vendor_id=profile.id)
+        packages = query_handlers.list_service_packages(query)
         pkg = next((p for p in packages.items if p.id == package_id), None)
         if not pkg:
             return Response(
@@ -147,10 +152,10 @@ class ServicePackageDetailView(APIView):
             return version_error
 
         cmd = DeactivateServicePackageCommand(
+            actor=_actor(request),
             vendor_id=profile.id,
             package_id=package_id,
             expected_version=expected_version,
-            deleted_by_id=request.user.id,
         )
         command_handlers = get_command_handlers()
         try:

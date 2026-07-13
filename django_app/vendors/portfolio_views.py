@@ -14,7 +14,8 @@ class PortfolioImageView(APIView):
             return error_response
         query_handlers = get_query_handlers()
 
-        images = query_handlers.list_portfolio_images(profile.id)
+        query = ListPortfolioImagesQuery(actor=_actor(request), vendor_id=profile.id)
+        images = query_handlers.list_portfolio_images(query)
         return Response([self._serialize_image(img) for img in images.items])
 
     def post(self, request):
@@ -57,7 +58,7 @@ class PortfolioImageView(APIView):
         shared_upload = self._upload_portfolio_media(uploaded_media, media_type, str(image_id))
         command_handlers = get_command_handlers()
         cmd = AddPortfolioImageCommand(
-            actor=AuthenticatedActor(user_id=request.user.id),
+            actor=_actor(request),
             vendor_id=profile.id,
             image_id=image_id,
             public_id=shared_upload["public_id"],
@@ -114,7 +115,8 @@ class PortfolioImageView(APIView):
         query_handlers = get_query_handlers()
 
         # Verify ownership: fetch the image and check vendor_id
-        images = query_handlers.list_portfolio_images(profile.id)
+        query = ListPortfolioImagesQuery(actor=_actor(request), vendor_id=profile.id)
+        images = query_handlers.list_portfolio_images(query)
         image = next((img for img in images.items if img.id == image_id), None)
         if not image:
             return vendor_error_response(
@@ -128,10 +130,10 @@ class PortfolioImageView(APIView):
             return version_error
 
         cmd = DeletePortfolioImageCommand(
+            actor=_actor(request),
             vendor_id=profile.id,
             image_id=image_id,
             expected_version=expected_version,
-            deleted_by_id=request.user.id,
         )
         command_handlers = get_command_handlers()
         try:
@@ -329,6 +331,7 @@ class PortfolioImageReorderView(APIView):
         )
 
         cmd = ReorderPortfolioImagesCommand(
+            actor=_actor(request),
             vendor_id=profile.id,
             image_ids_in_order=tuple(image_ids),
             expected_versions=expected_versions,

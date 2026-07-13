@@ -13,7 +13,8 @@ class InquiryListView(APIView):
             return error_response
         query_handlers = get_query_handlers()
 
-        inquiries = query_handlers.list_inquiries(profile.id)
+        query = ListInquiriesQuery(actor=_actor(request), vendor_id=profile.id)
+        inquiries = query_handlers.list_inquiries(query)
         return Response([self._serialize_inquiry(inq) for inq in inquiries.items])
 
     def _serialize_inquiry(self, dto: InquiryDTO) -> dict:
@@ -49,12 +50,13 @@ class PublicInquiryView(APIView):
 
         cmd = SendInquiryCommand(
             vendor_id=uuid.UUID(str(vendor_id)),
+            requester_id=_public_inquiry_requester_id(data["client_email"]),
             client_name=data["client_name"],
             client_email=data["client_email"],
             message=data["message"],
             client_phone=data.get("client_phone"),
             event_date=data.get("event_date"),
-            idempotency_key=request.headers.get("Idempotency-Key"),
+            idempotency_key=request.headers.get("Idempotency-Key") or str(uuid.uuid4()),
         )
 
         command_handlers = get_command_handlers()
@@ -72,3 +74,8 @@ class PublicInquiryView(APIView):
             if mapped is not None:
                 return mapped
             raise
+
+
+def _public_inquiry_requester_id(client_email: str) -> uuid.UUID:
+    normalized = str(client_email).strip().lower()
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"linkapro:public-inquiry:{normalized}")

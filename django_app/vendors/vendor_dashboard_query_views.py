@@ -5,7 +5,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from application.vendors.commands import AuthenticatedActor
 from application.vendors.queries import GetVendorAnalyticsQuery, ListRecentVendorActivityQuery
 from django_app.common.api_responses import api_error
 from django_app.common.permissions import IsVendor
@@ -13,6 +12,7 @@ from domain.vendors.interfaces import PageRequest
 
 from .api_contracts import map_vendor_exception
 from .services import get_query_handlers
+from .vendor_view_common import _actor
 from .views import _get_current_vendor_profile
 
 
@@ -25,7 +25,7 @@ class VendorAnalyticsView(APIView):
             return error_response
         try:
             query = GetVendorAnalyticsQuery(
-                actor=AuthenticatedActor(request.user.id),
+                actor=_actor(request),
                 vendor_id=profile.id,
             )
             return Response(asdict(get_query_handlers().get_analytics(query)))
@@ -58,7 +58,7 @@ class VendorActivityView(APIView):
             )
         try:
             query = ListRecentVendorActivityQuery(
-                actor=AuthenticatedActor(request.user.id),
+                actor=_actor(request),
                 vendor_id=profile.id,
                 page=PageRequest(limit=limit, offset=0),
             )
