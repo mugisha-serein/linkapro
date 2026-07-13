@@ -34,3 +34,9 @@ def test_vendor_domain_has_no_framework_or_infrastructure_imports():
                     offenders.append(f"{path.relative_to(domain_root)} imports {imported_name}")
 
     assert offenders == []
+
+
+def test_vendor_domain_has_no_legacy_profile_completion_module():
+    domain_root = Path(__file__).parents[3] / "domain" / "vendors"
+
+    assert not (domain_root / "profile_completion.py").exists()

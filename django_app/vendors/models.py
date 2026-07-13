@@ -58,7 +58,7 @@ class VendorProfile(models.Model):
         return DomainVendorProfile.required_profile_fields()
 
     def get_profile_completion_errors(self) -> dict[str, list[str]]:
-        return profile_completion_errors_for(self, DomainVendorProfile.required_profile_fields())
+        return profile_completion_errors_for(self, self.required_profile_fields())
 
     @property
     def is_profile_complete(self) -> bool:
