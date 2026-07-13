@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from application.vendors.commands import (
+    ModeratorActor,
     RejectVendorCommand,
     ReinstateVendorCommand,
     SuspendVendorCommand,
@@ -12,6 +13,7 @@ from django_app.common.api_responses import api_success
 from django_app.common.permissions import IsAdmin
 from django_app.governance.marketplace_outbox import enqueue_vendor_projection, enqueue_vendor_projection_by_id
 from django_app.vendors.approval_workflow import approve_pending_vendor_submission
+from django_app.vendors.models import VendorProfile
 from django_app.vendors.services import get_command_handlers
 from django_app.vendors.views import _serialize_profile
 
@@ -24,6 +26,19 @@ def _bad_request(code: str, exc: ValueError) -> Response:
     return Response(
         {"code": code, "message": str(exc), "detail": str(exc)},
         status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _moderator(request) -> ModeratorActor:
+    return ModeratorActor(user_id=request.user.id)
+
+
+def _current_vendor_version(vendor_id) -> int:
+    return (
+        VendorProfile.objects.filter(id=vendor_id)
+        .values_list("version", flat=True)
+        .first()
+        or 0
     )
 
 
@@ -55,7 +70,12 @@ class AdminVendorRejectView(APIView):
         serializer.is_valid(raise_exception=True)
         try:
             profile = get_command_handlers().reject_vendor(
-                RejectVendorCommand(vendor_id=vendor_id, reason=serializer.validated_data["reason"])
+                RejectVendorCommand(
+                    moderator=_moderator(request),
+                    vendor_id=vendor_id,
+                    expected_version=_current_vendor_version(vendor_id),
+                    reason=serializer.validated_data["reason"],
+                )
             )
             enqueue_vendor_projection_by_id(vendor_id, reason="vendor_rejected")
         except ValueError as exc:
@@ -74,7 +94,13 @@ class AdminVendorSuspendView(APIView):
 
     def post(self, request, vendor_id):
         try:
-            profile = get_command_handlers().suspend_vendor(SuspendVendorCommand(vendor_id=vendor_id))
+            profile = get_command_handlers().suspend_vendor(
+                SuspendVendorCommand(
+                    moderator=_moderator(request),
+                    vendor_id=vendor_id,
+                    expected_version=_current_vendor_version(vendor_id),
+                )
+            )
             enqueue_vendor_projection_by_id(vendor_id, reason="vendor_suspended")
         except ValueError as exc:
             return _bad_request("vendor_suspend_failed", exc)
@@ -92,7 +118,13 @@ class AdminVendorReinstateView(APIView):
 
     def post(self, request, vendor_id):
         try:
-            profile = get_command_handlers().reinstate_vendor(ReinstateVendorCommand(vendor_id=vendor_id))
+            profile = get_command_handlers().reinstate_vendor(
+                ReinstateVendorCommand(
+                    moderator=_moderator(request),
+                    vendor_id=vendor_id,
+                    expected_version=_current_vendor_version(vendor_id),
+                )
+            )
             enqueue_vendor_projection_by_id(vendor_id, reason="vendor_reinstated")
         except ValueError as exc:
             return _bad_request("vendor_reinstate_failed", exc)

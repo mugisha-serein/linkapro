@@ -561,6 +561,19 @@ class VendorCommandHandlers:
     def _assert_moderator_can_moderate_vendor(self, moderator, vendor_id: uuid.UUID) -> None:
         self.authorization_port.assert_moderator_can_moderate_vendor(moderator, vendor_id)
 
+    def _assert_inquiry_allowed(
+        self,
+        *,
+        requester_identity: uuid.UUID,
+        vendor_id: uuid.UUID,
+        payload_digest: str,
+    ) -> None:
+        self.inquiry_abuse_protection_port.assert_inquiry_allowed(
+            requester_identity=requester_identity,
+            vendor_id=vendor_id,
+            payload_digest=payload_digest,
+        )
+
     def _save_if_changed(self, aggregate, original_version: int, to_dto: Callable):
         if aggregate.version == original_version:
             return to_dto(aggregate)

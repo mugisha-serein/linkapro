@@ -7,11 +7,8 @@ from .package_views import ServicePackageActivateView, ServicePackageDetailView,
 from .portfolio_views import PortfolioImageReorderView, PortfolioImageView
 from .profile_views import (
     PublicVendorProfileView,
-    VendorActivityView,
-    VendorAnalyticsView,
     VendorBrandingMediaView,
     VendorCoverImageView,
-    VendorDashboardSummaryView,
     VendorProfileStatusView,
     VendorProfileView,
     VendorSubmitForReviewView,

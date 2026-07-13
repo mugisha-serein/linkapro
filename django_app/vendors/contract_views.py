@@ -28,6 +28,7 @@ from .package_views import (
 from .portfolio_views import PortfolioImageView as BasePortfolioImageView
 from .profile_views import VendorProfileStatusView as BaseVendorProfileStatusView
 from .vendor_view_common import (
+    _actor,
     _get_current_vendor_profile,
     _stable_package_integrity_response,
 )
@@ -167,6 +168,7 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
         if version_error:
             return version_error
         cmd = UpdateServicePackageCommand(
+            actor=_actor(request),
             package_id=package_id,
             vendor_id=profile.id,
             expected_version=expected_version,
@@ -220,10 +222,10 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
             return version_error
 
         cmd = DeactivateServicePackageCommand(
+            actor=_actor(request),
             package_id=package_id,
             vendor_id=profile.id,
             expected_version=expected_version,
-            deleted_by_id=request.user.id,
         )
         try:
             package = get_command_handlers().deactivate_package(cmd)

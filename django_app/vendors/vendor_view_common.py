@@ -47,6 +47,12 @@ from application.vendors.commands import (
     SendInquiryCommand,
     ResourceVersion,
 )
+from application.vendors.queries import (
+    GetVendorQuery,
+    ListInquiriesQuery,
+    ListPortfolioImagesQuery,
+    ListServicePackagesQuery,
+)
 from application.vendors.dtos import (
     VendorProfileDTO,
     PortfolioImageDTO,
@@ -85,6 +91,10 @@ VENDOR_COVER_IMAGE_INVALID_CODE = "vendor_cover_image_invalid"
 VENDOR_PROFILE_MEDIA_UPLOAD_FAILED_CODE = "vendor_profile_media_upload_failed"
 VENDOR_PACKAGE_INTEGRITY_CODE = "vendor_package_integrity_error"
 VENDOR_PACKAGE_PAGINATION_CODE = "vendor_package_pagination_invalid"
+
+
+def _actor(request) -> AuthenticatedActor:
+    return AuthenticatedActor(user_id=request.user.id)
 
 
 def _get_public_marketplace_stats(vendor_id) -> dict:
