@@ -28,6 +28,10 @@ def test_delete_marks_package_inactive_deleted_and_records_deleter(monkeypatch):
         is_deleted=False,
         deleted_at=None,
         deleted_by_id=None,
+        last_approved_at=deleted_at,
+        last_vendor_public_edit_at=None,
+        next_vendor_edit_allowed_at=None,
+        version=0,
         created_at=deleted_at,
         updated_at=deleted_at,
         save=Mock(),
@@ -53,6 +57,7 @@ def test_delete_marks_package_inactive_deleted_and_records_deleter(monkeypatch):
     assert deleted.is_deleted is True
     assert deleted.deleted_at == deleted_at
     assert fake_model.deleted_by_id == deleted_by_id
+    assert fake_model.version == 1
     fake_model.save.assert_called_once_with(
-        update_fields=["is_active", "is_deleted", "deleted_at", "deleted_by", "updated_at"]
+        update_fields=["is_active", "is_deleted", "deleted_at", "deleted_by", "version", "updated_at"]
     )

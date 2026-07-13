@@ -17,7 +17,7 @@ PACKAGE_TIER_LABELS = {
 }
 
 PACKAGE_TIER_RULES = {
-    "standard": {"min_price": Decimal("1"), "min_description_length": 10},
+    "standard": {"min_price": Decimal("1"), "min_description_length": 30},
     "premier": {"min_price": Decimal("50000"), "min_description_length": 50},
     "gold": {"min_price": Decimal("100000"), "min_description_length": 80},
 }
@@ -70,20 +70,15 @@ def validate_service_package_rules(*, name: str, description: str, price, packag
         )
     if clean_description and len(clean_description) < rules["min_description_length"]:
         errors.setdefault("description", []).append(
-            f"{tier_label} packages must include at least "
-            f"{rules['min_description_length']} characters explaining deliverables and terms."
+            f"{tier_label} packages must include at least {rules['min_description_length']} characters explaining deliverables and terms."
         )
 
     lowered_name = clean_name.lower()
     if has_control_characters(clean_description):
         errors.setdefault("description", []).append("Control characters are not allowed.")
     if tier == "standard" and any(term in lowered_name for term in RESTRICTED_STANDARD_TERMS):
-        errors.setdefault("name", []).append(
-            "Standard packages cannot claim premium, exclusive, VIP, or Gold positioning."
-        )
-    if tier == "gold" and any(
-        term in f"{lowered_name} {clean_description.lower()}" for term in MISLEADING_GUARANTEE_TERMS
-    ):
+        errors.setdefault("name", []).append("Standard packages cannot claim premium, exclusive, VIP, or Gold positioning.")
+    if tier == "gold" and any(term in f"{lowered_name} {clean_description.lower()}" for term in MISLEADING_GUARANTEE_TERMS):
         errors.setdefault("description", []).append("Gold packages must avoid misleading guarantee claims.")
 
     if errors:
@@ -93,7 +88,7 @@ def validate_service_package_rules(*, name: str, description: str, price, packag
 def coerce_package_price(value) -> Decimal:
     try:
         price = positive_decimal(value)
-    except ValueError as exc:
+    except ValueError:
         raise ValueError("Package price must be a valid decimal amount.")
     return price
 

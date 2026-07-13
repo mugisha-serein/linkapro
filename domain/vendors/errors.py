@@ -47,3 +47,7 @@ class InquiryValidationError(VendorDomainError):
 
 class ConcurrentVendorUpdate(VendorDomainError):
     default_code = "vendor_concurrent_update"
+
+
+class ProtectedStateMutationError(VendorDomainError):
+    default_code = "vendor_protected_state_assignment"

@@ -2,7 +2,8 @@ from decimal import Decimal
 
 import pytest
 
-from domain.vendors.package_rules import PackageValidationError, validate_service_package_rules
+from domain.vendors.errors import PackageValidationError
+from domain.vendors.package_rules import validate_service_package_rules
 
 
 def valid_rules_payload(**overrides):
@@ -38,6 +39,16 @@ def test_package_rules_reject_too_large_price_and_control_characters():
 
 
 def test_package_rules_preserve_tier_minimums_and_misleading_term_rules():
+    with pytest.raises(PackageValidationError) as standard_length:
+        validate_service_package_rules(
+            **valid_rules_payload(
+                description="Short standard package.",
+                package_tier="standard",
+            )
+        )
+
+    assert "description" in standard_length.value.field_errors
+
     with pytest.raises(PackageValidationError) as exc_info:
         validate_service_package_rules(
             **valid_rules_payload(

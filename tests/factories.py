@@ -147,12 +147,16 @@ def create_service_package(**kwargs):
         kwargs["vendor"] = create_vendor_profile()
     defaults = {
         "name": "Basic Package",
-        "description": "Description",
+        "description": "A standard package with clear event deliverables.",
         "price": 1000.00,
         "currency": "RWF",
-        "is_active": True,
+        "is_active": False,
     }
     defaults.update(kwargs)
+    if defaults.get("approval_status") == ServicePackage.ApprovalStatus.APPROVED and not defaults.get("last_approved_at"):
+        defaults["last_approved_at"] = timezone.now()
+    if defaults.get("approval_status") == ServicePackage.ApprovalStatus.REJECTED and not defaults.get("rejection_reason"):
+        defaults["rejection_reason"] = "Rejected during review."
     return ServicePackage.objects.create(**defaults)
 
 

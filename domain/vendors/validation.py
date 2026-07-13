@@ -26,15 +26,17 @@ TEXT_LIMITS = {
     "public_id": 255,
 }
 
-MIN_PACKAGE_DESCRIPTION_LENGTH = 10
 MIN_INQUIRY_MESSAGE_LENGTH = 3
 MIN_VENDOR_DESCRIPTION_LENGTH = 20
 MAX_PORTFOLIO_ORDER = 10_000
+MAX_PORTFOLIO_FILE_SIZE = 100 * 1024 * 1024
+MAX_PORTFOLIO_DIMENSION = 20_000
+MAX_VIDEO_DURATION_SECONDS = 4 * 60 * 60
 MAX_PAGE_LIMIT = 100
 MAX_PAGE_OFFSET = 10_000
 MAX_PACKAGE_PRICE = Decimal("9999999999.99")
 PACKAGE_PRICE_SCALE = 2
-SUPPORTED_CURRENCIES = {"RWF", "USD", "EUR", "KES", "GHS", "NGN"}
+SUPPORTED_CURRENCIES = {"RWF"}
 PRIVATE_HOSTS = {"localhost", "0.0.0.0", "127.0.0.1", "::1"}
 EVENT_DATE_MAX_FUTURE_DAYS = 730
 EVENT_DATE_MAX_PAST_DAYS = 1
@@ -177,6 +179,12 @@ def normalize_event_date(value, *, field_name: str = "event_date", today: date |
         raise ValueError("Event date must be a date, not a datetime.")
     if not isinstance(value, date):
         raise ValueError("Enter a valid event date.")
+    return value
+
+
+def validate_new_event_date_bounds(value: date | None, *, today: date | None = None) -> date | None:
+    if value is None:
+        return None
     today = today or datetime.now(timezone.utc).date()
     if value < today - timedelta(days=EVENT_DATE_MAX_PAST_DAYS):
         raise ValueError("Event date is too far in the past.")

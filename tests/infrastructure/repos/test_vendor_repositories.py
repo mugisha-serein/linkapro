@@ -4,6 +4,7 @@ from domain.vendors.entities import (
     VendorProfile, VendorStatus, ServiceCategory,
     PortfolioImage, ServicePackage, Inquiry
 )
+from domain.vendors.errors import ConcurrentVendorUpdate
 from infrastructure.repos.django_vendor_profile_repository import DjangoVendorProfileRepository
 from infrastructure.repos.django_portfolio_image_repository import DjangoPortfolioImageRepository
 from infrastructure.repos.django_service_package_repository import DjangoServicePackageRepository
@@ -94,24 +95,59 @@ class TestDjangoServicePackageRepository:
     def test_crud(self):
         user = User.objects.create_user(email="v@test.com", password="p", role="vendor")
         vendor = DjangoProfile.objects.create(
-            user=user, business_name="V", category="photography", description="d",
+            user=user, business_name="V", category="photography", description="Detailed vendor description.",
             service_area="a", contact_email="e@t.com", contact_phone="1"
         )
         repo = DjangoServicePackageRepository()
         pkg = ServicePackage(
             id=uuid.uuid4(),
             vendor_id=vendor.id,
-            name="Basic",
-            description="...",
+            name="Basic package",
+            description="A standard package with clear event deliverables.",
             price=1000.0,
             currency="RWF",
         )
-        saved = repo.save(pkg)
-        assert saved.name == "Basic"
+        saved = repo.add(pkg)
+        assert saved.name == "Basic package"
         pkgs = repo.list_by_vendor(vendor.id)
-        assert len(pkgs) == 1
+        assert pkgs.total == 1
+        assert len(pkgs.items) == 1
         repo.delete(saved.id)
         assert repo.get_by_id(saved.id) is None
+
+    def test_concurrent_updates_allow_one_success(self):
+        user = User.objects.create_user(email="v2@test.com", password="p", role="vendor")
+        vendor = DjangoProfile.objects.create(
+            user=user,
+            business_name="V",
+            category="photography",
+            description="Detailed vendor description.",
+            service_area="a",
+            contact_email="e2@t.com",
+            contact_phone="1",
+        )
+        repo = DjangoServicePackageRepository()
+        created = repo.add(
+            ServicePackage(
+                id=uuid.uuid4(),
+                vendor_id=vendor.id,
+                name="Basic package",
+                description="A standard package with clear event deliverables.",
+                price=1000.0,
+                currency="RWF",
+            )
+        )
+        first = repo.get_by_id(created.id)
+        second = repo.get_by_id(created.id)
+
+        first.update_details(name="Updated package")
+        second.update_details(name="Second update")
+
+        saved = repo.save(first, expected_version=created.version)
+        assert saved.version == created.version + 1
+
+        with pytest.raises(ConcurrentVendorUpdate):
+            repo.save(second, expected_version=created.version)
 
 
 class TestDjangoInquiryRepository:

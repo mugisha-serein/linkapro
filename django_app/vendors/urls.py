@@ -1,44 +1,7 @@
-from django.urls import path
-from .contract_views import (
-    PortfolioImageView,
-    ServicePackageActivateView,
-    ServicePackageDetailView,
-    ServicePackageListView,
-    VendorProfileStatusView,
-    VendorVerificationDocumentView,
-)
-from .views import (
-    VendorProfileView,
-    VendorSubmitForReviewView,
-    PortfolioImageReorderView,
-    InquiryListView,
-    PublicInquiryView,
-    VendorDashboardSummaryView,
-    VendorAnalyticsView,
-    VendorActivityView,
-    VendorBrandingMediaView,
-    VendorCoverImageView,
-    PublicVendorProfileView,
-)
+from .url_patterns_dashboard import urlpatterns as dashboard_urls
+from .url_patterns_packages2 import urlpatterns as package_urls
+from .url_patterns_portfolio import urlpatterns as portfolio_urls
+from .url_patterns_profile import urlpatterns as profile_urls
+from .url_patterns_public2 import urlpatterns as public_urls
 
-urlpatterns = [
-    path("profile/", VendorProfileView.as_view(), name="vendor-profile"),
-    path("profile/status/", VendorProfileStatusView.as_view(), name="vendor-profile-status"),
-    path("profile/submit/", VendorSubmitForReviewView.as_view(), name="vendor-submit"),
-    path("profile/media/profile-image/", VendorBrandingMediaView.as_view(), name="vendor-profile-image"),
-    path("profile/media/cover-image/", VendorCoverImageView.as_view(), name="vendor-cover-image"),
-    path("portfolio/", PortfolioImageView.as_view(), name="portfolio-list"),
-    path("portfolio/<uuid:image_id>/", PortfolioImageView.as_view(), name="portfolio-detail"),
-    path("portfolio/reorder/", PortfolioImageReorderView.as_view(), name="portfolio-reorder"),
-    path("profile/verification-documents/", VendorVerificationDocumentView.as_view(), name="vendor-verification-documents"),
-    path("packages/", ServicePackageListView.as_view(), name="package-list"),
-    path("packages/<uuid:package_id>/", ServicePackageDetailView.as_view(), name="package-detail"),
-    path("packages/<uuid:package_id>/activate/", ServicePackageActivateView.as_view(), name="package-activate"),
-    path("inquiries/", InquiryListView.as_view(), name="inquiry-list"),
-    path("dashboard-summary/", VendorDashboardSummaryView.as_view(), name="vendor-dashboard-summary"),
-    path("analytics/", VendorAnalyticsView.as_view(), name="vendor-analytics"),
-    path("activity/", VendorActivityView.as_view(), name="vendor-activity"),
-    path("public/<uuid:vendor_id>/", PublicVendorProfileView.as_view(), name="public-vendor-profile"),
-    path("public/<uuid:vendor_id>/inquiries/", PublicInquiryView.as_view(), name="public-inquiries"),
-    path("public/<uuid:vendor_id>/inquiry/", PublicInquiryView.as_view(), name="public-inquiry"),
-]
+urlpatterns = profile_urls + portfolio_urls + package_urls + dashboard_urls + public_urls

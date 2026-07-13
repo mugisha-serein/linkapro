@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from domain.vendors.entities import VendorProfile, VendorStatus
+from domain.vendors.errors import VendorDomainError
 
 
-class VendorInquiryPolicyError(ValueError):
+class VendorInquiryPolicyError(VendorDomainError):
     """Raised when a vendor cannot receive public inquiries."""
+
+    default_code = "vendor_inquiry_unavailable"
 
 
 def ensure_vendor_can_receive_inquiry(profile: VendorProfile | None) -> None:

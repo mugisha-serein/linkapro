@@ -8,4 +8,4 @@ class DjangoPasswordHasher:
 
     def verify(self, plain: PlainPassword | str, hashed: PasswordHash) -> bool:
         candidate = plain.value if hasattr(plain, "value") else str(plain)
-        return check_password(candidate, hashed.value)
+        return check_password(candidate, hashed.raw_value)
