@@ -1,5 +1,5 @@
 from django.urls import path
-from . import contract_views as c, views as v
+from . import contract_views as c, profile_views as v
 urlpatterns=[
 path("profile/",v.VendorProfileView.as_view(),name="vendor-profile"),
 path("profile/status/",c.VendorProfileStatusView.as_view(),name="vendor-profile-status"),

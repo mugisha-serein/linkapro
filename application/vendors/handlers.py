@@ -55,6 +55,7 @@ from .errors import (
     DuplicateVendorProfile,
     InvalidVendorCommand,
     VendorApplicationConfigurationError,
+    VendorConflict,
     VendorResourceNotFound,
     VendorVersionConflict,
 )
@@ -251,12 +252,23 @@ class VendorCommandHandlers:
             ensure_vendor_can_add_portfolio_media(profile)
             def image_factory(next_order: int) -> PortfolioImage:
                 return PortfolioImage(
-                    id=uuid.uuid4(),
+                    id=cmd.image_id or uuid.uuid4(),
                     vendor_id=cmd.vendor_id,
                     public_id=cmd.public_id,
                     secure_url=cmd.secure_url,
                     caption=cmd.caption,
                     order=next_order,
+                    media_type=cmd.media_type,
+                    upload_status=cmd.upload_status,
+                    quality_status=cmd.quality_status,
+                    visibility_status=cmd.visibility_status,
+                    original_filename=cmd.original_filename,
+                    mime_type=cmd.mime_type,
+                    file_size=cmd.file_size,
+                    cloudinary_public_id=cmd.cloudinary_public_id,
+                    cloudinary_secure_url=cmd.cloudinary_secure_url,
+                    width=cmd.width,
+                    height=cmd.height,
                 )
 
             saved = self.portfolio_creation_port.create_at_next_order(
@@ -506,6 +518,8 @@ class VendorCommandHandlers:
 
     @staticmethod
     def _require_dependency(name: str, dependency, required_methods: Sequence[str]) -> None:
+        if dependency is None:
+            raise VendorApplicationConfigurationError(field_errors={name: ["Required dependency is missing."]})
         missing_methods = []
         for method_name in required_methods:
             try:
@@ -514,10 +528,8 @@ class VendorCommandHandlers:
                 method = None
             if not callable(method):
                 missing_methods.append(method_name)
-        if dependency is None or missing_methods:
-            detail = "Required dependency is missing."
-            if missing_methods:
-                detail = f"Required callable methods are missing: {', '.join(missing_methods)}."
+        if missing_methods:
+            detail = f"Required callable methods are missing: {', '.join(missing_methods)}."
             raise VendorApplicationConfigurationError(field_errors={name: [detail]})
 
     def _get_vendor_or_raise(self, vendor_id: uuid.UUID) -> VendorProfile:
@@ -531,6 +543,19 @@ class VendorCommandHandlers:
         if not package:
             raise VendorResourceNotFound("Package not found.")
         return package
+
+    @staticmethod
+    def _vendor_profile_exists_conflict() -> VendorConflict:
+        return VendorConflict(
+            "User already has a vendor profile.",
+            code="vendor_profile_exists",
+        )
+
+    def _assert_actor_owns_vendor(self, actor, vendor_id: uuid.UUID) -> None:
+        self.authorization_port.assert_actor_owns_vendor(actor, vendor_id)
+
+    def _assert_moderator_can_moderate_vendor(self, moderator, vendor_id: uuid.UUID) -> None:
+        self.authorization_port.assert_moderator_can_moderate_vendor(moderator, vendor_id)
 
     def _save_if_changed(self, aggregate, original_version: int, to_dto: Callable):
         if aggregate.version == original_version:
