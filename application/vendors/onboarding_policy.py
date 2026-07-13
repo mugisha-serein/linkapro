@@ -24,6 +24,10 @@ _SUPPORTED_VENDOR_STATUSES = frozenset(
     {"draft", "pending_review", "approved", "rejected", "suspended"}
 )
 _PROVIDER_OMITTED = object()
+CREATE_VENDOR_PROFILE_ACTION = {
+    "method": "POST",
+    "path": "/api/django/vendors/profile/",
+}
 
 
 class DomainVendorProfileCompletionProvider:
@@ -44,6 +48,7 @@ class VendorOnboardingDTO(dict[str, Any]):
     can_submit_for_review: bool
     marketplace_visible: bool
     redirect_to: VendorOnboardingRedirectIntent
+    action: dict[str, str] | None
     message: str
 
     def __post_init__(self) -> None:
@@ -55,6 +60,7 @@ class VendorOnboardingDTO(dict[str, Any]):
             can_submit_for_review=self.can_submit_for_review,
             marketplace_visible=self.marketplace_visible,
             redirect_to=self.redirect_to,
+            action=self.action,
             message=self.message,
         )
 
@@ -76,15 +82,16 @@ def build_vendor_onboarding_contract(
     completion_provider: VendorProfileCompletionProvider | object = _PROVIDER_OMITTED,
 ) -> VendorOnboardingDTO:
     if profile is None:
-        return {
-            "profile_status": "missing",
-            "can_access_dashboard": False,
-            "must_complete_profile": True,
-            "can_submit_for_review": False,
-            "marketplace_visible": False,
-            "redirect_to": SETUP_ROUTE,
-            "message": "Complete your vendor profile before continuing.",
-        }
+        return VendorOnboardingDTO(
+            profile_status="missing",
+            can_access_dashboard=False,
+            must_complete_profile=True,
+            can_submit_for_review=False,
+            marketplace_visible=False,
+            redirect_to=SETUP_ROUTE,
+            action=dict(CREATE_VENDOR_PROFILE_ACTION),
+            message="Complete your vendor profile before continuing.",
+        )
 
     status = str(getattr(profile, "status", "draft") or "draft")
     field_errors = vendor_field_errors(profile)
@@ -98,6 +105,7 @@ def build_vendor_onboarding_contract(
             can_submit_for_review=False,
             marketplace_visible=True,
             redirect_to=OPEN_DASHBOARD,
+            action=None,
             message="Your vendor profile is approved and visible in the marketplace.",
         )
 
@@ -109,6 +117,7 @@ def build_vendor_onboarding_contract(
             can_submit_for_review=False,
             marketplace_visible=False,
             redirect_to=OPEN_DASHBOARD,
+            action=None,
             message="Your profile is under review. Marketplace visibility starts after admin approval.",
         )
 
@@ -120,6 +129,7 @@ def build_vendor_onboarding_contract(
             can_submit_for_review=False,
             marketplace_visible=False,
             redirect_to=COMPLETE_PROFILE,
+            action=None,
             message="Your vendor account is suspended. Please contact support.",
         )
 
@@ -131,6 +141,7 @@ def build_vendor_onboarding_contract(
             can_submit_for_review=is_complete,
             marketplace_visible=False,
             redirect_to=COMPLETE_PROFILE,
+            action=None,
             message=getattr(profile, "rejection_reason", None)
             or "Your vendor profile needs updates before resubmission.",
         )
@@ -143,6 +154,7 @@ def build_vendor_onboarding_contract(
         can_submit_for_review=is_complete,
         marketplace_visible=False,
         redirect_to=COMPLETE_PROFILE,
+        action=dict(CREATE_VENDOR_PROFILE_ACTION) if not is_complete else None,
         message="Complete your vendor profile before continuing."
         if not is_complete
         else "Submit your vendor profile for admin review.",

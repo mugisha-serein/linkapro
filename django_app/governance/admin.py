@@ -9,9 +9,22 @@ from django_app.identity.models import User
 from .models import AuditLog, ContentFlag, PlatformMetric
 from .services import get_command_handlers
 from application.governance.commands import (
-    ApproveVendorCommand, RejectVendorCommand, BanUserCommand, ReinstateUserCommand,
-    ResolveFlagCommand, GenerateMetricsCommand
+    BanUserCommand, ReinstateUserCommand, ResolveFlagCommand, GenerateMetricsCommand
 )
+from application.vendors.commands import (
+    ApproveVendorCommand,
+    ModeratorActor,
+    RejectVendorCommand,
+)
+from django_app.vendors.services import get_command_handlers as get_vendor_command_handlers
+
+
+def _moderator(request) -> ModeratorActor:
+    return ModeratorActor(user_id=request.user.id)
+
+
+def _admin_id(request):
+    return request.user.id
 
 
 class VendorProfileAdmin(admin.ModelAdmin):
@@ -37,18 +50,27 @@ class VendorProfileAdmin(admin.ModelAdmin):
     action_buttons.short_description = "Actions"
 
     def approve_selected(self, request, queryset):
-        handlers = get_command_handlers()
+        handlers = get_vendor_command_handlers()
         for vendor in queryset.filter(status="pending_review"):
-            cmd = ApproveVendorCommand(admin_id=request.user.id, vendor_id=vendor.id)
+            cmd = ApproveVendorCommand(
+                moderator=_moderator(request),
+                vendor_id=vendor.id,
+                expected_version=vendor.version,
+            )
             handlers.approve_vendor(cmd)
         self.message_user(request, "Selected vendors approved.")
     approve_selected.short_description = "Approve selected vendors"
 
     def reject_selected(self, request, queryset):
         reason = request.POST.get("reason", "Rejected by admin")
-        handlers = get_command_handlers()
+        handlers = get_vendor_command_handlers()
         for vendor in queryset.filter(status="pending_review"):
-            cmd = RejectVendorCommand(admin_id=request.user.id, vendor_id=vendor.id, reason=reason)
+            cmd = RejectVendorCommand(
+                moderator=_moderator(request),
+                vendor_id=vendor.id,
+                expected_version=vendor.version,
+                reason=reason,
+            )
             handlers.reject_vendor(cmd)
         self.message_user(request, "Selected vendors rejected.")
     reject_selected.short_description = "Reject selected vendors"
@@ -63,8 +85,12 @@ class VendorProfileAdmin(admin.ModelAdmin):
 
     def approve_view(self, request, vendor_id):
         vendor = VendorProfile.objects.get(id=vendor_id)
-        handlers = get_command_handlers()
-        cmd = ApproveVendorCommand(admin_id=request.user.id, vendor_id=vendor.id)
+        handlers = get_vendor_command_handlers()
+        cmd = ApproveVendorCommand(
+            moderator=_moderator(request),
+            vendor_id=vendor.id,
+            expected_version=vendor.version,
+        )
         handlers.approve_vendor(cmd)
         self.message_user(request, f"{vendor.business_name} approved.")
         return redirect("admin:vendors_vendorprofile_changelist")
@@ -73,8 +99,13 @@ class VendorProfileAdmin(admin.ModelAdmin):
         if request.method == "POST":
             reason = request.POST.get("reason")
             vendor = VendorProfile.objects.get(id=vendor_id)
-            handlers = get_command_handlers()
-            cmd = RejectVendorCommand(admin_id=request.user.id, vendor_id=vendor.id, reason=reason)
+            handlers = get_vendor_command_handlers()
+            cmd = RejectVendorCommand(
+                moderator=_moderator(request),
+                vendor_id=vendor.id,
+                expected_version=vendor.version,
+                reason=reason,
+            )
             handlers.reject_vendor(cmd)
             self.message_user(request, f"{vendor.business_name} rejected.")
             return redirect("admin:vendors_vendorprofile_changelist")
@@ -90,7 +121,7 @@ class UserAdmin(admin.ModelAdmin):
     def ban_selected(self, request, queryset):
         handlers = get_command_handlers()
         for user in queryset:
-            cmd = BanUserCommand(admin_id=request.user.id, user_id=user.id)
+            cmd = BanUserCommand(admin_id=_admin_id(request), user_id=user.id)
             handlers.ban_user(cmd)
         self.message_user(request, "Selected users banned.")
     ban_selected.short_description = "Ban selected users"
@@ -98,7 +129,7 @@ class UserAdmin(admin.ModelAdmin):
     def reinstate_selected(self, request, queryset):
         handlers = get_command_handlers()
         for user in queryset:
-            cmd = ReinstateUserCommand(admin_id=request.user.id, user_id=user.id)
+            cmd = ReinstateUserCommand(admin_id=_admin_id(request), user_id=user.id)
             handlers.reinstate_user(cmd)
         self.message_user(request, "Selected users reinstated.")
     reinstate_selected.short_description = "Reinstate selected users"
@@ -119,7 +150,7 @@ class ContentFlagAdmin(admin.ModelAdmin):
     def mark_reviewed(self, request, queryset):
         handlers = get_command_handlers()
         for flag in queryset:
-            cmd = ResolveFlagCommand(admin_id=request.user.id, flag_id=flag.id, dismiss=False)
+            cmd = ResolveFlagCommand(admin_id=_admin_id(request), flag_id=flag.id, dismiss=False)
             handlers.resolve_flag(cmd)
         self.message_user(request, "Flags marked as reviewed.")
     mark_reviewed.short_description = "Mark as reviewed"
@@ -127,7 +158,7 @@ class ContentFlagAdmin(admin.ModelAdmin):
     def dismiss_selected(self, request, queryset):
         handlers = get_command_handlers()
         for flag in queryset:
-            cmd = ResolveFlagCommand(admin_id=request.user.id, flag_id=flag.id, dismiss=True)
+            cmd = ResolveFlagCommand(admin_id=_admin_id(request), flag_id=flag.id, dismiss=True)
             handlers.resolve_flag(cmd)
         self.message_user(request, "Flags dismissed.")
     dismiss_selected.short_description = "Dismiss selected flags"

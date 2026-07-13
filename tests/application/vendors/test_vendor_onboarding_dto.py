@@ -163,6 +163,7 @@ def test_vendor_onboarding_dto_is_frozen_and_has_exact_typed_fields():
         "can_submit_for_review",
         "marketplace_visible",
         "redirect_to",
+        "action",
         "message",
     )
     assert get_type_hints(VendorOnboardingDTO) == {
@@ -172,6 +173,7 @@ def test_vendor_onboarding_dto_is_frozen_and_has_exact_typed_fields():
         "can_submit_for_review": bool,
         "marketplace_visible": bool,
         "redirect_to": VendorOnboardingRedirectIntent,
+        "action": dict[str, str] | None,
         "message": str,
     }
 
@@ -209,6 +211,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
         "can_submit_for_review": False,
         "marketplace_visible": False,
         "redirect_to": COMPLETE_PROFILE,
+        "action": {"method": "POST", "path": "/api/django/vendors/profile/"},
         "message": "Complete your vendor profile before continuing.",
     }
 
@@ -235,6 +238,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "can_submit_for_review": False,
                 "marketplace_visible": True,
                 "redirect_to": OPEN_DASHBOARD,
+                "action": None,
                 "message": "Your vendor profile is approved and visible in the marketplace.",
             },
         ),
@@ -248,6 +252,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "can_submit_for_review": False,
                 "marketplace_visible": False,
                 "redirect_to": OPEN_DASHBOARD,
+                "action": None,
                 "message": "Your profile is under review. Marketplace visibility starts after admin approval.",
             },
         ),
@@ -261,6 +266,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "can_submit_for_review": False,
                 "marketplace_visible": False,
                 "redirect_to": COMPLETE_PROFILE,
+                "action": None,
                 "message": "Your vendor account is suspended. Please contact support.",
             },
         ),
@@ -274,6 +280,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "can_submit_for_review": True,
                 "marketplace_visible": False,
                 "redirect_to": COMPLETE_PROFILE,
+                "action": None,
                 "message": "Add verification details.",
             },
         ),
@@ -287,6 +294,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "can_submit_for_review": False,
                 "marketplace_visible": False,
                 "redirect_to": COMPLETE_PROFILE,
+                "action": None,
                 "message": "Your vendor profile needs updates before resubmission.",
             },
         ),
@@ -300,6 +308,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "can_submit_for_review": True,
                 "marketplace_visible": False,
                 "redirect_to": COMPLETE_PROFILE,
+                "action": None,
                 "message": "Submit your vendor profile for admin review.",
             },
         ),
@@ -313,6 +322,7 @@ def test_missing_profile_preserves_exact_contract_and_dictionary_behavior():
                 "can_submit_for_review": False,
                 "marketplace_visible": False,
                 "redirect_to": COMPLETE_PROFILE,
+                "action": {"method": "POST", "path": "/api/django/vendors/profile/"},
                 "message": "Complete your vendor profile before continuing.",
             },
         ),
