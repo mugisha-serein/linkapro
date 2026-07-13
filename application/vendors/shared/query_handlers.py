@@ -10,11 +10,12 @@ from application.vendors.packages.queries import ListServicePackagesQuery
 from application.vendors.portfolio.queries import ListPortfolioImagesQuery
 from application.vendors.profile.queries import GetVendorQuery
 from application.vendors.shared.dtos import PageDTO
+from application.vendors.shared.mappers import VendorDTOMapperMixin
 from application.vendors.shared.ports import VendorAuthorizationPort
 from application.vendors.analytics.ports import VendorReadPort
 
 
-class BaseVendorQueryHandler:
+class BaseVendorQueryHandler(VendorDTOMapperMixin):
         def __init__(
             self,
             vendor_repo: IVendorProfileRepository,
