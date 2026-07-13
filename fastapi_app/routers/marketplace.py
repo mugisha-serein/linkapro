@@ -17,7 +17,7 @@ from fastapi_app.dependencies import (
 )
 from fastapi_app.marketplace.models import VendorListingModel
 from fastapi_app.schemas import (
-    SearchResponse, VendorListingResponse, ReviewResponse, PostReviewRequest
+    SearchResponse, VendorListingResponse, ReviewResponse
 )
 
 router = APIRouter()
@@ -97,13 +97,3 @@ async def get_vendor_reviews(
     query = GetVendorReviewsQuery(vendor_id=vendor_id, page=page, page_size=page_size)
     reviews, _ = await handlers.get_vendor_reviews(query)
     return [ReviewResponse.from_dto(r) for r in reviews]
-
-@router.post("/vendors/{vendor_id}/reviews", response_model=ReviewResponse, status_code=201)
-async def post_review(
-    vendor_id: str,
-    request: PostReviewRequest,
-):
-    raise HTTPException(
-        status_code=403,
-        detail="Review creation requires authenticated Django user context.",
-    )

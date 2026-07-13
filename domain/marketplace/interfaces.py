@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from decimal import Decimal
 from typing import Optional, List, Tuple
 import uuid
 
@@ -16,8 +17,8 @@ class IVendorListingRepository(ABC):
         category: Optional[str] = None,
         location: Optional[str] = None,
         min_rating: Optional[float] = None,
-        min_price: Optional[float] = None,
-        max_price: Optional[float] = None,
+        min_price: Optional[Decimal] = None,
+        max_price: Optional[Decimal] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> Tuple[List[VendorListing], int]: ...   # returns (items, total_count)

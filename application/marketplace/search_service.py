@@ -9,11 +9,10 @@ from typing import Optional
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import and_, case, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from application.marketplace.dtos import SearchResultDTO, VendorListingDTO
-from fastapi_app.marketplace.models import VendorListingModel
+from domain.marketplace.entities import VendorListing
+from domain.marketplace.interfaces import IVendorListingRepository
 
 logger = logging.getLogger(__name__)
 
@@ -133,8 +132,8 @@ class MarketplaceSearchCache:
 
 
 class MarketplaceSearchService:
-    def __init__(self, session: AsyncSession, cache: MarketplaceSearchCache | None) -> None:
-        self.session = session
+    def __init__(self, listing_repo: IVendorListingRepository, cache: MarketplaceSearchCache | None) -> None:
+        self.listing_repo = listing_repo
         self.cache = cache
 
     async def search(
@@ -218,72 +217,19 @@ class MarketplaceSearchService:
         return result
 
     async def _execute_search(self, criteria: MarketplaceSearchCriteria) -> SearchResultDTO:
-        normalized_query = self._normalize_text(criteria.query)
-        normalized_category = self._normalize_text(criteria.category)
-        normalized_location = self._normalize_text(criteria.location)
         limit = max(1, min(criteria.page_size, MAX_PAGE_SIZE))
         offset = max(0, (criteria.page - 1) * limit)
-
-        columns = [
-            VendorListingModel.id.label("id"),
-            VendorListingModel.vendor_id.label("vendor_id"),
-            VendorListingModel.business_name.label("business_name"),
-            VendorListingModel.category.label("category"),
-            VendorListingModel.description.label("description"),
-            VendorListingModel.service_area.label("service_area"),
-            VendorListingModel.cover_image_url.label("cover_image_url"),
-            VendorListingModel.average_rating.label("average_rating"),
-            VendorListingModel.total_reviews.label("total_reviews"),
-            VendorListingModel.is_verified.label("is_verified"),
-            VendorListingModel.starting_price.label("starting_price"),
-            VendorListingModel.min_package_price.label("min_package_price"),
-            VendorListingModel.max_package_price.label("max_package_price"),
-            VendorListingModel.currency.label("currency"),
-            VendorListingModel.created_at.label("created_at"),
-        ]
-
-        conditions = [
-            VendorListingModel.approval_status == "approved",
-            VendorListingModel.is_verified.is_(True),
-        ]
-        ts_query = None
-        if normalized_query:
-            ts_query = func.plainto_tsquery("simple", normalized_query)
-            conditions.append(VendorListingModel.search_vector.op("@@")(ts_query))
-        if normalized_category:
-            conditions.append(func.lower(VendorListingModel.category) == normalized_category)
-        if normalized_location:
-            conditions.append(func.lower(VendorListingModel.service_area).like(f"%{normalized_location}%"))
-        if criteria.min_rating is not None:
-            conditions.append(VendorListingModel.average_rating >= criteria.min_rating)
-        if criteria.min_price is not None:
-            conditions.append(VendorListingModel.min_package_price >= criteria.min_price)
-        if criteria.max_price is not None:
-            conditions.append(VendorListingModel.min_package_price <= criteria.max_price)
-
-        where_clause = and_(*conditions)
-
-        rank_expression = self._rank_expression(
-            query_text=normalized_query,
-            normalized_category=normalized_category,
-            normalized_location=normalized_location,
-            ts_query=ts_query,
-        ).label("search_rank")
-
-        data_stmt = select(*columns, rank_expression)
-        if where_clause is not None:
-            data_stmt = data_stmt.where(where_clause)
-        data_stmt = data_stmt.order_by(rank_expression.desc(), VendorListingModel.id.desc()).limit(limit).offset(offset)
-
-        count_stmt = select(func.count()).select_from(VendorListingModel)
-        if where_clause is not None:
-            count_stmt = count_stmt.where(where_clause)
-
-        total_result = await self.session.execute(count_stmt)
-        total = int(total_result.scalar_one())
-
-        rows = (await self.session.execute(data_stmt)).mappings().all()
-        items = [self._row_to_dto(row) for row in rows]
+        listings, total = await self.listing_repo.search(
+            query=criteria.query,
+            category=criteria.category,
+            location=criteria.location,
+            min_rating=criteria.min_rating,
+            min_price=criteria.min_price,
+            max_price=criteria.max_price,
+            limit=limit,
+            offset=offset,
+        )
+        items = [self._listing_to_dto(listing) for listing in listings]
         total_pages = (total + limit - 1) // limit if total else 0
         return SearchResultDTO(
             items=items,
@@ -291,36 +237,6 @@ class MarketplaceSearchService:
             page=criteria.page,
             page_size=limit,
             total_pages=total_pages,
-        )
-
-    def _rank_expression(
-        self,
-        *,
-        query_text: Optional[str],
-        normalized_category: Optional[str],
-        normalized_location: Optional[str],
-        ts_query,
-    ):
-        text_rank = func.coalesce(func.ts_rank_cd(VendorListingModel.search_vector, ts_query), 0.0) if ts_query is not None else 0.0
-        exact_name_boost = case(
-            (func.lower(VendorListingModel.business_name) == query_text, 4.0),
-            else_=0.0,
-        )
-        category_boost = case(
-            (func.lower(VendorListingModel.category) == normalized_category, 2.0),
-            else_=0.0,
-        )
-        location_boost = case(
-            (func.lower(VendorListingModel.service_area) == normalized_location, 1.5),
-            else_=0.0,
-        )
-        rating_boost = func.coalesce(VendorListingModel.average_rating, 0.0) * 0.5
-        return (
-            func.coalesce(text_rank, 0.0) * 10.0
-            + exact_name_boost
-            + category_boost
-            + location_boost
-            + rating_boost
         )
 
     @staticmethod
@@ -348,21 +264,21 @@ class MarketplaceSearchService:
         return normalized
 
     @staticmethod
-    def _row_to_dto(row) -> VendorListingDTO:
+    def _listing_to_dto(listing: VendorListing) -> VendorListingDTO:
         return VendorListingDTO(
-            id=str(row["vendor_id"]),
-            business_name=row["business_name"],
-            category=row["category"],
-            description=row["description"],
-            service_area=row["service_area"],
-            cover_image_url=row["cover_image_url"],
-            average_rating=float(row["average_rating"] or 0.0),
-            total_reviews=int(row["total_reviews"] or 0),
-            is_verified=bool(row["is_verified"]),
-            starting_price=row["starting_price"],
-            min_package_price=row["min_package_price"],
-            max_package_price=row["max_package_price"],
-            currency=row["currency"],
+            id=str(listing.vendor_id),
+            business_name=listing.business_name,
+            category=listing.category,
+            description=listing.description,
+            service_area=listing.service_area,
+            cover_image_url=listing.cover_image_url,
+            average_rating=float(listing.average_rating or 0.0),
+            total_reviews=int(listing.total_reviews or 0),
+            is_verified=bool(listing.is_verified),
+            starting_price=listing.starting_price,
+            min_package_price=listing.min_package_price,
+            max_package_price=listing.max_package_price,
+            currency=listing.currency,
         )
 
     @staticmethod

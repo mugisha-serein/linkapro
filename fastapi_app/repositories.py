@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 from typing import Optional, List, Tuple
 from sqlalchemy import select, func, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,12 +28,68 @@ class AsyncVendorListingRepository(IVendorListingRepository):
         category: Optional[str] = None,
         location: Optional[str] = None,
         min_rating: Optional[float] = None,
-        min_price: Optional[float] = None,
-        max_price: Optional[float] = None,
+        min_price: Optional[Decimal] = None,
+        max_price: Optional[Decimal] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> Tuple[List[VendorListing], int]:
-        raise RuntimeError("Legacy marketplace search path is disabled.")
+        normalized_query = self._sanitize_query(query)
+        normalized_category = self._sanitize_filter(category)
+        normalized_location = self._sanitize_filter(location)
+        limit = max(1, min(limit, MAX_PAGE_SIZE))
+        offset = max(0, offset)
+
+        conditions = [
+            VendorListingModel.approval_status == "approved",
+            VendorListingModel.is_verified.is_(True),
+        ]
+        ts_query = None
+        if normalized_query:
+            if self._uses_postgresql():
+                ts_query = func.plainto_tsquery("simple", normalized_query)
+                conditions.append(VendorListingModel.search_vector.op("@@")(ts_query))
+            else:
+                pattern = f"%{normalized_query}%"
+                conditions.append(
+                    or_(
+                        func.lower(VendorListingModel.business_name).like(pattern),
+                        func.lower(VendorListingModel.description).like(pattern),
+                        func.lower(VendorListingModel.category).like(pattern),
+                        func.lower(VendorListingModel.service_area).like(pattern),
+                    )
+                )
+        if normalized_category:
+            conditions.append(func.lower(VendorListingModel.category) == normalized_category)
+        if normalized_location:
+            conditions.append(func.lower(VendorListingModel.service_area).like(f"%{normalized_location}%"))
+        if min_rating is not None:
+            conditions.append(VendorListingModel.average_rating >= min_rating)
+        if min_price is not None:
+            conditions.append(VendorListingModel.min_package_price >= min_price)
+        if max_price is not None:
+            conditions.append(VendorListingModel.min_package_price <= max_price)
+
+        where_clause = and_(*conditions)
+        rank_expression = self._rank_expression(
+            query_text=normalized_query,
+            normalized_category=normalized_category,
+            normalized_location=normalized_location,
+            ts_query=ts_query,
+        ).label("search_rank")
+
+        count_stmt = select(func.count()).select_from(VendorListingModel).where(where_clause)
+        total_result = await self.session.execute(count_stmt)
+        total = int(total_result.scalar_one())
+
+        data_stmt = (
+            select(VendorListingModel)
+            .where(where_clause)
+            .order_by(rank_expression.desc(), VendorListingModel.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = await self.session.execute(data_stmt)
+        return [self._to_domain(model) for model in rows.scalars().all()], total
 
     async def save(self, listing: VendorListing) -> VendorListing:
         result = await self.session.execute(
@@ -54,6 +111,10 @@ class AsyncVendorListingRepository(IVendorListingRepository):
         model.is_verified = listing.is_verified
         model.approval_status = "approved"
         model.search_rank_score = getattr(listing, "search_rank_score", 0.0)
+        model.starting_price = listing.starting_price
+        model.min_package_price = listing.min_package_price
+        model.max_package_price = listing.max_package_price
+        model.currency = listing.currency
         model.created_at = listing.created_at
         model.updated_at = listing.updated_at
         await self.session.commit()
@@ -80,9 +141,57 @@ class AsyncVendorListingRepository(IVendorListingRepository):
             average_rating=model.average_rating,
             total_reviews=model.total_reviews,
             is_verified=model.is_verified,
+            starting_price=model.starting_price,
+            min_package_price=model.min_package_price,
+            max_package_price=model.max_package_price,
+            currency=model.currency,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
+
+    def _rank_expression(
+        self,
+        *,
+        query_text: Optional[str],
+        normalized_category: Optional[str],
+        normalized_location: Optional[str],
+        ts_query,
+    ):
+        if ts_query is not None:
+            text_rank = func.coalesce(func.ts_rank_cd(VendorListingModel.search_vector, ts_query), 0.0)
+        elif query_text:
+            pattern = f"%{query_text}%"
+            text_rank = case(
+                (func.lower(VendorListingModel.business_name).like(pattern), 1.0),
+                (func.lower(VendorListingModel.description).like(pattern), 0.5),
+                else_=0.0,
+            )
+        else:
+            text_rank = 0.0
+        exact_name_boost = case(
+            (func.lower(VendorListingModel.business_name) == query_text, 4.0),
+            else_=0.0,
+        )
+        category_boost = case(
+            (func.lower(VendorListingModel.category) == normalized_category, 2.0),
+            else_=0.0,
+        )
+        location_boost = case(
+            (func.lower(VendorListingModel.service_area) == normalized_location, 1.5),
+            else_=0.0,
+        )
+        rating_boost = func.coalesce(VendorListingModel.average_rating, 0.0) * 0.5
+        return (
+            func.coalesce(text_rank, 0.0) * 10.0
+            + exact_name_boost
+            + category_boost
+            + location_boost
+            + rating_boost
+        )
+
+    def _uses_postgresql(self) -> bool:
+        bind = self.session.get_bind()
+        return bool(bind and bind.dialect.name == "postgresql")
 
     @staticmethod
     def _sanitize_query(query: Optional[str]) -> Optional[str]:
@@ -125,20 +234,29 @@ class AsyncReviewRepository(IReviewRepository):
             is_verified_purchase=review.is_verified_purchase,
             created_at=review.created_at,
         )
-        self.session.add(model)
-        await self.session.commit()
+        try:
+            self.session.add(model)
+            await self.session.flush()
+            await self._update_vendor_rating(review.vendor_id)
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
         await self.session.refresh(model)
-        # Update vendor listing average rating (could be done via event handler)
-        await self._update_vendor_rating(review.vendor_id)
         return self._to_domain(model)
 
     async def delete(self, review_id: uuid.UUID) -> None:
         model = await self.session.get(ReviewModel, review_id)
         if model:
             vendor_id = model.vendor_id
-            await self.session.delete(model)
-            await self.session.commit()
-            await self._update_vendor_rating(vendor_id)
+            try:
+                await self.session.delete(model)
+                await self.session.flush()
+                await self._update_vendor_rating(vendor_id)
+                await self.session.commit()
+            except Exception:
+                await self.session.rollback()
+                raise
 
     async def get_average_rating(self, vendor_id: uuid.UUID) -> float:
         stmt = select(func.avg(ReviewModel.rating)).where(ReviewModel.vendor_id == vendor_id)
@@ -157,7 +275,6 @@ class AsyncReviewRepository(IReviewRepository):
         if listing:
             listing.average_rating = avg_rating
             listing.total_reviews = total_reviews
-            await self.session.commit()
 
     def _to_domain(self, model: ReviewModel) -> Review:
         return Review(
