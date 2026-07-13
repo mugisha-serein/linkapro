@@ -50,6 +50,12 @@ def test_vendor_domain_has_no_framework_or_infrastructure_imports():
     assert offenders == []
 
 
+<<<<<<< HEAD
+def test_vendor_domain_has_no_legacy_profile_completion_module():
+    domain_root = Path(__file__).parents[3] / "domain" / "vendors"
+
+    assert not (domain_root / "profile_completion.py").exists()
+=======
 def test_vendor_domain_modules_import_and_public_exports_exist():
     package = importlib.import_module("domain.vendors")
 
@@ -92,3 +98,4 @@ def test_vendor_domain_protected_state_is_mutated_only_by_entities():
                     offenders.append(f"{path.relative_to(domain_root)} assigns {target.attr}")
 
     assert offenders == []
+>>>>>>> 10f5ff3bfc380a74a329a887cb4f25cfc9ab55aa
