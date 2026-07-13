@@ -5,10 +5,10 @@ from domain.vendors.entities import (
     PortfolioImage, ServicePackage, Inquiry
 )
 from domain.vendors.errors import ConcurrentVendorUpdate
-from infrastructure.repos.django_vendor_profile_repository import DjangoVendorProfileRepository
-from infrastructure.repos.django_portfolio_image_repository import DjangoPortfolioImageRepository
-from infrastructure.repos.django_service_package_repository import DjangoServicePackageRepository
-from infrastructure.repos.django_inquiry_repository import DjangoInquiryRepository
+from infrastructure.repos.inquiries.django_repository import DjangoInquiryRepository
+from infrastructure.repos.packages.django_repository import DjangoServicePackageRepository
+from infrastructure.repos.portfolio.django_repository import DjangoPortfolioImageRepository
+from infrastructure.repos.profile.django_repository import DjangoVendorProfileRepository
 from django_app.identity.models import User
 from django_app.vendors.models import VendorProfile as DjangoProfile
 

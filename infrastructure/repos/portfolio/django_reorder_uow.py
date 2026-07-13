@@ -10,7 +10,7 @@ from application.vendors.errors import InvalidVendorCommand, VendorResourceNotFo
 from domain.vendors.entities import PortfolioImage
 from django_app.vendors.models import PortfolioImage as DjangoImage
 
-from .django_portfolio_image_repository import DjangoPortfolioImageRepository
+from .django_repository import DjangoPortfolioImageRepository
 
 
 class DjangoPortfolioReorderUnitOfWork:

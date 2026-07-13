@@ -5,7 +5,7 @@ import pytest
 
 from domain.vendors.entities import ServiceCategory, VendorProfile, VendorStatus
 from django_app.identity.models import User
-from infrastructure.repos.django_vendor_profile_repository import DjangoVendorProfileRepository
+from infrastructure.repos.profile.django_repository import DjangoVendorProfileRepository
 
 
 pytestmark = pytest.mark.django_db(transaction=True)

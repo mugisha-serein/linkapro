@@ -79,7 +79,7 @@ class TestVendorApprovalAdmin:
 
     def test_approve_vendor_action(self, admin_client, monkeypatch):
         monkeypatch.setattr(
-            "infrastructure.repos.django_vendor_profile_repository.sync_or_delete_vendor_projection",
+            "django_app.governance.vendor_command_handlers.sync_or_delete_vendor_projection",
             lambda vendor: {"status": "ok"},
         )
         admin_user = User.objects.create_superuser("admin@t.com", "pass")
@@ -102,7 +102,7 @@ class TestVendorApprovalAdmin:
 
     def test_reject_vendor_action(self, admin_client, monkeypatch):
         monkeypatch.setattr(
-            "infrastructure.repos.django_vendor_profile_repository.sync_or_delete_vendor_projection",
+            "django_app.governance.vendor_command_handlers.sync_or_delete_vendor_projection",
             lambda vendor: {"status": "ok"},
         )
         admin_user = User.objects.create_superuser("admin@t.com", "pass")

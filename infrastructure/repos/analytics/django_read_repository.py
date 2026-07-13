@@ -7,59 +7,18 @@ from django.utils import timezone
 
 from application.vendors.dtos import (
     PageDTO,
-    ServicePackageDTO,
     VendorActivityDTO,
     VendorAnalyticsDTO,
     VendorDashboardSummaryDTO,
 )
 from application.vendors.errors import VendorResourceNotFound
-from application.vendors.ports import VendorReadPort
 from domain.vendors.entities import VendorProfile as DomainVendorProfile
 from domain.vendors.entities import profile_completion_errors_for
 from domain.vendors.interfaces import PageRequest
 from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile as DjangoVendorProfile
 
 
-class DjangoVendorReadRepository(VendorReadPort):
-    def list_service_packages(
-        self,
-        vendor_id: uuid.UUID,
-        page: PageRequest | None = None,
-    ) -> PageDTO[ServicePackageDTO]:
-        self._require_vendor(vendor_id)
-        page = page or PageRequest()
-        queryset = (
-            ServicePackage.all_objects.filter(vendor_id=vendor_id, is_deleted=False)
-            .order_by("-created_at", "id")
-            .values(
-                "id",
-                "vendor_id",
-                "name",
-                "description",
-                "price",
-                "currency",
-                "package_tier",
-                "approval_status",
-                "rejection_reason",
-                "is_active",
-                "is_deleted",
-                "deleted_at",
-                "last_approved_at",
-                "last_vendor_public_edit_at",
-                "next_vendor_edit_allowed_at",
-                "version",
-            )
-        )
-        total = queryset.count()
-        rows = list(queryset[page.offset : page.offset + page.limit])
-        return PageDTO(
-            items=tuple(ServicePackageDTO(**row) for row in rows),
-            total=total,
-            limit=page.limit,
-            offset=page.offset,
-            pagination_mode="cursor" if page.cursor else "offset",
-        )
-
+class DjangoVendorAnalyticsReadRepositoryMixin:
     def dashboard_summary(self, vendor_id: uuid.UUID) -> VendorDashboardSummaryDTO:
         return VendorDashboardSummaryDTO(**self.vendor_metrics(vendor_id))
 

@@ -10,7 +10,7 @@ from django_app.identity.models import User
 from django_app.vendors.models import VendorDomainEventOutbox
 from django_app.vendors.models import VendorProfile as DjangoVendorProfile
 from infrastructure.adapters.django_vendor_event_outbox import DjangoVendorEventOutboxDispatcher
-from infrastructure.repos.django_vendor_aggregate_uow import DjangoVendorAggregateUnitOfWork
+from infrastructure.repos.profile.django_aggregate_uow import DjangoVendorAggregateUnitOfWork
 
 
 pytestmark = pytest.mark.django_db(transaction=True)

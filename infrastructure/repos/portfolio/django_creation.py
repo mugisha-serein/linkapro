@@ -12,7 +12,7 @@ from domain.vendors.entities import PortfolioImage
 from django_app.vendors.models import PortfolioImage as DjangoImage
 from django_app.vendors.models import VendorProfile as DjangoVendor
 
-from .django_vendor_aggregate_uow import DjangoVendorAggregateUnitOfWork
+from infrastructure.repos.profile.django_aggregate_uow import DjangoVendorAggregateUnitOfWork
 
 
 _ACTIVE_ORDER_CONSTRAINT = "vendors_portfolio_active_order_unique"

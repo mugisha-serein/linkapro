@@ -1,7 +1,7 @@
 import uuid
 from types import SimpleNamespace
 
-from infrastructure.repos.django_vendor_read_repository import DjangoVendorReadRepository
+from infrastructure.repos.profile.django_read_repository import DjangoVendorReadRepository
 
 
 def _profile(**overrides):
