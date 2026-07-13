@@ -13,6 +13,7 @@ from domain.vendors.entities import (
     ServicePackage,
     VendorProfile,
     VendorStatus,
+    profile_completion_errors_for,
 )
 from domain.vendors.errors import (
     ConcurrentVendorUpdate,
@@ -139,5 +140,6 @@ __all__ = [
     "mark_vendor_package_public_edit",
     "package_public_edit_markers",
     "package_public_fields_changed",
+    "profile_completion_errors_for",
     "validate_service_package_rules",
 ]

@@ -241,14 +241,7 @@ class VendorCommandHandlers:
 
     @staticmethod
     def _reject_blank_required_profile_updates(cmd: UpdateVendorProfileCommand) -> None:
-        required_fields = (
-            "business_name",
-            "category",
-            "description",
-            "service_area",
-            "contact_email",
-            "contact_phone",
-        )
+        required_fields = VendorProfile.required_profile_fields()
         blank_fields = [
             field_name
             for field_name in required_fields

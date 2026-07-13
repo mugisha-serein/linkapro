@@ -4,6 +4,8 @@ from django.db import models
 from django.utils import timezone
 from django_app.common.models import SoftDeleteModel
 from django_app.identity.models import User
+from domain.vendors.entities import VendorProfile as DomainVendorProfile
+from domain.vendors.entities import profile_completion_errors_for
 
 VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS = 15
 
@@ -53,26 +55,10 @@ class VendorProfile(models.Model):
 
     @classmethod
     def required_profile_fields(cls) -> tuple[str, ...]:
-        return (
-            "business_name",
-            "category",
-            "description",
-            "service_area",
-            "contact_email",
-            "contact_phone",
-        )
+        return DomainVendorProfile.required_profile_fields()
 
     def get_profile_completion_errors(self) -> dict[str, list[str]]:
-        errors: dict[str, list[str]] = {}
-        for field_name in self.required_profile_fields():
-            value = getattr(self, field_name, None)
-            if value is None or not str(value).strip():
-                errors[field_name] = ["This field is required."]
-        if self.description and len(self.description.strip()) < 20:
-            errors["description"] = ["Use at least 20 characters for your description."]
-        if self.category == self.Category.OTHER and not (self.custom_category or "").strip():
-            errors["custom_category"] = ["Tell us what service you provide when choosing Other."]
-        return errors
+        return profile_completion_errors_for(self, DomainVendorProfile.required_profile_fields())
 
     @property
     def is_profile_complete(self) -> bool:

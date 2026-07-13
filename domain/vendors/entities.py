@@ -136,6 +136,24 @@ class PortfolioVisibilityStatus(str, Enum):
     REJECTED = "rejected"
 
 
+def profile_completion_errors_for(profile: object, required_fields: tuple[str, ...]) -> dict[str, list[str]]:
+    errors: dict[str, list[str]] = {}
+    for field_name in required_fields:
+        value = getattr(profile, field_name, None)
+        if value is None or not str(value).strip():
+            errors[field_name] = ["This field is required."]
+
+    category = getattr(profile, "category", None)
+    category_value = getattr(category, "value", category)
+    if category_value == ServiceCategory.OTHER.value and not (getattr(profile, "custom_category", None) or "").strip():
+        errors["custom_category"] = ["Tell us what service you provide when choosing Other."]
+
+    description = getattr(profile, "description", None)
+    if description and len(str(description).strip()) < MIN_VENDOR_DESCRIPTION_LENGTH:
+        errors["description"] = ["Use at least 20 characters for your description."]
+    return errors
+
+
 @dataclass(frozen=True)
 class MediaAsset:
     public_id: str
@@ -388,16 +406,7 @@ class VendorProfile(DomainAggregate):
             raise VendorProfileValidationError(field_errors=errors)
 
     def get_profile_completion_errors(self) -> dict[str, list[str]]:
-        errors: dict[str, list[str]] = {}
-        for field_name in self.required_profile_fields():
-            value = getattr(self, field_name, None)
-            if value is None or not str(value).strip():
-                errors[field_name] = ["This field is required."]
-        if self.category == ServiceCategory.OTHER and not (self.custom_category or "").strip():
-            errors["custom_category"] = ["Tell us what service you provide when choosing Other."]
-        if self.description and len(self.description.strip()) < MIN_VENDOR_DESCRIPTION_LENGTH:
-            errors["description"] = ["Use at least 20 characters for your description."]
-        return errors
+        return profile_completion_errors_for(self, self.required_profile_fields())
 
     @property
     def is_profile_complete(self) -> bool:

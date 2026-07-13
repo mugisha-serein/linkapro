@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from domain.vendors.entities import VendorProfile
+from domain.vendors.entities import profile_completion_errors_for
+
 
 SETUP_ROUTE = "/vendor/profile/setup"
 DASHBOARD_ROUTE = "/vendor/dashboard"
@@ -20,7 +23,7 @@ def build_vendor_onboarding_contract(profile: Any | None) -> dict[str, Any]:
         }
 
     status = str(getattr(profile, "status", "draft") or "draft")
-    field_errors = _profile_completion_errors(profile)
+    field_errors = vendor_field_errors(profile)
     is_complete = not field_errors
 
     if status == "approved":
@@ -85,33 +88,6 @@ def build_vendor_onboarding_contract(profile: Any | None) -> dict[str, Any]:
 def vendor_field_errors(profile: Any | None) -> dict[str, list[str]]:
     if profile is None:
         return {}
-    return _profile_completion_errors(profile)
-
-
-def _profile_completion_errors(profile: Any) -> dict[str, list[str]]:
     if hasattr(profile, "get_profile_completion_errors"):
         return profile.get_profile_completion_errors()
-
-    errors: dict[str, list[str]] = {}
-    for field_name in (
-        "business_name",
-        "category",
-        "description",
-        "service_area",
-        "contact_email",
-        "contact_phone",
-    ):
-        value = getattr(profile, field_name, None)
-        if value is None or not str(value).strip():
-            errors[field_name] = ["This field is required."]
-
-    description = getattr(profile, "description", None)
-    if description and len(str(description).strip()) < 20:
-        errors["description"] = ["Use at least 20 characters for your description."]
-
-    category = getattr(profile, "category", None)
-    category_value = getattr(category, "value", category)
-    if category_value == "other" and not (getattr(profile, "custom_category", None) or "").strip():
-        errors["custom_category"] = ["Tell us what service you provide when choosing Other."]
-
-    return errors
+    return profile_completion_errors_for(profile, VendorProfile.required_profile_fields())
