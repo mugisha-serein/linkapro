@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from application.marketplace.search_service import MarketplaceSearchCriteria, MarketplaceSearchService
 from fastapi_app.marketplace.models import VendorListingModel
+from fastapi_app.repositories import AsyncVendorListingRepository
 
 pytestmark = pytest.mark.asyncio
 
@@ -58,7 +59,7 @@ async def test_marketplace_search_filters_by_projected_starting_price(session: A
     )
     await session.commit()
 
-    service = MarketplaceSearchService(session=session, cache=None)
+    service = MarketplaceSearchService(listing_repo=AsyncVendorListingRepository(session), cache=None)
     result = await service.search(
         MarketplaceSearchCriteria(category="photography", min_price=Decimal("9000.00"), max_price=Decimal("30000.00")),
         client_id="test-client",
@@ -103,7 +104,7 @@ async def test_marketplace_search_excludes_unpriced_listings_when_price_filter_i
     )
     await session.commit()
 
-    service = MarketplaceSearchService(session=session, cache=None)
+    service = MarketplaceSearchService(listing_repo=AsyncVendorListingRepository(session), cache=None)
     result = await service.search(
         MarketplaceSearchCriteria(category="decor", max_price=Decimal("25000.00")),
         client_id="test-client",

@@ -80,6 +80,10 @@ class MarketplaceCommandHandlers:
             average_rating=l.average_rating,
             total_reviews=l.total_reviews,
             is_verified=l.is_verified,
+            starting_price=l.starting_price,
+            min_package_price=l.min_package_price,
+            max_package_price=l.max_package_price,
+            currency=l.currency,
         )
 
     @staticmethod

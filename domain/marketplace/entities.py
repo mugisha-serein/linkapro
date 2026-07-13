@@ -1,6 +1,7 @@
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, List
 
 from domain.shared.utils import utc_now
@@ -19,6 +20,10 @@ class VendorListing:
     average_rating: float = 0.0
     total_reviews: int = 0
     is_verified: bool = False
+    starting_price: Optional[Decimal] = None
+    min_package_price: Optional[Decimal] = None
+    max_package_price: Optional[Decimal] = None
+    currency: Optional[str] = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 

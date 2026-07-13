@@ -15,6 +15,7 @@ from fastapi_app.config import get_cors_origins, normalize_database_url, normali
 from fastapi_app.marketplace.models import ReviewModel, VendorListingModel
 from application.marketplace.search_service import MarketplaceSearchCache, MarketplaceSearchCriteria, MarketplaceSearchService
 from application.marketplace.dtos import ReviewDTO, SearchResultDTO, VendorListingDTO
+from fastapi_app.repositories import AsyncVendorListingRepository
 
 
 @pytest.fixture
@@ -36,8 +37,13 @@ def test_app(mock_query_handlers, mock_command_handlers):
 
 
 @pytest.mark.asyncio
-async def test_post_review_requires_authenticated_django_context(test_app):
+async def test_post_review_is_not_exposed_until_write_path_is_ready(test_app):
     vendor_id = str(uuid.uuid4())
+
+    test_app.openapi_schema = None
+    schema = test_app.openapi()
+    review_path = schema["paths"]["/api/v1/marketplace/vendors/{vendor_id}/reviews"]
+    assert "post" not in review_path
 
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -46,7 +52,7 @@ async def test_post_review_requires_authenticated_django_context(test_app):
             json={"author_user_id": str(uuid.uuid4()), "rating": 5, "comment": "Nice"},
         )
 
-    assert response.status_code == 403
+    assert response.status_code == 405
 
 
 @pytest.mark.asyncio
@@ -317,6 +323,10 @@ async def test_marketplace_public_routes_use_vendor_id_not_listing_row_id(sessio
         yield session
 
     app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_marketplace_search_service] = lambda: MarketplaceSearchService(
+        listing_repo=AsyncVendorListingRepository(session),
+        cache=None,
+    )
     transport = ASGITransport(app=app)
     try:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -374,7 +384,7 @@ async def test_search_filters_approved_only_and_partial_location(session: AsyncS
     )
     await session.commit()
 
-    service = MarketplaceSearchService(session=session, cache=None)
+    service = MarketplaceSearchService(listing_repo=AsyncVendorListingRepository(session), cache=None)
 
     result = await service.search(
         MarketplaceSearchCriteria(category="photography", location="Kigali"),
@@ -412,7 +422,7 @@ async def test_redis_unavailable_does_not_make_search_fail(session: AsyncSession
         rate_limit_requests=10,
         rate_limit_window_seconds=60,
     )
-    service = MarketplaceSearchService(session=session, cache=cache)
+    service = MarketplaceSearchService(listing_repo=AsyncVendorListingRepository(session), cache=cache)
 
     result = await service.search(MarketplaceSearchCriteria(page=1), client_id="test-client")
 

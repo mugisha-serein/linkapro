@@ -70,15 +70,6 @@ def get_marketplace_search_cache() -> MarketplaceSearchCache | None:
     )
 
 
-async def get_marketplace_search_service(
-    session: AsyncSession = Depends(get_session),
-) -> MarketplaceSearchService:
-    return MarketplaceSearchService(
-        session=session,
-        cache=get_marketplace_search_cache(),
-    )
-
-
 def get_marketplace_search_params(
     request: Request,
 ) -> MarketplaceSearchCriteria:
@@ -131,6 +122,15 @@ async def get_listing_repo(
     session: AsyncSession = Depends(get_session),
 ) -> AsyncVendorListingRepository:
     return AsyncVendorListingRepository(session)
+
+
+async def get_marketplace_search_service(
+    listing_repo: AsyncVendorListingRepository = Depends(get_listing_repo),
+) -> MarketplaceSearchService:
+    return MarketplaceSearchService(
+        listing_repo=listing_repo,
+        cache=get_marketplace_search_cache(),
+    )
 
 
 async def get_review_repo(
