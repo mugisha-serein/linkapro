@@ -1,3 +1,4 @@
+import uuid
 from types import SimpleNamespace
 
 from infrastructure.repos.django_vendor_read_repository import DjangoVendorReadRepository
@@ -36,3 +37,31 @@ def test_dashboard_completion_percentage_keeps_domain_completeness_meaning_with_
         portfolio_count=1,
         package_count=1,
     ) < 100
+
+
+def test_analytics_builds_dto_from_normalized_metrics_mapping():
+    class MetricsReadRepository(DjangoVendorReadRepository):
+        def vendor_metrics(self, vendor_id):
+            return {
+                "profile_completion": 100,
+                "total_inquiries": 3,
+                "inquiries_mtd": 2,
+                "unread_inquiries": 1,
+                "read_inquiries": 2,
+                "response_rate": 67,
+                "total_packages": 4,
+                "active_packages": 1,
+                "approved_packages": 1,
+                "pending_packages": 2,
+                "rejected_packages": 1,
+                "portfolio_count": 5,
+                "account_status": "approved",
+                "service_area": "Kigali",
+            }
+
+    analytics = MetricsReadRepository().analytics(uuid.uuid4())
+
+    assert analytics.response_rate == 66.67
+    assert analytics.avg_response_time_hours is None
+    assert analytics.conversion_rate is None
+    assert analytics.unavailable_metrics == ("avg_response_time_hours", "conversion_rate")

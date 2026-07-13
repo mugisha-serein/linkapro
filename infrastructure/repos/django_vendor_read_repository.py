@@ -67,11 +67,14 @@ class DjangoVendorReadRepository(VendorReadPort):
         metrics = self.vendor_metrics(vendor_id)
         total = metrics["total_inquiries"]
         read = metrics["read_inquiries"]
-        return VendorAnalyticsDTO(
+        analytics_metrics = {
             **metrics,
+            "response_rate": round((read / total) * 100, 2) if total else 0.0,
+        }
+        return VendorAnalyticsDTO(
+            **analytics_metrics,
             avg_response_time_hours=None,
             conversion_rate=None,
-            response_rate=round((read / total) * 100, 2) if total else 0.0,
             unavailable_metrics=("avg_response_time_hours", "conversion_rate"),
         )
 
