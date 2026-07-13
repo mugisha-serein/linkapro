@@ -527,27 +527,15 @@ class VendorCommandHandlers:
         return self.aggregate_uow.save_with_pending_events(aggregate, expected_version=expected_version)
 
     @staticmethod
-    def _vendor_profile_exists_conflict() -> VendorConflict:
-        return VendorConflict("User already has a vendor profile.", code="vendor_profile_exists")
-
-    def _assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None:
-        self.authorization_port.assert_actor_owns_vendor(actor, vendor_id)
-
-    def _assert_moderator_can_moderate_vendor(self, moderator: ModeratorActor, vendor_id: uuid.UUID) -> None:
-        self.authorization_port.assert_moderator_can_moderate_vendor(moderator, vendor_id)
-
-    def _assert_inquiry_allowed(
-        self,
-        *,
-        requester_identity: uuid.UUID,
-        vendor_id: uuid.UUID,
-        payload_digest: str,
-    ) -> None:
-        self.inquiry_abuse_protection_port.assert_inquiry_allowed(
-            requester_identity=requester_identity,
-            vendor_id=vendor_id,
-            payload_digest=payload_digest,
-        )
+    def _reject_blank_required_profile_updates(cmd: UpdateVendorProfileCommand) -> None:
+        required_fields = VendorProfile.required_profile_fields()
+        blank_fields = [
+            field_name
+            for field_name in required_fields
+            if getattr(cmd, field_name) is not None and not str(getattr(cmd, field_name)).strip()
+        ]
+        if blank_fields:
+            raise ValueError(f"Required vendor profile fields cannot be blank: {', '.join(blank_fields)}")
 
     @staticmethod
     def _assert_expected_version(

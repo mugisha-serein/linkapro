@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from domain.vendors.profile_completion import (
-    REQUIRED_VENDOR_PROFILE_FIELDS,
-    get_vendor_profile_completion_errors,
-)
+from domain.vendors.entities import VendorProfile
+from domain.vendors.entities import profile_completion_errors_for
+
 
 from .ports import VendorProfileCompletionProvider
 
@@ -77,18 +76,18 @@ def build_vendor_onboarding_contract(
     completion_provider: VendorProfileCompletionProvider | object = _PROVIDER_OMITTED,
 ) -> VendorOnboardingDTO:
     if profile is None:
-        return VendorOnboardingDTO(
-            profile_status="missing",
-            can_access_dashboard=False,
-            must_complete_profile=True,
-            can_submit_for_review=False,
-            marketplace_visible=False,
-            redirect_to=COMPLETE_PROFILE,
-            message="Complete your vendor profile before continuing.",
-        )
+        return {
+            "profile_status": "missing",
+            "can_access_dashboard": False,
+            "must_complete_profile": True,
+            "can_submit_for_review": False,
+            "marketplace_visible": False,
+            "redirect_to": SETUP_ROUTE,
+            "message": "Complete your vendor profile before continuing.",
+        }
 
-    status = _normalize_vendor_status(profile)
-    field_errors = vendor_field_errors(profile, completion_provider)
+    status = str(getattr(profile, "status", "draft") or "draft")
+    field_errors = vendor_field_errors(profile)
     is_complete = not field_errors
 
     if status == "approved":
@@ -156,33 +155,6 @@ def vendor_field_errors(
 ) -> dict[str, list[str]]:
     if profile is None:
         return {}
-
-    provider = _resolve_completion_provider(profile, completion_provider)
-    return {
-        field_name: list(messages)
-        for field_name, messages in provider.get_profile_completion_errors(profile).items()
-    }
-
-
-def _resolve_completion_provider(
-    profile: object,
-    completion_provider: VendorProfileCompletionProvider | object,
-) -> VendorProfileCompletionProvider:
-    if completion_provider is not _PROVIDER_OMITTED:
-        return completion_provider  # type: ignore[return-value]
-
-    if all(hasattr(profile, field_name) for field_name in REQUIRED_VENDOR_PROFILE_FIELDS):
-        return DEFAULT_VENDOR_PROFILE_COMPLETION_PROVIDER
-
-    raise TypeError("vendor_field_errors() missing 1 required positional argument: 'completion_provider'")
-
-
-def _normalize_vendor_status(profile: Any) -> str:
-    raw_status = getattr(profile, "status", "draft")
-    status_value = getattr(raw_status, "value", raw_status)
-    normalized_status = str(status_value or "draft").strip().lower()
-    if not normalized_status:
-        normalized_status = "draft"
-    if normalized_status not in _SUPPORTED_VENDOR_STATUSES:
-        raise ValueError(f"Unsupported vendor status: {normalized_status}")
-    return normalized_status
+    if hasattr(profile, "get_profile_completion_errors"):
+        return profile.get_profile_completion_errors()
+    return profile_completion_errors_for(profile, VendorProfile.required_profile_fields())

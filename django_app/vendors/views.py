@@ -103,10 +103,6 @@ def _get_public_marketplace_stats(vendor_id) -> dict:
         return {"average_rating": 0, "total_reviews": 0}
 
 
-def _profile_completion_errors(profile: VendorProfileDTO) -> dict[str, list[str]]:
-    return vendor_field_errors(profile)
-
-
 def _vendor_profile_incomplete_response(
     profile: VendorProfileDTO | None = None,
     field_errors: dict[str, list[str]] | None = None,
@@ -154,7 +150,7 @@ def _get_current_vendor_profile(request, *, require_workspace: bool = False):
             },
             status=status.HTTP_404_NOT_FOUND,
         )
-    completion_errors = _profile_completion_errors(profile)
+    completion_errors = vendor_field_errors(profile)
     if require_workspace:
         if profile.status == VendorProfileModel.Status.SUSPENDED:
             return None, _vendor_suspended_response()
@@ -619,7 +615,7 @@ class VendorSubmitForReviewView(APIView):
         if error_response:
             return error_response
 
-        completion_errors = _profile_completion_errors(profile)
+        completion_errors = vendor_field_errors(profile)
         if completion_errors:
             return _vendor_profile_incomplete_response(profile, completion_errors)
 
