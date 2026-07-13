@@ -14,8 +14,10 @@ from application.vendors.dtos import (
 )
 from application.vendors.errors import VendorResourceNotFound
 from application.vendors.ports import VendorReadPort
+from domain.vendors.entities import VendorProfile as DomainVendorProfile
+from domain.vendors.entities import profile_completion_errors_for
 from domain.vendors.interfaces import PageRequest
-from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile
+from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile as DjangoVendorProfile
 
 
 class DjangoVendorReadRepository(VendorReadPort):
@@ -106,14 +108,6 @@ class DjangoVendorReadRepository(VendorReadPort):
 
     def vendor_metrics(self, vendor_id: uuid.UUID) -> dict:
         profile = self._require_vendor(vendor_id)
-        profile_values = {
-            "business_name": profile.business_name,
-            "description": profile.description,
-            "service_area": profile.service_area,
-            "contact_email": profile.contact_email,
-            "contact_phone": profile.contact_phone,
-            "status": profile.status,
-        }
         now = timezone.now()
         inquiry_counts = Inquiry.objects.filter(vendor_id=vendor_id).aggregate(
             total_inquiries=Count("id"),
@@ -156,8 +150,8 @@ class DjangoVendorReadRepository(VendorReadPort):
         response_rate = round((read_inquiries / total_inquiries) * 100) if total_inquiries else 0
 
         return {
-            "profile_completion": self._profile_completion_score(
-                profile_values,
+            "profile_completion": self.dashboard_completion_percentage(
+                profile,
                 portfolio_count,
                 package_counts["total_packages"] or 0,
             ),
@@ -177,24 +171,27 @@ class DjangoVendorReadRepository(VendorReadPort):
         }
 
     @staticmethod
-    def _require_vendor(vendor_id: uuid.UUID) -> VendorProfile:
+    def _require_vendor(vendor_id: uuid.UUID) -> DjangoVendorProfile:
         try:
-            return VendorProfile.objects.get(id=vendor_id)
-        except VendorProfile.DoesNotExist as exc:
+            return DjangoVendorProfile.objects.get(id=vendor_id)
+        except DjangoVendorProfile.DoesNotExist as exc:
             raise VendorResourceNotFound("Vendor not found.", code="vendor_not_found") from exc
 
     @staticmethod
-    def _profile_completion_score(profile: dict, portfolio_count: int, package_count: int) -> int:
-        fields = [
-            profile["business_name"],
-            profile["description"],
-            profile["service_area"],
-            profile["contact_email"],
-            profile["contact_phone"],
-        ]
-        filled = sum(1 for value in fields if value)
+    def strict_profile_completion_errors(profile: object) -> dict[str, list[str]]:
+        return profile_completion_errors_for(profile, DomainVendorProfile.required_profile_fields())
+
+    @classmethod
+    def dashboard_completion_percentage(cls, profile: object, portfolio_count: int, package_count: int) -> int:
+        """Dashboard progress metric; strict submit eligibility is the domain completion error set."""
+        required_fields = DomainVendorProfile.required_profile_fields()
+        completion_errors = cls.strict_profile_completion_errors(profile)
+        filled = sum(1 for field_name in required_fields if field_name not in completion_errors)
         if portfolio_count:
             filled += 1
         if package_count:
             filled += 1
-        return round((filled / (len(fields) + 2)) * 100)
+        percentage = round((filled / (len(required_fields) + 2)) * 100)
+        if completion_errors:
+            return min(percentage, 99)
+        return percentage
