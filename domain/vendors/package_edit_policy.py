@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from types import MappingProxyType
+from typing import Mapping
 from typing import Optional
 
 from domain.vendors.errors import PackageValidationError, VendorDomainError
@@ -37,8 +39,13 @@ def package_public_fields_changed(
         return True
     if description is not None and _normalize_public_text(description) != _normalize_public_text(package.description):
         return True
-    if price is not None and coerce_package_price(price) != package.price:
-        return True
+    if price is not None:
+        try:
+            normalized_price = coerce_package_price(price)
+        except ValueError as exc:
+            raise PackageValidationError(field_errors={"price": [str(exc)]}) from exc
+        if normalized_price != package.price:
+            return True
     if currency is not None and normalize_currency(currency) != normalize_currency(package.currency):
         return True
     if package_tier is not None and (
@@ -79,21 +86,23 @@ def ensure_vendor_package_edit_allowed(package, *, public_fields_changed: bool, 
         raise PackageEditCooldownError(next_allowed_at=next_allowed)
 
 
-def package_public_edit_markers(package, *, now: datetime, public_fields_changed: bool) -> dict:
+def package_public_edit_markers(package, *, now: datetime, public_fields_changed: bool) -> Mapping[str, object]:
     now = _normalize_timestamp(now, "now", required=True)
     if not public_fields_changed:
-        return {}
-    effective_next_edit_allowed_at(package)
-    return {
-        "approval_status": "waiting_approval",
-        "rejection_reason": None,
-        "is_active": False,
-        "last_vendor_public_edit_at": now,
-        "next_vendor_edit_allowed_at": now + VENDOR_PACKAGE_EDIT_COOLDOWN,
-    }
+        return MappingProxyType({})
+    ensure_vendor_package_edit_allowed(package, public_fields_changed=True, now=now)
+    return MappingProxyType(
+        {
+            "approval_status": "waiting_approval",
+            "rejection_reason": None,
+            "is_active": False,
+            "last_vendor_public_edit_at": now,
+            "next_vendor_edit_allowed_at": now + VENDOR_PACKAGE_EDIT_COOLDOWN,
+        }
+    )
 
 
-def mark_vendor_package_public_edit(package, *, now: datetime, public_fields_changed: bool) -> dict:
+def mark_vendor_package_public_edit(package, *, now: datetime, public_fields_changed: bool) -> Mapping[str, object]:
     return package_public_edit_markers(package, now=now, public_fields_changed=public_fields_changed)
 
 

@@ -1,6 +1,8 @@
 from decimal import Decimal
+from datetime import timedelta
 import uuid
 
+from domain.shared.utils import utc_now
 from domain.vendors.entities import ServicePackage
 
 
@@ -26,6 +28,7 @@ def test_service_package_update_preserves_decimal_amount():
         price=Decimal("50000.00"),
         package_tier="premier",
         approval_status="approved",
+        last_approved_at=utc_now() - timedelta(days=16),
     )
 
     package.update_details(price="75000.25")

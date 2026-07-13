@@ -1,15 +1,20 @@
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.db import IntegrityError
 from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 
 from application.vendors.commands import DeactivateServicePackageCommand, UpdateServicePackageCommand
+from .api_contracts import map_vendor_exception, resolve_expected_version, response_with_version, vendor_error_response
 from domain.vendors.package_edit_policy import (
     PackageEditCooldownError,
     VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS,
     effective_next_edit_allowed_at,
 )
 from domain.vendors.package_rules import PackageValidationError
+from domain.vendors.errors import ConcurrentVendorUpdate, VendorDomainError
 
 from .document_upload_views import VendorVerificationDocumentView as BaseVendorVerificationDocumentView
 from .models import ServicePackage as ServicePackageModel
@@ -17,6 +22,7 @@ from .serializers import ServicePackageSerializer
 from .services import get_command_handlers
 from .views import (
     _get_current_vendor_profile,
+    _stable_package_integrity_response,
     PortfolioImageView as BasePortfolioImageView,
     ServicePackageActivateView as BaseServicePackageActivateView,
     ServicePackageDetailView as BaseServicePackageDetailView,
@@ -106,6 +112,9 @@ def _augment_package_response(response: Response) -> Response:
         for payload in response.data:
             _augment_package_payload(payload)
     elif isinstance(response.data, dict):
+        if isinstance(response.data.get("results"), list):
+            for payload in response.data["results"]:
+                _augment_package_payload(payload)
         _augment_package_payload(response.data)
         if isinstance(response.data.get("package"), dict):
             _augment_package_payload(response.data["package"])
@@ -113,6 +122,7 @@ def _augment_package_response(response: Response) -> Response:
 
 
 class VendorProfileStatusView(BaseVendorProfileStatusView):
+    @method_decorator(ensure_csrf_cookie)
     def get(self, request):
         response = super().get(request)
         return _add_success_contract(
@@ -151,9 +161,13 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
         serializer = ServicePackageSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        expected_version, version_error = resolve_expected_version(request)
+        if version_error:
+            return version_error
         cmd = UpdateServicePackageCommand(
             package_id=package_id,
             vendor_id=profile.id,
+            expected_version=expected_version,
             name=data.get("name"),
             description=data.get("description"),
             price=data.get("price"),
@@ -163,13 +177,29 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
 
         try:
             updated = get_command_handlers().update_service_package(cmd)
-            response = Response(BaseServicePackageListView._serialize_package(None, updated))
+            response = response_with_version(Response(BaseServicePackageListView._serialize_package(None, updated)), updated.version)
         except PackageEditCooldownError as exc:
-            response = Response(exc.as_response_data(), status=status.HTTP_429_TOO_MANY_REQUESTS)
+            response = vendor_error_response(
+                code=exc.code,
+                message=exc.message,
+                detail=exc.message,
+                field_errors={
+                    "next_vendor_edit_allowed_at": [
+                        exc.next_allowed_at.isoformat(),
+                    ]
+                },
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        except ConcurrentVendorUpdate as exc:
+            response = _stable_package_integrity_response(exc)
         except PackageValidationError as exc:
             raise DRFValidationError(exc.errors)
-        except ValueError:
-            response = Response({"detail": PACKAGE_NOT_FOUND_MESSAGE}, status=status.HTTP_404_NOT_FOUND)
+        except (IntegrityError, VendorDomainError) as exc:
+            response = _stable_package_integrity_response(exc, status_code=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            response = map_vendor_exception(exc)
+            if response is None:
+                raise
         response = _augment_package_response(response)
         return _normalize_response_contract(
             response,
@@ -183,10 +213,14 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
         profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
         if error_response:
             return error_response
+        expected_version, version_error = resolve_expected_version(request)
+        if version_error:
+            return version_error
 
         cmd = DeactivateServicePackageCommand(
             package_id=package_id,
             vendor_id=profile.id,
+            expected_version=expected_version,
             deleted_by_id=request.user.id,
         )
         try:
@@ -198,8 +232,10 @@ class ServicePackageDetailView(BaseServicePackageDetailView):
                 },
                 status=status.HTTP_200_OK,
             )
-        except ValueError:
-            response = Response({"detail": PACKAGE_NOT_FOUND_MESSAGE}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as exc:
+            response = map_vendor_exception(exc)
+            if response is None:
+                raise
         response = _augment_package_response(response)
         return _normalize_response_contract(
             response,

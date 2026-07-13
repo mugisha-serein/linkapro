@@ -1,0 +1,52 @@
+name: Vendor Domain
+
+on:
+  pull_request:
+    paths:
+      - "domain/vendors/**"
+      - "tests/domain/vendors/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "domain/vendors/**"
+      - "tests/domain/vendors/**"
+
+jobs:
+  vendor-domain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements/production.txt ]; then python -m pip install -r requirements/production.txt; fi
+
+      - name: Compile vendor domain
+        run: python -m compileall domain/vendors
+
+      - name: Import vendor domain
+        run: python -c "import domain.vendors"
+
+      - name: Verify public exports
+        run: python -c "import domain.vendors as v; assert all(hasattr(v, n) for n in v.__all__)"
+
+      - name: Run vendor domain tests
+        run: python -m pytest tests/domain/vendors -q
+
+      - name: Django check
+        env:
+          DJANGO_SETTINGS_MODULE: django_app.settings.test
+          DATABASE_URL: sqlite:///:memory:
+          FASTAPI_DATABASE_URL: postgresql+asyncpg://user:pass@localhost/linkapro_test
+        run: python manage.py check
+
+      - name: Check whitespace
+        run: git diff --check

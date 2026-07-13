@@ -1,6 +1,7 @@
 from datetime import timedelta
 import uuid
 from django.db import models
+from django.db.models import Max, Q
 from django.utils import timezone
 from django_app.common.models import SoftDeleteModel
 from django_app.identity.models import User
@@ -47,11 +48,35 @@ class VendorProfile(models.Model):
     approved_at = models.DateTimeField(null=True, blank=True)
     rejected_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.TextField(blank=True, null=True)
+    version = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.business_name
+
+    def save(self, *args, **kwargs):
+        now = timezone.now()
+        changed_fields = set()
+        if self.status == self.Status.PENDING_REVIEW and self.submitted_at is None:
+            self.submitted_at = now
+            changed_fields.add("submitted_at")
+        if self.status == self.Status.APPROVED:
+            if self.submitted_at is None:
+                self.submitted_at = now
+                changed_fields.add("submitted_at")
+            if self.approved_at is None:
+                self.approved_at = now
+                changed_fields.add("approved_at")
+            self.rejected_at = None
+            self.rejection_reason = None
+            changed_fields.update({"rejected_at", "rejection_reason"})
+        if self.status == self.Status.REJECTED and self.rejected_at is None:
+            self.rejected_at = now
+            changed_fields.add("rejected_at")
+        if kwargs.get("update_fields") is not None and changed_fields:
+            kwargs["update_fields"] = tuple(set(kwargs["update_fields"]) | changed_fields)
+        super().save(*args, **kwargs)
 
     @classmethod
     def required_profile_fields(cls) -> tuple[str, ...]:
@@ -127,14 +152,47 @@ class PortfolioImage(SoftDeleteModel):
     duration_seconds = models.PositiveIntegerField(blank=True, null=True)
     analyzer_score = models.PositiveSmallIntegerField(blank=True, null=True)
     analyzer_summary = models.TextField(blank=True, null=True)
+    version = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["order"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["vendor", "order"],
+                condition=Q(is_active=True, is_deleted=False),
+                name="vendors_portfolio_active_order_unique",
+            ),
+        ]
 
     def __str__(self):
         return f"Image {self.order} for {self.vendor.business_name}"
+
+    def save(self, *args, **kwargs):
+        if self.is_active and not self.is_deleted and self.vendor_id:
+            conflict = (
+                PortfolioImage.all_objects.filter(
+                    vendor_id=self.vendor_id,
+                    order=self.order,
+                    is_active=True,
+                    is_deleted=False,
+                )
+                .exclude(id=self.id)
+                .exists()
+            )
+            if conflict:
+                max_order = (
+                    PortfolioImage.all_objects.filter(
+                        vendor_id=self.vendor_id,
+                        is_active=True,
+                        is_deleted=False,
+                    ).aggregate(Max("order"))["order__max"]
+                )
+                self.order = (max_order if max_order is not None else -1) + 1
+                if kwargs.get("update_fields") is not None:
+                    kwargs["update_fields"] = tuple(set(kwargs["update_fields"]) | {"order"})
+        super().save(*args, **kwargs)
 
 
 class ServicePackage(SoftDeleteModel):
@@ -153,7 +211,7 @@ class ServicePackage(SoftDeleteModel):
     name = models.CharField(max_length=200)
     description = models.TextField()
     price = models.DecimalField(max_digits=12, decimal_places=2)
-    currency = models.CharField(max_length=3, default="RWF")
+    currency = models.CharField(max_length=3, default="RWF", choices=[("RWF", "RWF")])
     package_tier = models.CharField(max_length=20, choices=PackageTier.choices, default=PackageTier.STANDARD)
     approval_status = models.CharField(
         max_length=30,
@@ -161,15 +219,73 @@ class ServicePackage(SoftDeleteModel):
         default=ApprovalStatus.WAITING_APPROVAL,
     )
     rejection_reason = models.TextField(blank=True, null=True)
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=False)
     last_approved_at = models.DateTimeField(null=True, blank=True)
     last_vendor_public_edit_at = models.DateTimeField(null=True, blank=True)
     next_vendor_edit_allowed_at = models.DateTimeField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=Q(currency="RWF"), name="vendors_servicepackage_currency_rwf"),
+            models.CheckConstraint(
+                condition=Q(is_deleted=False) | Q(is_active=False),
+                name="vendors_servicepackage_deleted_inactive",
+            ),
+            models.CheckConstraint(
+                condition=Q(is_deleted=False) | Q(deleted_at__isnull=False),
+                name="vendors_servicepackage_deleted_at_required",
+            ),
+            models.CheckConstraint(
+                condition=~Q(approval_status="waiting_approval") | Q(is_active=False),
+                name="vendors_servicepackage_waiting_inactive",
+            ),
+            models.CheckConstraint(
+                condition=~Q(approval_status="approved") | Q(last_approved_at__isnull=False),
+                name="vendors_servicepackage_approved_at_required",
+            ),
+            models.CheckConstraint(
+                condition=~Q(approval_status="rejected") | Q(is_active=False),
+                name="vendors_servicepackage_rejected_inactive",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~Q(approval_status="rejected")
+                    | (Q(rejection_reason__isnull=False) & ~Q(rejection_reason=""))
+                ),
+                name="vendors_servicepackage_rejected_reason_required",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(approval_status="rejected")
+                    | Q(rejection_reason__isnull=True)
+                    | Q(rejection_reason="")
+                ),
+                name="vendors_servicepackage_rejection_only_rejected",
+            ),
+        ]
+
     def __str__(self):
         return f"{self.name} - {self.vendor.business_name}"
+
+    def save(self, *args, **kwargs):
+        changed_fields = set()
+        if self.approval_status == self.ApprovalStatus.APPROVED:
+            approved_at = self.last_approved_at or timezone.now()
+            if self.last_approved_at is None:
+                self.last_approved_at = approved_at
+                changed_fields.add("last_approved_at")
+            if self.next_vendor_edit_allowed_at is None:
+                self.next_vendor_edit_allowed_at = approved_at + self.vendor_edit_cooldown_delta()
+                changed_fields.add("next_vendor_edit_allowed_at")
+            if self.rejection_reason is not None:
+                self.rejection_reason = None
+                changed_fields.add("rejection_reason")
+        if kwargs.get("update_fields") is not None and changed_fields:
+            kwargs["update_fields"] = tuple(set(kwargs["update_fields"]) | changed_fields)
+        super().save(*args, **kwargs)
 
     @staticmethod
     def vendor_edit_cooldown_delta() -> timedelta:
@@ -209,6 +325,7 @@ class Inquiry(models.Model):
     message = models.TextField()
     event_date = models.DateField(null=True, blank=True)
     is_read = models.BooleanField(default=False)
+    version = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
@@ -272,3 +389,59 @@ class VerificationDocument(models.Model):
 
     def __str__(self):
         return f"{self.document_type} for {self.vendor.business_name}"
+
+
+class VendorIdempotencyRecord(models.Model):
+    class Status(models.TextChoices):
+        IN_PROGRESS = "in_progress", "In progress"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    scope = models.CharField(max_length=120)
+    actor_id = models.UUIDField(null=True, blank=True)
+    key = models.CharField(max_length=200)
+    payload_fingerprint = models.CharField(max_length=128)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.IN_PROGRESS)
+    result = models.JSONField(null=True, blank=True)
+    last_error = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scope", "actor_id", "key"],
+                name="vendors_idempotency_scope_actor_key_unique",
+            ),
+        ]
+
+
+class VendorDomainEventOutbox(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        PUBLISHED = "published", "Published"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    event_id = models.UUIDField(unique=True)
+    aggregate_id = models.UUIDField(db_index=True)
+    aggregate_version = models.PositiveIntegerField()
+    event_type = models.CharField(max_length=120)
+    payload = models.JSONField(default=dict)
+    occurred_at = models.DateTimeField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    attempts = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True, null=True)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at"], name="vendors_event_status_next_idx"),
+            models.Index(fields=["aggregate_id", "aggregate_version"], name="vendors_event_aggregate_idx"),
+        ]

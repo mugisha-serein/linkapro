@@ -201,6 +201,8 @@ class GoogleLoginUseCase:
         expires_in: int,
     ) -> None:
         oauth_token.provider_user_id = provider_user_id
-        oauth_token.access_token = access_token
-        oauth_token.refresh_token = refresh_token
-        oauth_token.expires_at = utc_now() + timedelta(seconds=expires_in)
+        oauth_token.update_tokens(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=utc_now() + timedelta(seconds=expires_in),
+        )
