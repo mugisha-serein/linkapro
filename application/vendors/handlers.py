@@ -23,13 +23,11 @@ from .commands import (
     AddPortfolioImageCommand,
     ApproveServicePackageCommand,
     ApproveVendorCommand,
-    AuthenticatedActor,
     CreateServicePackageCommand,
     CreateVendorProfileCommand,
     DeactivateServicePackageCommand,
     DeletePortfolioImageCommand,
     MarkInquiryReadCommand,
-    ModeratorActor,
     OMITTED,
     ReinstateVendorCommand,
     RejectServicePackageCommand,
@@ -56,11 +54,7 @@ from .dtos import (
 from .errors import (
     DuplicateVendorProfile,
     InvalidVendorCommand,
-    VendorConflict,
-    VendorOperationForbidden,
-    InvalidVendorCommand,
     VendorApplicationConfigurationError,
-    VendorConflict,
     VendorResourceNotFound,
     VendorVersionConflict,
 )
@@ -178,10 +172,6 @@ class VendorCommandHandlers:
         return self._run_required_idempotent("vendor_profile.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def update_profile(self, cmd: UpdateVendorProfileCommand) -> VendorProfileDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
-        original_version = profile.version
         updates = {
             field_name: getattr(cmd, field_name)
             for field_name in (
@@ -196,48 +186,62 @@ class VendorCommandHandlers:
             )
             if getattr(cmd, field_name) is not OMITTED
         }
-        _translate_profile_update_validation(lambda: profile.update_details(**updates))
-        return self._save_if_changed(profile, original_version, self._to_profile_dto)
+
+        def transition(profile: VendorProfile) -> None:
+            _translate_profile_update_validation(lambda: profile.update_details(**updates))
+
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_vendor_or_raise(cmd.vendor_id),
+            expected_version=cmd.expected_version,
+            transition=transition,
+            to_dto=self._to_profile_dto,
+        )
 
     def submit_for_review(self, cmd: SubmitVendorForReviewCommand) -> VendorProfileDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
-        original_version = profile.version
-        profile.submit_for_review()
-        return self._save_if_changed(profile, original_version, self._to_profile_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_vendor_or_raise(cmd.vendor_id),
+            expected_version=cmd.expected_version,
+            transition=lambda profile: profile.submit_for_review(),
+            to_dto=self._to_profile_dto,
+        )
 
     def approve_vendor(self, cmd: ApproveVendorCommand) -> VendorProfileDTO:
-        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
-        profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
-        original_version = profile.version
-        profile.approve()
-        return self._save_if_changed(profile, original_version, self._to_profile_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id),
+            loader=lambda: self._get_vendor_or_raise(cmd.vendor_id),
+            expected_version=cmd.expected_version,
+            transition=lambda profile: profile.approve(),
+            to_dto=self._to_profile_dto,
+        )
 
     def reject_vendor(self, cmd: RejectVendorCommand) -> VendorProfileDTO:
-        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
-        profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
-        original_version = profile.version
-        profile.reject(cmd.reason)
-        return self._save_if_changed(profile, original_version, self._to_profile_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id),
+            loader=lambda: self._get_vendor_or_raise(cmd.vendor_id),
+            expected_version=cmd.expected_version,
+            transition=lambda profile: profile.reject(cmd.reason),
+            to_dto=self._to_profile_dto,
+        )
 
     def suspend_vendor(self, cmd: SuspendVendorCommand) -> VendorProfileDTO:
-        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
-        profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
-        original_version = profile.version
-        profile.suspend(cmd.reason)
-        return self._save_if_changed(profile, original_version, self._to_profile_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id),
+            loader=lambda: self._get_vendor_or_raise(cmd.vendor_id),
+            expected_version=cmd.expected_version,
+            transition=lambda profile: profile.suspend(cmd.reason),
+            to_dto=self._to_profile_dto,
+        )
 
     def reinstate_vendor(self, cmd: ReinstateVendorCommand) -> VendorProfileDTO:
-        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
-        profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
-        original_version = profile.version
-        profile.reinstate()
-        return self._save_if_changed(profile, original_version, self._to_profile_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id),
+            loader=lambda: self._get_vendor_or_raise(cmd.vendor_id),
+            expected_version=cmd.expected_version,
+            transition=lambda profile: profile.reinstate(),
+            to_dto=self._to_profile_dto,
+        )
 
     def add_portfolio_image(self, cmd: AddPortfolioImageCommand) -> PortfolioImageDTO:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -316,17 +320,18 @@ class VendorCommandHandlers:
         self,
         cmd: UpdateVendorBrandingMediaCommand,
     ) -> VendorProfileDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        profile = self._get_vendor_or_raise(cmd.vendor_id)
-        self._assert_expected_version(profile.id, profile.version, cmd.expected_version)
-        original_version = profile.version
-        profile.update_details(
-            profile_image_url=cmd.profile_image_url,
-            profile_image_public_id=cmd.profile_image_public_id,
-            cover_image_url=cmd.cover_image_url,
-            cover_image_public_id=cmd.cover_image_public_id,
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_vendor_or_raise(cmd.vendor_id),
+            expected_version=cmd.expected_version,
+            transition=lambda profile: profile.update_details(
+                profile_image_url=cmd.profile_image_url,
+                profile_image_public_id=cmd.profile_image_public_id,
+                cover_image_url=cmd.cover_image_url,
+                cover_image_public_id=cmd.cover_image_public_id,
+            ),
+            to_dto=self._to_profile_dto,
         )
-        return self._save_if_changed(profile, original_version, self._to_profile_dto)
 
     def delete_portfolio_image(self, cmd: DeletePortfolioImageCommand) -> None:
         self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
@@ -389,66 +394,79 @@ class VendorCommandHandlers:
         return self._run_required_idempotent("service_package.create", cmd.actor.user_id, cmd.idempotency_key, cmd, operation)
 
     def update_service_package(self, cmd: UpdateServicePackageCommand) -> ServicePackageDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
-        self._assert_expected_version(package.id, package.version, cmd.expected_version)
-        original_version = package.version
-        package.update_details(cmd.name, cmd.description, cmd.price, cmd.currency, cmd.package_tier)
-        return self._save_if_changed(package, original_version, self._to_package_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_package_or_raise(cmd.vendor_id, cmd.package_id),
+            expected_version=cmd.expected_version,
+            transition=lambda package: package.update_details(
+                cmd.name,
+                cmd.description,
+                cmd.price,
+                cmd.currency,
+                cmd.package_tier,
+            ),
+            to_dto=self._to_package_dto,
+        )
 
     def submit_service_package_for_approval(
         self,
         cmd: SubmitServicePackageForApprovalCommand,
     ) -> ServicePackageDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
-        self._assert_expected_version(package.id, package.version, cmd.expected_version)
-        original_version = package.version
-        package.submit_for_approval()
-        return self._save_if_changed(package, original_version, self._to_package_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_package_or_raise(cmd.vendor_id, cmd.package_id),
+            expected_version=cmd.expected_version,
+            transition=lambda package: package.submit_for_approval(),
+            to_dto=self._to_package_dto,
+        )
 
     def approve_service_package(self, cmd: ApproveServicePackageCommand) -> ServicePackageDTO:
-        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
-        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
-        self._assert_expected_version(package.id, package.version, cmd.expected_version)
-        original_version = package.version
-        package.approve()
-        return self._save_if_changed(package, original_version, self._to_package_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id),
+            loader=lambda: self._get_package_or_raise(cmd.vendor_id, cmd.package_id),
+            expected_version=cmd.expected_version,
+            transition=lambda package: package.approve(),
+            to_dto=self._to_package_dto,
+        )
 
     def reject_service_package(self, cmd: RejectServicePackageCommand) -> ServicePackageDTO:
-        self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id)
-        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
-        self._assert_expected_version(package.id, package.version, cmd.expected_version)
-        original_version = package.version
-        package.reject(cmd.reason)
-        return self._save_if_changed(package, original_version, self._to_package_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_moderator_can_moderate_vendor(cmd.moderator, cmd.vendor_id),
+            loader=lambda: self._get_package_or_raise(cmd.vendor_id, cmd.package_id),
+            expected_version=cmd.expected_version,
+            transition=lambda package: package.reject(cmd.reason),
+            to_dto=self._to_package_dto,
+        )
 
     def restore_service_package_for_review(
         self,
         cmd: RestoreServicePackageForReviewCommand,
     ) -> ServicePackageDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
-        self._assert_expected_version(package.id, package.version, cmd.expected_version)
-        original_version = package.version
-        package.restore_to_waiting_approval()
-        return self._save_if_changed(package, original_version, self._to_package_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_package_or_raise(cmd.vendor_id, cmd.package_id),
+            expected_version=cmd.expected_version,
+            transition=lambda package: package.restore_to_waiting_approval(),
+            to_dto=self._to_package_dto,
+        )
 
     def deactivate_package(self, cmd: DeactivateServicePackageCommand) -> ServicePackageDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
-        self._assert_expected_version(package.id, package.version, cmd.expected_version)
-        original_version = package.version
-        package.deactivate()
-        return self._save_if_changed(package, original_version, self._to_package_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_package_or_raise(cmd.vendor_id, cmd.package_id),
+            expected_version=cmd.expected_version,
+            transition=lambda package: package.deactivate(),
+            to_dto=self._to_package_dto,
+        )
 
     def activate_package(self, cmd: ActivateServicePackageCommand) -> ServicePackageDTO:
-        self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id)
-        package = self._get_package_or_raise(cmd.vendor_id, cmd.package_id)
-        self._assert_expected_version(package.id, package.version, cmd.expected_version)
-        original_version = package.version
-        package.activate()
-        return self._save_if_changed(package, original_version, self._to_package_dto)
+        return self._execute_transition(
+            authorize=lambda: self._assert_actor_owns_vendor(cmd.actor, cmd.vendor_id),
+            loader=lambda: self._get_package_or_raise(cmd.vendor_id, cmd.package_id),
+            expected_version=cmd.expected_version,
+            transition=lambda package: package.activate(),
+            to_dto=self._to_package_dto,
+        )
 
     def send_inquiry(self, cmd: SendInquiryCommand) -> InquiryDTO:
         payload_digest = self._inquiry_payload_digest(cmd)
@@ -519,6 +537,22 @@ class VendorCommandHandlers:
             return to_dto(aggregate)
         saved = self._save_with_pending_events(aggregate, original_version)
         return to_dto(saved)
+
+    def _execute_transition(
+        self,
+        *,
+        authorize: Callable[[], None],
+        loader: Callable,
+        expected_version: int,
+        transition: Callable,
+        to_dto: Callable,
+    ):
+        authorize()
+        aggregate = loader()
+        self._assert_expected_version(aggregate.id, aggregate.version, expected_version)
+        original_version = aggregate.version
+        transition(aggregate)
+        return self._save_if_changed(aggregate, original_version, to_dto)
 
     def _add_with_pending_events(self, aggregate):
         return self.aggregate_uow.add_with_pending_events(aggregate)
