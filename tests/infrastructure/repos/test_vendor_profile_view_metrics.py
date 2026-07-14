@@ -4,7 +4,13 @@ import pytest
 
 from django_app.vendors.models import VendorProfileViewed
 from infrastructure.repos.analytics import metrics
-from infrastructure.repos.analytics.metrics import log_profile_view, total_views_trend, views_by_month, visibility_trend
+from infrastructure.repos.analytics.metrics import (
+    log_profile_view,
+    profile_strength_score,
+    total_views_trend,
+    views_by_month,
+    visibility_trend,
+)
 from tests.factories import create_vendor_profile
 
 pytestmark = pytest.mark.django_db
@@ -67,3 +73,27 @@ def test_visibility_trend_reports_marketplace_impressions_as_unavailable(monkeyp
         {"month": "2026-07", "profile_views": 1, "marketplace_impressions": None},
     ]
     assert trend["unavailable_metrics"] == ("marketplace_search_impressions",)
+
+
+def test_profile_strength_score_represents_domain_completion_errors():
+    complete = create_vendor_profile(
+        description="Professional event coverage across Kigali and beyond.",
+    )
+    incomplete = create_vendor_profile(
+        business_name="",
+        description="Too short",
+        contact_phone="",
+    )
+
+    assert profile_strength_score(complete.id) == 100
+    assert profile_strength_score(incomplete.id) == 50
+
+
+def test_profile_strength_score_never_reports_complete_when_domain_errors_remain():
+    vendor = create_vendor_profile(
+        category="other",
+        custom_category="",
+        description="Professional event coverage across Kigali and beyond.",
+    )
+
+    assert profile_strength_score(vendor.id) == 99

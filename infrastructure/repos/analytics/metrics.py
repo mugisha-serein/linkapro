@@ -8,7 +8,9 @@ from django.db.models import F, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
-from django_app.vendors.models import VendorProfileViewed
+from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
+from domain.vendors.profile.rules import get_profile_completion_errors
+from django_app.vendors.models import VendorProfile as DjangoVendorProfile, VendorProfileViewed
 
 MARKETPLACE_SEARCH_IMPRESSIONS = "marketplace_search_impressions"
 
@@ -97,3 +99,16 @@ def visibility_trend(vendor_id: uuid.UUID, months: int = 6) -> dict[str, object]
         ],
         "unavailable_metrics": (MARKETPLACE_SEARCH_IMPRESSIONS,),
     }
+
+
+def profile_strength_score(vendor_id: uuid.UUID) -> int:
+    profile = DjangoVendorProfile.objects.get(id=vendor_id)
+    required_fields = DomainVendorProfile.required_profile_fields()
+    if not required_fields:
+        return 100
+    errors = get_profile_completion_errors(profile)
+    complete_fields = sum(1 for field_name in required_fields if field_name not in errors)
+    score = round((complete_fields / len(required_fields)) * 100)
+    if errors:
+        return min(score, 99)
+    return score
