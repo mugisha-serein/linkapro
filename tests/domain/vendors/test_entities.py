@@ -7,6 +7,7 @@ from freezegun import freeze_time
 
 from domain.shared.utils import utc_now
 from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.inquiries.rules import response_status
 from domain.vendors.packages.entity import ServicePackage
 from domain.vendors.portfolio.entity import PortfolioImage, PortfolioQualityStatus, PortfolioVisibilityStatus
 from domain.vendors.profile.entity import ServiceCategory, VendorProfile, VendorStatus
@@ -419,6 +420,21 @@ class TestPortfolioImage:
 
 
 class TestInquiry:
+    def test_response_status_uses_read_state_for_unread_and_read_unanswered(self):
+        inquiry = valid_inquiry()
+
+        assert response_status(inquiry) == "unread"
+
+        inquiry.mark_read()
+        assert response_status(inquiry) == "read_unanswered"
+
+    def test_response_status_does_not_emit_answered_without_answer_signal(self):
+        inquiry = valid_inquiry(is_read=True)
+
+        assert not hasattr(inquiry, "answered_at")
+        assert not hasattr(inquiry, "response_sent_at")
+        assert response_status(inquiry) == "read_unanswered"
+
     def test_invalid_email_rejected(self):
         with pytest.raises(InquiryValidationError) as exc_info:
             valid_inquiry(client_email="bad")

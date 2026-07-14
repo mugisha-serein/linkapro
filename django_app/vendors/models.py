@@ -93,6 +93,30 @@ class VendorProfile(models.Model):
         return self.status != self.Status.DRAFT and self.is_profile_complete
 
 
+class VendorProfileViewed(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="profile_view_counts")
+    view_date = models.DateField()
+    view_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "vendors_profile_view_logged"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["vendor", "view_date"],
+                name="vendors_profile_view_logged_vendor_date_unique",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["vendor", "view_date"], name="vendorsprofileviewlogged_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.vendor_id} viewed on {self.view_date}: {self.view_count}"
+
+
 class PortfolioImage(SoftDeleteModel):
     class MediaType(models.TextChoices):
         IMAGE = "image", "Image"

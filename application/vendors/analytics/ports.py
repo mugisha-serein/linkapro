@@ -4,7 +4,14 @@ from typing import Protocol
 import uuid
 
 from domain.vendors.shared.pagination import PageRequest
-from application.vendors.analytics.dtos import VendorActivityDTO, VendorAnalyticsDTO, VendorDashboardSummaryDTO
+from application.vendors.analytics.dtos import (
+    VendorActivityDTO,
+    VendorAnalyticsDTO,
+    VendorDashboardSummaryDTO,
+    VendorPortfolioQualityTrendDTO,
+    VendorVisibilityTrendDTO,
+    VendorViewsTrendPointDTO,
+)
 from application.vendors.packages.dtos import ServicePackageDTO
 from application.vendors.shared.dtos import PageDTO
 
@@ -16,3 +23,9 @@ class VendorReadPort(Protocol):
     def analytics(self, vendor_id: uuid.UUID) -> VendorAnalyticsDTO: ...
 
     def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[VendorActivityDTO]: ...
+
+    def total_views_trend(self, vendor_id: uuid.UUID, months: int = 6) -> tuple[VendorViewsTrendPointDTO, ...]: ...
+
+    def visibility_trend(self, vendor_id: uuid.UUID, months: int = 6) -> VendorVisibilityTrendDTO: ...
+
+    def portfolio_quality_trend(self, vendor_id: uuid.UUID) -> VendorPortfolioQualityTrendDTO: ...

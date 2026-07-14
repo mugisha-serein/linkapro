@@ -4,7 +4,7 @@ from typing import Optional
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 from domain.vendors.packages.entity import ServicePackage as DomainPackage
@@ -59,6 +59,30 @@ class DjangoServicePackageRepository(IServicePackageRepository):
     def list_by_vendor(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> Page[DomainPackage]:
         page = page or PageRequest()
         queryset = DjangoPackage.all_objects.filter(vendor_id=vendor_id).order_by("-created_at", "id")
+        return self._page_queryset(queryset, page)
+
+    def search(
+        self,
+        vendor_id: uuid.UUID,
+        query: str | None,
+        tier_filter: str | None,
+        page: PageRequest | None = None,
+    ) -> Page[DomainPackage]:
+        page = page or PageRequest()
+        queryset = DjangoPackage.all_objects.filter(vendor_id=vendor_id)
+        search_text = (query or "").strip()
+        if search_text:
+            queryset = queryset.filter(
+                Q(name__icontains=search_text)
+                | Q(description__icontains=search_text)
+                | Q(currency__icontains=search_text)
+            )
+        tier = (tier_filter or "").strip().lower()
+        if tier:
+            queryset = queryset.filter(package_tier=tier)
+        return self._page_queryset(queryset.order_by("-created_at", "id"), page)
+
+    def _page_queryset(self, queryset, page: PageRequest) -> Page[DomainPackage]:
         total = queryset.count()
         objs = list(queryset[page.offset : page.offset + page.limit])
         return Page(items=[self._to_domain(o) for o in objs], total=total, limit=page.limit, offset=page.offset)

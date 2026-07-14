@@ -782,6 +782,8 @@ class TestPortfolioImageViews:
             secure_url="https://example.com/existing.jpg",
             caption="Existing",
             upload_status=PortfolioImage.UploadStatus.UPLOADED,
+            analyzer_score=88,
+            analyzer_summary="Image quality preflight passed.",
         )
 
         response = self.client.get(reverse("portfolio-list"))
@@ -791,6 +793,8 @@ class TestPortfolioImageViews:
         assert response.data[0]["display_url"] == "https://example.com/existing.jpg"
         assert response.data[0]["local_preview_url"] is None
         assert response.data[0]["upload_status"] == "uploaded"
+        assert response.data[0]["analyzer_score"] == 88
+        assert response.data[0]["analyzer_summary"] == "Image quality preflight passed."
 
     def test_list_does_not_expose_existing_broken_local_preview_url(self):
         PortfolioImage.objects.create(
@@ -865,6 +869,8 @@ class TestPortfolioImageViews:
         assert image.cloudinary_secure_url == "https://res.cloudinary.com/demo/portfolio.jpg"
         assert image.local_preview_url is None
         assert image.temp_upload_path is None
+        assert image.analyzer_score == 90
+        assert image.analyzer_summary == "Image quality preflight passed."
         assert not default_storage.exists(temp_path)
 
     def test_celery_task_processes_existing_remote_media_without_local_temp(self, monkeypatch):
@@ -913,6 +919,8 @@ class TestPortfolioImageViews:
         assert image.upload_status == PortfolioImage.UploadStatus.UPLOADED
         assert image.quality_status == PortfolioImage.QualityStatus.PASSED
         assert image.secure_url == "https://res.cloudinary.com/demo/remote.jpg"
+        assert image.analyzer_score == 90
+        assert image.analyzer_summary == "Image quality preflight passed."
         assert image.temp_upload_path is None
 
     def test_celery_task_marks_image_failed_on_cloudinary_failure(self, monkeypatch):

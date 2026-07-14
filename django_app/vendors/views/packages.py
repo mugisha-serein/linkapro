@@ -91,7 +91,12 @@ class ServicePackageListView(APIView):
         if pagination_error:
             return pagination_error
 
-        query = ListServicePackagesQuery(actor=_actor(request), vendor_id=profile.id, page=page_request)
+        query = ListServicePackagesQuery(
+            actor=_actor(request),
+            vendor_id=profile.id,
+            page=page_request,
+            search_text=request.query_params.get("q"),
+        )
         page = query_handlers.list_service_packages(query)
         next_offset = page.offset + page.limit if page.offset + page.limit < page.total else None
         response = Response(

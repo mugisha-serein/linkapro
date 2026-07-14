@@ -16,7 +16,7 @@ from application.vendors.packages.commands import (
 from application.vendors.packages.dtos import ServicePackageDTO
 from application.vendors.packages.queries import ListServicePackagesQuery
 from application.vendors.shared.dtos import PageDTO
-from application.vendors.errors import VendorOperationForbidden, VendorResourceNotFound
+from application.vendors.errors import VendorApplicationConfigurationError, VendorOperationForbidden, VendorResourceNotFound
 
 
 SERVICE_PACKAGE_CREATION_ALLOWED_STATUSES = frozenset({VendorStatus.APPROVED})
@@ -132,4 +132,12 @@ class PackageCommandHandlersMixin:
 class PackageQueryHandlersMixin:
         def list_service_packages(self, query: ListServicePackagesQuery) -> PageDTO[ServicePackageDTO]:
             self._assert_actor_can_access_vendor(query)
-            return self.read_repo.list_service_packages(query.vendor_id, query.page or PageRequest())
+            page = query.page or PageRequest()
+            if query.search_text:
+                if self.package_repo is None:
+                    raise VendorApplicationConfigurationError(
+                        field_errors={"package_repo": ["Vendor package repository is required."]}
+                    )
+                packages = self.package_repo.search(query.vendor_id, query.search_text, None, page)
+                return self._map_page(packages, self._to_package_dto)
+            return self.read_repo.list_service_packages(query.vendor_id, page)

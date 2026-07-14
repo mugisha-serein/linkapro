@@ -1,12 +1,15 @@
 import uuid
+from datetime import date, datetime, time
 from typing import Optional
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
+from django.utils import timezone
 
 from domain.vendors.shared.aggregate import ConcurrentVendorUpdate
 from domain.vendors.inquiries.entity import Inquiry as DomainInquiry
+from domain.vendors.inquiries.interfaces import InquiryDateRange
 from domain.vendors.inquiries.interfaces import IInquiryRepository
 from domain.vendors.shared.pagination import Page, PageRequest
 from django_app.vendors.models import Inquiry as DjangoInquiry, VendorProfile as DjangoVendor
@@ -46,9 +49,40 @@ class DjangoInquiryRepository(IInquiryRepository):
     def list_by_vendor(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> Page[DomainInquiry]:
         page = page or PageRequest()
         queryset = DjangoInquiry.objects.filter(vendor_id=vendor_id).order_by("-created_at", "id")
-        total = queryset.count()
-        objs = list(queryset[page.offset : page.offset + page.limit])
-        return Page(items=[self._to_domain(o) for o in objs], total=total, limit=page.limit, offset=page.offset)
+        return self._page_queryset(queryset, page)
+
+    def search(
+        self,
+        vendor_id: uuid.UUID,
+        query: str | None,
+        status_filter: str | None,
+        date_range: InquiryDateRange | None,
+        page: PageRequest | None = None,
+    ) -> Page[DomainInquiry]:
+        page = page or PageRequest()
+        queryset = DjangoInquiry.objects.filter(vendor_id=vendor_id)
+        search_text = (query or "").strip()
+        if search_text:
+            queryset = queryset.filter(
+                Q(client_name__icontains=search_text)
+                | Q(client_email__icontains=search_text)
+                | Q(client_phone__icontains=search_text)
+                | Q(message__icontains=search_text)
+            )
+        status = (status_filter or "").strip().lower()
+        if status == "unread":
+            queryset = queryset.filter(is_read=False)
+        elif status in {"read", "read_unanswered"}:
+            queryset = queryset.filter(is_read=True)
+        elif status == "answered":
+            queryset = queryset.none()
+        if date_range is not None:
+            start, end = date_range
+            if start is not None:
+                queryset = queryset.filter(created_at__gte=self._date_range_boundary(start, end_of_day=False))
+            if end is not None:
+                queryset = queryset.filter(created_at__lte=self._date_range_boundary(end, end_of_day=True))
+        return self._page_queryset(queryset.order_by("-created_at", "id"), page)
 
     def save(self, domain: DomainInquiry, *, expected_version: int) -> DomainInquiry:
         self._get_vendor(domain.vendor_id)
@@ -88,6 +122,21 @@ class DjangoInquiryRepository(IInquiryRepository):
             return DjangoVendor.objects.get(id=vendor_id)
         except DjangoVendor.DoesNotExist as exc:
             raise RepositoryNotFoundError("Vendor not found") from exc
+
+    def _page_queryset(self, queryset, page: PageRequest) -> Page[DomainInquiry]:
+        total = queryset.count()
+        objs = list(queryset[page.offset : page.offset + page.limit])
+        return Page(items=[self._to_domain(o) for o in objs], total=total, limit=page.limit, offset=page.offset)
+
+    @staticmethod
+    def _date_range_boundary(value: date | datetime, *, end_of_day: bool) -> datetime:
+        if isinstance(value, datetime):
+            boundary = value
+        else:
+            boundary = datetime.combine(value, time.max if end_of_day else time.min)
+        if timezone.is_naive(boundary):
+            return timezone.make_aware(boundary)
+        return boundary
 
     def _to_domain(self, model: DjangoInquiry) -> DomainInquiry:
         return DomainInquiry(

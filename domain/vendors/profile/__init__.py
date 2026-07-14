@@ -9,7 +9,7 @@ from domain.vendors.profile.events import (
     VendorSuspended,
 )
 from domain.vendors.profile.interfaces import IVendorProfileRepository
-from domain.vendors.profile.rules import is_draft_incomplete, is_pending_review
+from domain.vendors.profile.rules import get_profile_completion_errors, is_draft_incomplete, is_pending_review
 
 __all__ = [
     "IVendorProfileRepository",
@@ -24,6 +24,7 @@ __all__ = [
     "VendorStatus",
     "VendorSubmittedForReview",
     "VendorSuspended",
+    "get_profile_completion_errors",
     "is_draft_incomplete",
     "is_pending_review",
     "profile_completion_errors_for",

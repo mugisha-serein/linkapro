@@ -3,11 +3,19 @@ from __future__ import annotations
 from typing import Callable
 
 from domain.vendors.inquiries.interfaces import IInquiryRepository
+from domain.vendors.packages.interfaces import IServicePackageRepository
 from domain.vendors.portfolio.interfaces import IPortfolioImageRepository
 from domain.vendors.profile.interfaces import IVendorProfileRepository
 from domain.vendors.shared.pagination import Page
 from application.vendors.analytics.handlers import AnalyticsQueryHandlersMixin
-from application.vendors.analytics.queries import GetVendorAnalyticsQuery, GetVendorDashboardSummaryQuery, ListRecentVendorActivityQuery
+from application.vendors.analytics.queries import (
+    GetVendorAnalyticsQuery,
+    GetVendorDashboardSummaryQuery,
+    GetVendorPortfolioQualityTrendQuery,
+    GetVendorVisibilityTrendQuery,
+    GetVendorViewsTrendQuery,
+    ListRecentVendorActivityQuery,
+)
 from application.vendors.errors import VendorApplicationConfigurationError
 from application.vendors.inquiries.handlers import InquiryQueryHandlersMixin
 from application.vendors.inquiries.queries import ListInquiriesQuery
@@ -31,12 +39,14 @@ class BaseVendorQueryHandler(VendorDTOMapperMixin):
             inquiry_repo: IInquiryRepository,
             read_repo: VendorReadPort,
             authorization_port: VendorAuthorizationPort | None = None,
+            package_repo: IServicePackageRepository | None = None,
         ):
             if read_repo is None:
                 raise VendorApplicationConfigurationError(field_errors={"read_repo": ["Vendor read port is required."]})
             self.vendor_repo = vendor_repo
             self.image_repo = image_repo
             self.inquiry_repo = inquiry_repo
+            self.package_repo = package_repo
             self.read_repo = read_repo
             self.authorization_port = authorization_port
 
@@ -49,6 +59,9 @@ class BaseVendorQueryHandler(VendorDTOMapperMixin):
                 | ListInquiriesQuery
                 | GetVendorDashboardSummaryQuery
                 | GetVendorAnalyticsQuery
+                | GetVendorPortfolioQualityTrendQuery
+                | GetVendorVisibilityTrendQuery
+                | GetVendorViewsTrendQuery
                 | ListRecentVendorActivityQuery
             ),
         ) -> None:

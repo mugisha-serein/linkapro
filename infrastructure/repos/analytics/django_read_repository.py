@@ -5,13 +5,27 @@ import uuid
 from django.db.models import Count, Q
 from django.utils import timezone
 
-from application.vendors.analytics.dtos import VendorActivityDTO, VendorAnalyticsDTO, VendorDashboardSummaryDTO
+from application.vendors.analytics.dtos import (
+    VendorActivityDTO,
+    VendorAnalyticsDTO,
+    VendorDashboardSummaryDTO,
+    VendorPortfolioQualityTrendDTO,
+    VendorVisibilityTrendDTO,
+    VendorVisibilityTrendPointDTO,
+    VendorViewsTrendPointDTO,
+)
 from application.vendors.shared.dtos import PageDTO
 from application.vendors.errors import VendorResourceNotFound
 from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
 from domain.vendors.profile.entity import profile_completion_errors_for
 from domain.vendors.shared.pagination import PageRequest
 from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile as DjangoVendorProfile
+from infrastructure.repos.analytics.metrics import (
+    inquiry_response_metrics,
+    portfolio_quality_trend as load_portfolio_quality_trend,
+    total_views_trend,
+    visibility_trend as load_visibility_trend,
+)
 
 
 class DjangoVendorAnalyticsReadRepositoryMixin:
@@ -64,18 +78,52 @@ class DjangoVendorAnalyticsReadRepositoryMixin:
             pagination_mode="cursor" if page.cursor else "offset",
         )
 
+    def total_views_trend(self, vendor_id: uuid.UUID, months: int = 6) -> tuple[VendorViewsTrendPointDTO, ...]:
+        self._require_vendor(vendor_id)
+        return tuple(
+            VendorViewsTrendPointDTO(month=str(point["month"]), views=int(point["views"]))
+            for point in total_views_trend(vendor_id, months)
+        )
+
+    def visibility_trend(self, vendor_id: uuid.UUID, months: int = 6) -> VendorVisibilityTrendDTO:
+        self._require_vendor(vendor_id)
+        trend = load_visibility_trend(vendor_id, months=months)
+        return VendorVisibilityTrendDTO(
+            points=tuple(
+                VendorVisibilityTrendPointDTO(
+                    month=str(point["month"]),
+                    profile_views=int(point["profile_views"]),
+                    marketplace_impressions=(
+                        None
+                        if point["marketplace_impressions"] is None
+                        else int(point["marketplace_impressions"])
+                    ),
+                )
+                for point in trend["points"]
+            ),
+            unavailable_metrics=tuple(str(metric) for metric in trend["unavailable_metrics"]),
+        )
+
+    def portfolio_quality_trend(self, vendor_id: uuid.UUID) -> VendorPortfolioQualityTrendDTO:
+        self._require_vendor(vendor_id)
+        trend = load_portfolio_quality_trend(vendor_id)
+        return VendorPortfolioQualityTrendDTO(
+            current_average_score=(
+                None
+                if trend["current_average_score"] is None
+                else float(trend["current_average_score"])
+            ),
+            scored_images=int(trend["scored_images"]),
+            points=tuple(dict(point) for point in trend["points"]),
+            unavailable_metrics=tuple(str(metric) for metric in trend["unavailable_metrics"]),
+            schema_gap=str(trend["schema_gap"]),
+            proposed_schema=dict(trend["proposed_schema"]),
+        )
+
     def vendor_metrics(self, vendor_id: uuid.UUID) -> dict:
         profile = self._require_vendor(vendor_id)
         now = timezone.now()
-        inquiry_counts = Inquiry.objects.filter(vendor_id=vendor_id).aggregate(
-            total_inquiries=Count("id"),
-            unread_inquiries=Count("id", filter=Q(is_read=False)),
-            read_inquiries=Count("id", filter=Q(is_read=True)),
-            inquiries_mtd=Count(
-                "id",
-                filter=Q(created_at__year=now.year, created_at__month=now.month),
-            ),
-        )
+        inquiry_counts = inquiry_response_metrics(vendor_id, now=now)
         package_counts = ServicePackage.all_objects.filter(
             vendor_id=vendor_id,
             is_deleted=False,

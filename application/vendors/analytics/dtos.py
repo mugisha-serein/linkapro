@@ -45,3 +45,32 @@ class VendorActivityDTO:
     type: str
     message: str
     created_at: str
+
+
+@dataclass(frozen=True)
+class VendorViewsTrendPointDTO:
+    month: str
+    views: int
+
+
+@dataclass(frozen=True)
+class VendorVisibilityTrendPointDTO:
+    month: str
+    profile_views: int
+    marketplace_impressions: int | None
+
+
+@dataclass(frozen=True)
+class VendorVisibilityTrendDTO:
+    points: tuple[VendorVisibilityTrendPointDTO, ...]
+    unavailable_metrics: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class VendorPortfolioQualityTrendDTO:
+    current_average_score: float | None
+    scored_images: int
+    points: tuple[dict[str, object], ...]
+    unavailable_metrics: tuple[str, ...]
+    schema_gap: str
+    proposed_schema: dict[str, object]

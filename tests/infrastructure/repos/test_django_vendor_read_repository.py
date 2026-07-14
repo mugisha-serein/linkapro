@@ -65,3 +65,59 @@ def test_analytics_builds_dto_from_normalized_metrics_mapping():
     assert analytics.avg_response_time_hours is None
     assert analytics.conversion_rate is None
     assert analytics.unavailable_metrics == ("avg_response_time_hours", "conversion_rate")
+
+
+def test_visibility_trend_builds_dto_from_metric_payload(monkeypatch):
+    vendor_id = uuid.uuid4()
+
+    class MetricsReadRepository(DjangoVendorReadRepository):
+        @staticmethod
+        def _require_vendor(vendor_id):
+            return object()
+
+    monkeypatch.setattr(
+        "infrastructure.repos.analytics.django_read_repository.load_visibility_trend",
+        lambda vendor_id, months=6: {
+            "points": (
+                {"month": "2026-07", "profile_views": 2, "marketplace_impressions": None},
+            ),
+            "unavailable_metrics": ("marketplace_search_impressions",),
+        },
+    )
+
+    trend = MetricsReadRepository().visibility_trend(vendor_id, months=1)
+
+    assert trend.points[0].month == "2026-07"
+    assert trend.points[0].profile_views == 2
+    assert trend.points[0].marketplace_impressions is None
+    assert trend.unavailable_metrics == ("marketplace_search_impressions",)
+
+
+def test_portfolio_quality_trend_builds_dto_from_metric_payload(monkeypatch):
+    vendor_id = uuid.uuid4()
+
+    class MetricsReadRepository(DjangoVendorReadRepository):
+        @staticmethod
+        def _require_vendor(vendor_id):
+            return object()
+
+    monkeypatch.setattr(
+        "infrastructure.repos.analytics.django_read_repository.load_portfolio_quality_trend",
+        lambda vendor_id: {
+            "current_average_score": 87.5,
+            "scored_images": 4,
+            "points": [],
+            "unavailable_metrics": ("portfolio_quality_snapshots",),
+            "schema_gap": "A real quality trend requires periodic snapshots.",
+            "proposed_schema": {"model": "PortfolioQualitySnapshot"},
+        },
+    )
+
+    trend = MetricsReadRepository().portfolio_quality_trend(vendor_id)
+
+    assert trend.current_average_score == 87.5
+    assert trend.scored_images == 4
+    assert trend.points == ()
+    assert trend.unavailable_metrics == ("portfolio_quality_snapshots",)
+    assert trend.schema_gap == "A real quality trend requires periodic snapshots."
+    assert trend.proposed_schema == {"model": "PortfolioQualitySnapshot"}

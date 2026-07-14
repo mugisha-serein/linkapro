@@ -55,6 +55,8 @@ def test_portfolio_task_uses_remote_url_when_temp_path_is_stale(monkeypatch):
     assert image.quality_status == PortfolioImage.QualityStatus.PASSED
     assert image.visibility_status == PortfolioImage.VisibilityStatus.WAITING_APPROVAL
     assert image.cloudinary_secure_url == "https://res.cloudinary.com/demo/remote.jpg"
+    assert image.analyzer_score == 90
+    assert image.analyzer_summary == "Image quality preflight passed."
     assert image.temp_upload_path is None
 
 

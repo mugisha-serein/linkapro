@@ -2,7 +2,9 @@ import pytest
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VerificationDocument
+from django.utils import timezone
+
+from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfileViewed, VerificationDocument
 from tests.factories import create_portfolio_image, create_service_package, create_vendor_profile
 
 pytestmark = pytest.mark.django_db
@@ -65,6 +67,8 @@ def test_approved_public_profile_only_exposes_public_media_and_packages(client):
     response = client.get(reverse("public-vendor-profile", args=[vendor.id]))
 
     assert response.status_code == 200
+    view_count = VendorProfileViewed.objects.get(vendor=vendor, view_date=timezone.localdate())
+    assert view_count.view_count == 1
     assert response.data["success"] is True
     assert response.data["code"] == "vendor_public_profile_loaded"
     profile = response.data["data"]
