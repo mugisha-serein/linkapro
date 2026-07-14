@@ -110,7 +110,7 @@ class VendorProfileViewed(models.Model):
             ),
         ]
         indexes = [
-            models.Index(fields=["vendor", "view_date"], name="vendors_profile_view_logged_idx"),
+            models.Index(fields=["vendor", "view_date"], name="vendorsprofileviewlogged_idx"),
         ]
 
     def __str__(self):
