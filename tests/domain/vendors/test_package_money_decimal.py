@@ -3,7 +3,7 @@ from datetime import timedelta
 import uuid
 
 from domain.shared.utils import utc_now
-from domain.vendors.entities import ServicePackage
+from domain.vendors.packages.entity import ServicePackage
 
 
 def test_service_package_converts_float_input_to_decimal_from_string():

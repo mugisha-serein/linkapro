@@ -6,9 +6,9 @@ from decimal import Decimal
 from typing import get_type_hints
 import uuid
 
-from application.vendors.dtos import ServicePackageDTO
-from application.vendors.handlers import VendorCommandHandlers
-from domain.vendors.entities import ServicePackage
+from application.vendors.packages.dtos import ServicePackageDTO
+from application.vendors.shared.handlers import VendorCommandHandlers
+from domain.vendors.packages.entity import ServicePackage
 
 
 def _package(

@@ -5,10 +5,12 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import AuthenticatedActor, SubmitVendorForReviewCommand, UpdateVendorProfileCommand
+from application.vendors.profile.commands import SubmitVendorForReviewCommand, UpdateVendorProfileCommand
+from application.vendors.shared.commands import AuthenticatedActor
 from application.vendors.errors import InvalidVendorCommand
-from application.vendors.handlers import VendorCommandHandlers, _translate_profile_update_validation
-from domain.vendors.errors import InvalidVendorTransition, VendorProfileValidationError
+from application.vendors.profile.handlers import _translate_profile_update_validation
+from application.vendors.shared.handlers import VendorCommandHandlers
+from domain.vendors.profile.errors import InvalidVendorTransition, VendorProfileValidationError
 
 
 class StrictUnusedDependency:

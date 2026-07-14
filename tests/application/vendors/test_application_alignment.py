@@ -11,28 +11,14 @@ from typing import get_args, get_origin, get_type_hints
 
 import pytest
 
-from application.vendors.commands import (
-    ActivateServicePackageCommand,
-    AddPortfolioImageCommand,
-    ApproveVendorCommand,
-    AuthenticatedActor,
-    CreateServicePackageCommand,
-    CreateVendorProfileCommand,
-    DeactivateServicePackageCommand,
-    DeletePortfolioImageCommand,
-    MarkInquiryReadCommand,
-    ModeratorActor,
-    ReorderPortfolioImagesCommand,
-    ReinstateVendorCommand,
-    RejectVendorCommand,
-    ResourceVersion,
-    SendInquiryCommand,
-    SubmitVendorForReviewCommand,
-    SuspendVendorCommand,
-    UpdateServicePackageCommand,
-    UpdateVendorProfileCommand,
-)
-from application.vendors.dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
+from application.vendors.inquiries.commands import MarkInquiryReadCommand, SendInquiryCommand
+from application.vendors.packages.commands import ActivateServicePackageCommand, CreateServicePackageCommand, DeactivateServicePackageCommand, UpdateServicePackageCommand
+from application.vendors.portfolio.commands import AddPortfolioImageCommand, DeletePortfolioImageCommand, ReorderPortfolioImagesCommand
+from application.vendors.profile.commands import ApproveVendorCommand, CreateVendorProfileCommand, ReinstateVendorCommand, RejectVendorCommand, SubmitVendorForReviewCommand, SuspendVendorCommand, UpdateVendorProfileCommand
+from application.vendors.shared.commands import AuthenticatedActor, ModeratorActor, ResourceVersion
+from application.vendors.packages.dtos import ServicePackageDTO
+from application.vendors.portfolio.dtos import PortfolioImageDTO
+from application.vendors.shared.dtos import PageDTO
 from application.vendors.errors import (
     DuplicateVendorProfile,
     InvalidVendorCommand,
@@ -42,46 +28,26 @@ from application.vendors.errors import (
     VendorOperationForbidden,
     VendorResourceNotFound,
 )
-from application.vendors import ports as vendor_ports
-from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
-from application.vendors.ports import (
-    PortfolioReorderUnitOfWork,
-    VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER,
-    VendorAggregateUnitOfWork,
-    VendorIdempotencyCompleted,
-    VendorIdempotencyExpired,
-    VendorIdempotencyInProgress,
-    VendorIdempotencyOutcome,
-    VendorIdempotencyPort,
-    VendorIdempotencyRetryableFailed,
-)
-from application.vendors.queries import (
-    GetVendorAnalyticsQuery,
-    GetVendorDashboardSummaryQuery,
-    GetVendorQuery,
-    ListInquiriesQuery,
-    ListPortfolioImagesQuery,
-    ListRecentVendorActivityQuery,
-    ListServicePackagesQuery,
-)
+from application.vendors.shared import ports as vendor_ports
+from application.vendors.shared.handlers import VendorCommandHandlers
+from application.vendors.shared.query_handlers import VendorQueryHandlers
+from application.vendors.portfolio.ports import PortfolioReorderUnitOfWork
+from application.vendors.shared.ports import VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER, VendorAggregateUnitOfWork, VendorIdempotencyCompleted, VendorIdempotencyExpired, VendorIdempotencyInProgress, VendorIdempotencyOutcome, VendorIdempotencyPort, VendorIdempotencyRetryableFailed
+from application.vendors.analytics.queries import GetVendorAnalyticsQuery, GetVendorDashboardSummaryQuery, ListRecentVendorActivityQuery
+from application.vendors.inquiries.queries import ListInquiriesQuery
+from application.vendors.packages.queries import ListServicePackagesQuery
+from application.vendors.portfolio.queries import ListPortfolioImagesQuery
+from application.vendors.profile.queries import GetVendorQuery
 from domain.shared.utils import utc_now
-from domain.vendors.entities import (
-    Inquiry,
-    PackageApprovalStatus,
-    PortfolioImage,
-    ServiceCategory,
-    ServicePackage,
-    VendorProfile,
-    VendorStatus,
-)
-from domain.vendors.events import (
-    InquiryReceived,
-    PortfolioMediaReordered,
-    ServicePackageCreated,
-    VendorApproved,
-    VendorProfileUpdated,
-)
-from domain.vendors.interfaces import Page, PageRequest
+from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.packages.entity import PackageApprovalStatus, ServicePackage
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile, VendorStatus
+from domain.vendors.inquiries.events import InquiryReceived
+from domain.vendors.packages.events import ServicePackageCreated
+from domain.vendors.portfolio.events import PortfolioMediaReordered
+from domain.vendors.profile.events import VendorApproved, VendorProfileUpdated
+from domain.vendors.shared.pagination import Page, PageRequest
 
 
 def _actor(user_id: uuid.UUID | None = None) -> AuthenticatedActor:

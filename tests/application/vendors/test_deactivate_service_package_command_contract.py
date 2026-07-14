@@ -5,10 +5,8 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import (
-    AuthenticatedActor,
-    DeactivateServicePackageCommand,
-)
+from application.vendors.packages.commands import DeactivateServicePackageCommand
+from application.vendors.shared.commands import AuthenticatedActor
 
 
 def test_deactivate_service_package_command_contains_only_current_use_case_inputs():

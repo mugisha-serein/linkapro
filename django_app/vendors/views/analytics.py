@@ -5,14 +5,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from application.vendors.queries import (
-    GetVendorAnalyticsQuery,
-    GetVendorDashboardSummaryQuery,
-    ListRecentVendorActivityQuery,
-)
+from application.vendors.analytics.queries import GetVendorAnalyticsQuery, GetVendorDashboardSummaryQuery, ListRecentVendorActivityQuery
 from django_app.common.api_responses import api_error
 from django_app.common.permissions import IsVendor
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.shared.pagination import PageRequest
 
 from ..api_contracts import map_vendor_exception
 from ..services import get_query_handlers

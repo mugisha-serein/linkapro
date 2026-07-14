@@ -7,11 +7,11 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import AuthenticatedActor
-from application.vendors.dtos import VendorAnalyticsDTO
-from application.vendors.handlers import VendorQueryHandlers
-from application.vendors.ports import VendorReadPort
-from application.vendors.queries import GetVendorAnalyticsQuery
+from application.vendors.shared.commands import AuthenticatedActor
+from application.vendors.analytics.dtos import VendorAnalyticsDTO
+from application.vendors.shared.query_handlers import VendorQueryHandlers
+from application.vendors.analytics.ports import VendorReadPort
+from application.vendors.analytics.queries import GetVendorAnalyticsQuery
 
 
 class StrictUnusedRepository:

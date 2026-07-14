@@ -14,3 +14,11 @@ class GetVendorQuery:
     def __post_init__(self) -> None:
         object.__setattr__(self, "actor", _coerce_actor(self.actor))
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
+
+
+@dataclass(frozen=True)
+class GetVendorOnboardingStateQuery:
+    actor: AuthenticatedActor
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))

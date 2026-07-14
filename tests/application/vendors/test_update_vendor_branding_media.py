@@ -4,12 +4,12 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import AuthenticatedActor
+from application.vendors.shared.commands import AuthenticatedActor
 from application.vendors.errors import VendorOperationForbidden, VendorVersionConflict
-from application.vendors.handlers import VendorCommandHandlers
-from application.vendors.vendor_branding_commands import UpdateVendorBrandingMediaCommand
-from domain.vendors.entities import ServiceCategory, VendorProfile
-from domain.vendors.errors import VendorProfileValidationError
+from application.vendors.shared.handlers import VendorCommandHandlers
+from application.vendors.profile.commands import UpdateVendorBrandingMediaCommand
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile
+from domain.vendors.profile.errors import VendorProfileValidationError
 
 
 class StrictUnusedDependency:

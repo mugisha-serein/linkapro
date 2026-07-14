@@ -4,11 +4,8 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import (
-    AuthenticatedActor,
-    ReorderPortfolioImagesCommand,
-    ResourceVersion,
-)
+from application.vendors.portfolio.commands import ReorderPortfolioImagesCommand
+from application.vendors.shared.commands import AuthenticatedActor, ResourceVersion
 from application.vendors.errors import InvalidVendorCommand
 
 

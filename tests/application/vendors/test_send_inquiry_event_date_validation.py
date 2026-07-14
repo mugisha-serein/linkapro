@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import SendInquiryCommand
+from application.vendors.inquiries.commands import SendInquiryCommand
 from application.vendors.errors import InvalidVendorCommand
 
 

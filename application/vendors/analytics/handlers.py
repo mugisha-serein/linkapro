@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.shared.pagination import PageRequest
 from application.vendors.analytics.dtos import VendorActivityDTO, VendorAnalyticsDTO, VendorDashboardSummaryDTO
 from application.vendors.analytics.queries import GetVendorAnalyticsQuery, GetVendorDashboardSummaryQuery, ListRecentVendorActivityQuery
 from application.vendors.errors import VendorResourceNotFound

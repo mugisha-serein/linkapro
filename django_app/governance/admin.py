@@ -11,11 +11,8 @@ from .services import get_command_handlers
 from application.governance.commands import (
     BanUserCommand, ReinstateUserCommand, ResolveFlagCommand, GenerateMetricsCommand
 )
-from application.vendors.commands import (
-    ApproveVendorCommand,
-    ModeratorActor,
-    RejectVendorCommand,
-)
+from application.vendors.profile.commands import ApproveVendorCommand, RejectVendorCommand
+from application.vendors.shared.commands import ModeratorActor
 from django_app.vendors.services import get_command_handlers as get_vendor_command_handlers
 
 

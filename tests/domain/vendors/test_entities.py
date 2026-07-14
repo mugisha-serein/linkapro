@@ -6,26 +6,15 @@ import pytest
 from freezegun import freeze_time
 
 from domain.shared.utils import utc_now
-from domain.vendors.entities import (
-    Inquiry,
-    PortfolioImage,
-    PortfolioQualityStatus,
-    PortfolioVisibilityStatus,
-    ServiceCategory,
-    ServicePackage,
-    VendorProfile,
-    VendorStatus,
-)
-from domain.vendors.errors import (
-    InquiryValidationError,
-    InvalidPackageTransition,
-    InvalidPortfolioTransition,
-    InvalidVendorTransition,
-    PackageValidationError,
-    PortfolioValidationError,
-    VendorProfileValidationError,
-)
-from domain.vendors.events import VendorProfileUpdated
+from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.packages.entity import ServicePackage
+from domain.vendors.portfolio.entity import PortfolioImage, PortfolioQualityStatus, PortfolioVisibilityStatus
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile, VendorStatus
+from domain.vendors.inquiries.errors import InquiryValidationError
+from domain.vendors.packages.errors import InvalidPackageTransition, PackageValidationError
+from domain.vendors.portfolio.errors import InvalidPortfolioTransition, PortfolioValidationError
+from domain.vendors.profile.errors import InvalidVendorTransition, VendorProfileValidationError
+from domain.vendors.profile.events import VendorProfileUpdated
 
 
 def valid_profile(**overrides):

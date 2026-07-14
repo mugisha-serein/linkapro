@@ -5,9 +5,10 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.db.models import F
 
-from domain.vendors.errors import ConcurrentVendorUpdate
-from domain.vendors.entities import Inquiry as DomainInquiry
-from domain.vendors.interfaces import IInquiryRepository, Page, PageRequest
+from domain.vendors.shared.aggregate import ConcurrentVendorUpdate
+from domain.vendors.inquiries.entity import Inquiry as DomainInquiry
+from domain.vendors.inquiries.interfaces import IInquiryRepository
+from domain.vendors.shared.pagination import Page, PageRequest
 from django_app.vendors.models import Inquiry as DjangoInquiry, VendorProfile as DjangoVendor
 from infrastructure.repos.exceptions import RepositoryNotFoundError
 

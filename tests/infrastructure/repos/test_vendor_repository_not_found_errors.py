@@ -4,13 +4,10 @@ import uuid
 
 import pytest
 
-from domain.vendors.entities import (
-    Inquiry,
-    PortfolioImage,
-    ServiceCategory,
-    ServicePackage,
-    VendorProfile,
-)
+from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.packages.entity import ServicePackage
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile
 from infrastructure.repos.inquiries import django_repository as inquiry_repo_module
 from infrastructure.repos.inquiries.django_repository import DjangoInquiryRepository
 from infrastructure.repos.packages import django_repository as package_repo_module

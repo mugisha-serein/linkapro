@@ -32,48 +32,29 @@ from .models import VendorProfile as VendorProfileModel
 from .models import ServicePackage as ServicePackageModel
 from .throttles import PublicVendorInquiryThrottle
 from .services import get_command_handlers, get_query_handlers
-from application.vendors.commands import (
-    AuthenticatedActor,
-    CreateVendorProfileCommand,
-    UpdateVendorProfileCommand,
-    SubmitVendorForReviewCommand,
-    AddPortfolioImageCommand,
-    DeletePortfolioImageCommand,
-    ReorderPortfolioImagesCommand,
-    CreateServicePackageCommand,
-    UpdateServicePackageCommand,
-    DeactivateServicePackageCommand,
-    ActivateServicePackageCommand,
-    SendInquiryCommand,
-    ResourceVersion,
-)
-from application.vendors.queries import (
-    GetVendorQuery,
-    ListInquiriesQuery,
-    ListPortfolioImagesQuery,
-    ListServicePackagesQuery,
-)
-from application.vendors.dtos import (
-    VendorProfileDTO,
-    PortfolioImageDTO,
-    ServicePackageDTO,
-    InquiryDTO,
-)
-from application.vendors.profile.onboarding_policy import (
-    SETUP_ROUTE,
-    build_vendor_onboarding_contract,
-    vendor_field_errors,
-)
-from domain.vendors.package_rules import PackageValidationError
-from domain.vendors.errors import ConcurrentVendorUpdate, VendorDomainError
-from domain.vendors.interfaces import PageRequest
+from application.vendors.inquiries.commands import SendInquiryCommand
+from application.vendors.packages.commands import CreateServicePackageCommand, UpdateServicePackageCommand, DeactivateServicePackageCommand, ActivateServicePackageCommand
+from application.vendors.portfolio.commands import AddPortfolioImageCommand, DeletePortfolioImageCommand, ReorderPortfolioImagesCommand
+from application.vendors.profile.commands import CreateVendorProfileCommand, UpdateVendorProfileCommand, SubmitVendorForReviewCommand
+from application.vendors.shared.commands import AuthenticatedActor, ResourceVersion
+from application.vendors.inquiries.queries import ListInquiriesQuery
+from application.vendors.packages.queries import ListServicePackagesQuery
+from application.vendors.portfolio.queries import ListPortfolioImagesQuery
+from application.vendors.profile.queries import GetVendorOnboardingStateQuery, GetVendorQuery
+from application.vendors.inquiries.dtos import InquiryDTO
+from application.vendors.packages.dtos import ServicePackageDTO
+from application.vendors.portfolio.dtos import PortfolioImageDTO
+from application.vendors.profile.dtos import VendorProfileDTO
+from domain.vendors.profile.entity import VendorProfile, profile_completion_errors_for
+from domain.vendors.packages.rules import PackageValidationError
+from domain.vendors.shared.aggregate import ConcurrentVendorUpdate, VendorDomainError
+from domain.vendors.shared.pagination import PageRequest
 from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
 from .api_contracts import map_vendor_exception, resolve_expected_version, response_with_version, vendor_error_response
 
 
 VENDOR_PROFILE_INCOMPLETE_CODE = "vendor_profile_incomplete"
 VENDOR_PROFILE_INCOMPLETE_DETAIL = "Vendor profile setup is required before accessing this resource."
-VENDOR_PROFILE_SETUP_REDIRECT = SETUP_ROUTE
 VENDOR_SUSPENDED_CODE = "vendor_suspended"
 VENDOR_SUSPENDED_DETAIL = "Your vendor account is suspended. Please contact support."
 ALLOWED_PORTFOLIO_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -91,10 +72,135 @@ VENDOR_COVER_IMAGE_INVALID_CODE = "vendor_cover_image_invalid"
 VENDOR_PROFILE_MEDIA_UPLOAD_FAILED_CODE = "vendor_profile_media_upload_failed"
 VENDOR_PACKAGE_INTEGRITY_CODE = "vendor_package_integrity_error"
 VENDOR_PACKAGE_PAGINATION_CODE = "vendor_package_pagination_invalid"
+CREATE_VENDOR_PROFILE_ACTION = {"method": "POST", "path": "/api/django/vendors/profile/"}
 
 
 def _actor(request) -> AuthenticatedActor:
     return AuthenticatedActor(user_id=request.user.id)
+
+
+def _profile_dto_from_model(profile: VendorProfileModel) -> VendorProfileDTO:
+    return VendorProfileDTO(
+        id=profile.id,
+        user_id=profile.user_id,
+        business_name=profile.business_name,
+        category=profile.category,
+        description=profile.description,
+        service_area=profile.service_area,
+        contact_email=profile.contact_email,
+        contact_phone=profile.contact_phone,
+        custom_category=profile.custom_category,
+        website=profile.website,
+        profile_image_url=profile.profile_image_url,
+        cover_image_url=profile.cover_image_url,
+        status=profile.status,
+        submitted_at=profile.submitted_at,
+        approved_at=profile.approved_at,
+        rejected_at=profile.rejected_at,
+        rejection_reason=profile.rejection_reason,
+        version=profile.version,
+    )
+
+
+def _profile_completion_errors(profile: object | None) -> dict[str, list[str]]:
+    if profile is None:
+        return {}
+    if hasattr(profile, "get_profile_completion_errors"):
+        return profile.get_profile_completion_errors()
+    return profile_completion_errors_for(profile, VendorProfile.required_profile_fields())
+
+
+def _vendor_onboarding_state(profile: object | None) -> dict:
+    if profile is None:
+        return {
+            "profile_status": "missing",
+            "can_access_dashboard": False,
+            "must_complete_profile": True,
+            "can_submit_for_review": False,
+            "marketplace_visible": False,
+            "action": dict(CREATE_VENDOR_PROFILE_ACTION),
+        }
+
+    raw_status = getattr(profile, "status", "draft") or "draft"
+    status_value = str(getattr(raw_status, "value", raw_status))
+    field_errors = _profile_completion_errors(profile)
+    is_complete = not field_errors
+    is_draft = status_value == VendorProfileModel.Status.DRAFT
+
+    if status_value == VendorProfileModel.Status.APPROVED:
+        return {
+            "profile_status": status_value,
+            "can_access_dashboard": True,
+            "must_complete_profile": False,
+            "can_submit_for_review": False,
+            "marketplace_visible": True,
+            "action": None,
+        }
+    if status_value == VendorProfileModel.Status.PENDING_REVIEW:
+        return {
+            "profile_status": status_value,
+            "can_access_dashboard": True,
+            "must_complete_profile": False,
+            "can_submit_for_review": False,
+            "marketplace_visible": False,
+            "action": None,
+        }
+    if status_value == VendorProfileModel.Status.SUSPENDED:
+        return {
+            "profile_status": status_value,
+            "can_access_dashboard": False,
+            "must_complete_profile": False,
+            "can_submit_for_review": False,
+            "marketplace_visible": False,
+            "action": None,
+        }
+    if status_value == VendorProfileModel.Status.REJECTED:
+        return {
+            "profile_status": status_value,
+            "can_access_dashboard": False,
+            "must_complete_profile": True,
+            "can_submit_for_review": is_complete,
+            "marketplace_visible": False,
+            "action": None,
+        }
+    return {
+        "profile_status": status_value,
+        "can_access_dashboard": False,
+        "must_complete_profile": True,
+        "can_submit_for_review": is_complete,
+        "marketplace_visible": False,
+        "action": dict(CREATE_VENDOR_PROFILE_ACTION) if is_draft and not is_complete else None,
+    }
+
+
+def _get_vendor_onboarding_state(request) -> dict:
+    try:
+        return get_query_handlers().get_vendor_onboarding_state(GetVendorOnboardingStateQuery(actor=_actor(request)))
+    except VendorDomainError:
+        profile = VendorProfileModel.objects.filter(user_id=request.user.id).first()
+        if profile is None:
+            return _vendor_onboarding_state(None)
+        return _vendor_onboarding_state(_profile_dto_from_model(profile))
+
+
+def _onboarding_message(profile: object | None, onboarding: dict) -> str:
+    status_value = onboarding["profile_status"]
+    if status_value == "missing" or onboarding.get("action"):
+        return "Complete your vendor profile before continuing."
+    if status_value == VendorProfileModel.Status.APPROVED:
+        return "Your vendor profile is approved and visible in the marketplace."
+    if status_value == VendorProfileModel.Status.PENDING_REVIEW:
+        return "Your profile is under review. Marketplace visibility starts after admin approval."
+    if status_value == VendorProfileModel.Status.SUSPENDED:
+        return VENDOR_SUSPENDED_DETAIL
+    if status_value == VendorProfileModel.Status.REJECTED:
+        return (
+            getattr(profile, "rejection_reason", None)
+            or "Your vendor profile needs updates before resubmission."
+        )
+    if onboarding.get("can_submit_for_review"):
+        return "Submit your vendor profile for admin review."
+    return "Complete your vendor profile before continuing."
 
 
 def _get_public_marketplace_stats(vendor_id) -> dict:
@@ -119,29 +225,30 @@ def _vendor_profile_incomplete_response(
     profile: VendorProfileDTO | None = None,
     field_errors: dict[str, list[str]] | None = None,
 ) -> Response:
-    onboarding = build_vendor_onboarding_contract(profile)
+    onboarding = _vendor_onboarding_state(profile)
+    message = _onboarding_message(profile, onboarding)
     return Response(
         {
             "code": VENDOR_PROFILE_INCOMPLETE_CODE,
-            "message": onboarding["message"],
-            "detail": onboarding["message"] or VENDOR_PROFILE_INCOMPLETE_DETAIL,
-            "redirect_to": onboarding["redirect_to"],
+            "message": message,
+            "detail": message or VENDOR_PROFILE_INCOMPLETE_DETAIL,
             "field_errors": field_errors or {},
             "onboarding": onboarding,
+            "action": onboarding["action"],
         },
         status=status.HTTP_403_FORBIDDEN,
     )
 
 
 def _vendor_suspended_response() -> Response:
-    onboarding = build_vendor_onboarding_contract(type("SuspendedProfile", (), {"status": VendorProfileModel.Status.SUSPENDED})())
+    onboarding = _vendor_onboarding_state(type("SuspendedProfile", (), {"status": VendorProfileModel.Status.SUSPENDED})())
     return Response(
         {
             "code": VENDOR_SUSPENDED_CODE,
             "message": VENDOR_SUSPENDED_DETAIL,
             "detail": VENDOR_SUSPENDED_DETAIL,
-            "redirect_to": onboarding["redirect_to"],
             "onboarding": onboarding,
+            "action": onboarding["action"],
         },
         status=status.HTTP_403_FORBIDDEN,
     )
@@ -149,20 +256,27 @@ def _vendor_suspended_response() -> Response:
 
 def _get_current_vendor_profile(request, *, require_workspace: bool = False):
     query_handlers = get_query_handlers()
-    profile = query_handlers.get_vendor_by_user(request.user.id)
+    try:
+        profile = query_handlers.get_vendor_by_user(request.user.id)
+    except VendorDomainError:
+        model_profile = VendorProfileModel.objects.filter(user_id=request.user.id).first()
+        if model_profile is None:
+            raise
+        profile = _profile_dto_from_model(model_profile)
     if not profile:
+        onboarding = _vendor_onboarding_state(None)
         return None, Response(
             {
                 "code": VENDOR_PROFILE_INCOMPLETE_CODE,
                 "message": "Complete your vendor profile before continuing.",
                 "detail": "No vendor profile found.",
-                "redirect_to": VENDOR_PROFILE_SETUP_REDIRECT,
                 "field_errors": {},
-                "onboarding": build_vendor_onboarding_contract(None),
+                "onboarding": onboarding,
+                "action": onboarding["action"],
             },
             status=status.HTTP_404_NOT_FOUND,
         )
-    completion_errors = vendor_field_errors(profile)
+    completion_errors = _profile_completion_errors(profile)
     if require_workspace:
         if profile.status == VendorProfileModel.Status.SUSPENDED:
             return None, _vendor_suspended_response()
@@ -172,7 +286,7 @@ def _get_current_vendor_profile(request, *, require_workspace: bool = False):
 
 
 def _serialize_profile(dto: VendorProfileDTO, *, message: str | None = None) -> dict:
-    onboarding = build_vendor_onboarding_contract(dto)
+    onboarding = _vendor_onboarding_state(dto)
     payload = {
         "id": str(dto.id),
         "user_id": str(dto.user_id),
@@ -193,7 +307,7 @@ def _serialize_profile(dto: VendorProfileDTO, *, message: str | None = None) -> 
         "rejection_reason": dto.rejection_reason,
         "version": dto.version,
         "onboarding": onboarding,
-        "message": message or onboarding["message"],
+        "message": message or _onboarding_message(dto, onboarding),
     }
     return payload
 
@@ -203,14 +317,14 @@ def _validation_error_response(errors, *, profile: VendorProfileDTO | None = Non
         key: [str(message) for message in value]
         for key, value in dict(errors).items()
     }
-    onboarding = build_vendor_onboarding_contract(profile)
+    onboarding = _vendor_onboarding_state(profile)
     return Response(
         {
             "code": VENDOR_PROFILE_INCOMPLETE_CODE,
             "message": "Please fix the highlighted profile fields.",
             "field_errors": field_errors,
-            "redirect_to": onboarding["redirect_to"],
             "onboarding": onboarding,
+            "action": onboarding["action"],
         },
         status=status.HTTP_400_BAD_REQUEST,
     )
@@ -228,6 +342,52 @@ def _stable_package_integrity_response(exc: Exception, *, status_code=status.HTT
         },
         status=status_code,
     )
+
+
+def _message_from_response(response: Response, fallback: str) -> str:
+    data = response.data if isinstance(response.data, dict) else {}
+    return str(data.get("message") or data.get("detail") or fallback)
+
+
+def _add_success_contract(response: Response, *, code: str, message: str) -> Response:
+    if isinstance(response.data, dict):
+        response.data.setdefault("success", True)
+        response.data.setdefault("code", code)
+        response.data.setdefault("message", message)
+    return response
+
+
+def _add_error_contract(response: Response, *, code: str, message: str) -> Response:
+    if not isinstance(response.data, dict):
+        return response
+
+    field_errors = response.data.get("field_errors")
+    if field_errors is None:
+        field_errors = {
+            key: value
+            for key, value in response.data.items()
+            if isinstance(value, list)
+        }
+
+    response.data.setdefault("success", False)
+    response.data.setdefault("code", code)
+    response.data.setdefault("message", _message_from_response(response, message))
+    response.data.setdefault("detail", response.data["message"])
+    response.data.setdefault("field_errors", field_errors or {})
+    return response
+
+
+def _normalize_response_contract(
+    response: Response,
+    *,
+    success_code: str,
+    success_message: str,
+    error_code: str,
+    error_message: str,
+) -> Response:
+    if response.status_code >= status.HTTP_400_BAD_REQUEST:
+        return _add_error_contract(response, code=error_code, message=error_message)
+    return _add_success_contract(response, code=success_code, message=success_message)
 
 
 def _page_request_from_query(request) -> tuple[PageRequest | None, Response | None]:

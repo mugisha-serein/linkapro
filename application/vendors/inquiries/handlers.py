@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 
-from domain.vendors.entities import Inquiry
-from domain.vendors.inquiry_policy import ensure_vendor_can_receive_inquiry
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.inquiries.rules import ensure_vendor_can_receive_inquiry
+from domain.vendors.shared.pagination import PageRequest
 from application.vendors.inquiries.commands import MarkInquiryReadCommand, SendInquiryCommand
 from application.vendors.inquiries.dtos import InquiryDTO
 from application.vendors.inquiries.queries import ListInquiriesQuery

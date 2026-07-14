@@ -5,8 +5,8 @@ from django.db.models import Max, Q
 from django.utils import timezone
 from django_app.common.models import SoftDeleteModel
 from django_app.identity.models import User
-from domain.vendors.entities import VendorProfile as DomainVendorProfile
-from domain.vendors.entities import profile_completion_errors_for
+from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
+from domain.vendors.profile.entity import profile_completion_errors_for
 
 VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS = 15
 

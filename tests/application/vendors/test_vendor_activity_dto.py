@@ -7,12 +7,13 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import AuthenticatedActor
-from application.vendors.dtos import PageDTO, VendorActivityDTO
-from application.vendors.handlers import VendorQueryHandlers
-from application.vendors.ports import VendorReadPort
-from application.vendors.queries import ListRecentVendorActivityQuery
-from domain.vendors.interfaces import PageRequest
+from application.vendors.shared.commands import AuthenticatedActor
+from application.vendors.analytics.dtos import VendorActivityDTO
+from application.vendors.shared.dtos import PageDTO
+from application.vendors.shared.query_handlers import VendorQueryHandlers
+from application.vendors.analytics.ports import VendorReadPort
+from application.vendors.analytics.queries import ListRecentVendorActivityQuery
+from domain.vendors.shared.pagination import PageRequest
 
 
 class StrictUnusedRepository:

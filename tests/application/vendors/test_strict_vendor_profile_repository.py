@@ -5,8 +5,9 @@ import uuid
 
 import pytest
 
-from domain.vendors.entities import VendorProfile, VendorStatus
-from domain.vendors.interfaces import IVendorProfileRepository, PageRequest
+from domain.vendors.profile.entity import VendorProfile, VendorStatus
+from domain.vendors.profile.interfaces import IVendorProfileRepository
+from domain.vendors.shared.pagination import PageRequest
 from tests.application.vendors.strict_vendor_profile_repository import (
     StrictVendorProfileRepository,
 )

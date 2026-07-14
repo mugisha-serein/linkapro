@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from domain.vendors.entities import ServicePackage, VendorProfile, VendorStatus
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.packages.entity import ServicePackage
+from domain.vendors.profile.entity import VendorProfile, VendorStatus
+from domain.vendors.shared.pagination import PageRequest
 from application.vendors.packages.commands import (
     ActivateServicePackageCommand,
     ApproveServicePackageCommand,

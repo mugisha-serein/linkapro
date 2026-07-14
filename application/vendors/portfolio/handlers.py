@@ -3,8 +3,9 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from domain.vendors.entities import PortfolioImage, VendorProfile, VendorStatus
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import VendorProfile, VendorStatus
+from domain.vendors.shared.pagination import PageRequest
 from application.vendors.errors import InvalidVendorCommand, VendorOperationForbidden, VendorResourceNotFound
 from application.vendors.portfolio.commands import (
     AddPortfolioImageCommand,

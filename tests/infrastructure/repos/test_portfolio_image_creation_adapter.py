@@ -7,7 +7,7 @@ import pytest
 from django.db import IntegrityError
 
 from application.vendors.errors import VendorConflict, VendorResourceNotFound
-from domain.vendors.entities import PortfolioImage
+from domain.vendors.portfolio.entity import PortfolioImage
 from django_app.identity.models import User
 from django_app.vendors.models import PortfolioImage as DjangoImage
 from django_app.vendors.models import VendorProfile

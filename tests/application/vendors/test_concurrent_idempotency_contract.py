@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from threading import Event, Lock
 import uuid
 
-from application.vendors.commands import AuthenticatedActor, CreateVendorProfileCommand
-from application.vendors.handlers import VendorCommandHandlers
+from application.vendors.profile.commands import CreateVendorProfileCommand
+from application.vendors.shared.commands import AuthenticatedActor
+from application.vendors.shared.handlers import VendorCommandHandlers
 
 
 @dataclass

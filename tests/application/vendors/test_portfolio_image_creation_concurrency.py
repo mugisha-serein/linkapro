@@ -8,13 +8,15 @@ from typing import get_type_hints
 
 import pytest
 
-import application.vendors.ports as vendor_ports
-from application.vendors.commands import AddPortfolioImageCommand, AuthenticatedActor
+import application.vendors.shared.ports as vendor_ports
+from application.vendors.portfolio.commands import AddPortfolioImageCommand
+from application.vendors.shared.commands import AuthenticatedActor
 from application.vendors.errors import VendorApplicationConfigurationError
-from application.vendors.handlers import VendorCommandHandlers
-from application.vendors.ports import PortfolioImageCreationPort
+from application.vendors.shared.handlers import VendorCommandHandlers
+from application.vendors.portfolio.ports import PortfolioImageCreationPort
 from domain.shared.utils import utc_now
-from domain.vendors.entities import PortfolioImage, ServiceCategory, VendorProfile, VendorStatus
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile, VendorStatus
 
 
 class StrictUnusedDependency:

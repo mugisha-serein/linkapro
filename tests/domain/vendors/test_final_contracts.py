@@ -33,13 +33,11 @@ from domain.vendors import (
     VendorProfileValidationError,
     VendorSubmittedForReview,
 )
-from domain.vendors.interfaces import (
-    IInquiryRepository,
-    IPortfolioImageRepository,
-    IServicePackageRepository,
-    IVendorProfileRepository,
-)
-from domain.vendors.package_edit_policy import mark_vendor_package_public_edit
+from domain.vendors.inquiries.interfaces import IInquiryRepository
+from domain.vendors.packages.interfaces import IServicePackageRepository
+from domain.vendors.portfolio.interfaces import IPortfolioImageRepository
+from domain.vendors.profile.interfaces import IVendorProfileRepository
+from domain.vendors.packages.rules import mark_vendor_package_public_edit
 
 
 def profile_data(**overrides):

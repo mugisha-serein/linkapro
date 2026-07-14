@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import Any, Callable
 import uuid
 
-from domain.vendors.entities import VendorProfile, VendorStatus
-from domain.vendors.interfaces import IVendorProfileRepository, Page, PageRequest
+from domain.vendors.profile.entity import VendorProfile, VendorStatus
+from domain.vendors.profile.interfaces import IVendorProfileRepository
+from domain.vendors.shared.pagination import Page, PageRequest
 
 
 class StrictVendorProfileRepository(IVendorProfileRepository):

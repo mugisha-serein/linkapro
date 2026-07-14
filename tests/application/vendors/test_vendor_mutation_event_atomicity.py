@@ -4,10 +4,11 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import AuthenticatedActor, UpdateVendorProfileCommand
-from application.vendors.handlers import VendorCommandHandlers
-from domain.vendors.entities import VendorProfile
-from domain.vendors.events import VendorProfileUpdated
+from application.vendors.profile.commands import UpdateVendorProfileCommand
+from application.vendors.shared.commands import AuthenticatedActor
+from application.vendors.shared.handlers import VendorCommandHandlers
+from domain.vendors.profile.entity import VendorProfile
+from domain.vendors.profile.events import VendorProfileUpdated
 
 
 class StrictUnusedDependency:

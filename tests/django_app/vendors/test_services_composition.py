@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
+from application.vendors.shared.handlers import VendorCommandHandlers
+from application.vendors.shared.query_handlers import VendorQueryHandlers
 from django_app.vendors.adapters import (
     DjangoInquiryAbuseProtectionAdapter,
     DjangoVendorAuthorizationAdapter,

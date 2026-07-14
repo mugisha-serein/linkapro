@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
-from application.vendors.ports import (
-    InquiryAbuseProtectionPort,
-    PortfolioImageCreationPort,
-    VendorAggregateUnitOfWork,
-    VendorAuthorizationPort,
-)
+from application.vendors.shared.handlers import VendorCommandHandlers
+from application.vendors.shared.query_handlers import VendorQueryHandlers
+from application.vendors.inquiries.ports import InquiryAbuseProtectionPort
+from application.vendors.portfolio.ports import PortfolioImageCreationPort
+from application.vendors.shared.ports import VendorAggregateUnitOfWork, VendorAuthorizationPort
 from infrastructure.adapters.django_vendor_idempotency import DjangoVendorIdempotencyAdapter
 from infrastructure.repos.inquiries.django_repository import DjangoInquiryRepository
 from infrastructure.repos.packages.django_repository import DjangoServicePackageRepository

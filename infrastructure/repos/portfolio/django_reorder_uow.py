@@ -7,7 +7,7 @@ from django.db import transaction
 from django.db.models import F, Max
 
 from application.vendors.errors import InvalidVendorCommand, VendorResourceNotFound, VendorVersionConflict
-from domain.vendors.entities import PortfolioImage
+from domain.vendors.portfolio.entity import PortfolioImage
 from django_app.vendors.models import PortfolioImage as DjangoImage
 
 from .django_repository import DjangoPortfolioImageRepository

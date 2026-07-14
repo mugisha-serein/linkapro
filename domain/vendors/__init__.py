@@ -65,6 +65,8 @@ from domain.vendors.profile import (
     VendorStatus,
     VendorSubmittedForReview,
     VendorSuspended,
+    is_draft_incomplete,
+    is_pending_review,
     profile_completion_errors_for,
 )
 from domain.vendors.shared import (
@@ -139,6 +141,8 @@ __all__ = [
     "coerce_package_price",
     "effective_next_edit_allowed_at",
     "ensure_vendor_package_edit_allowed",
+    "is_draft_incomplete",
+    "is_pending_review",
     "mark_vendor_package_public_edit",
     "package_public_edit_markers",
     "package_public_fields_changed",

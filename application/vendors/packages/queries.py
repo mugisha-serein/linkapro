@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import uuid
 
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.shared.pagination import PageRequest
 from application.vendors.shared.commands import AuthenticatedActor
 from application.vendors.shared.queries import _coerce_actor, _coerce_uuid
 

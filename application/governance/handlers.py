@@ -11,7 +11,7 @@ from domain.governance.interfaces import (
 )
 from domain.governance.events import AdminActionPerformed
 
-from domain.vendors.interfaces import IVendorProfileRepository
+from domain.vendors.profile.interfaces import IVendorProfileRepository
 from domain.identity.interfaces import IUserRepository
 
 from .commands import *

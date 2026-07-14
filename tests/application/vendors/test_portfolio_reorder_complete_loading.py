@@ -4,14 +4,11 @@ import inspect
 from typing import Sequence, get_type_hints
 import uuid
 
-from application.vendors.commands import (
-    AuthenticatedActor,
-    ReorderPortfolioImagesCommand,
-    ResourceVersion,
-)
-from application.vendors.handlers import VendorCommandHandlers
-from application.vendors.ports import PortfolioReorderUnitOfWork
-from domain.vendors.entities import PortfolioImage
+from application.vendors.portfolio.commands import ReorderPortfolioImagesCommand
+from application.vendors.shared.commands import AuthenticatedActor, ResourceVersion
+from application.vendors.shared.handlers import VendorCommandHandlers
+from application.vendors.portfolio.ports import PortfolioReorderUnitOfWork
+from domain.vendors.portfolio.entity import PortfolioImage
 
 
 class StrictUnusedDependency:

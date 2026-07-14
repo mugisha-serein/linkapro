@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import uuid
 
-from application.vendors.dtos import (
-    PageDTO,
-    ServicePackageDTO,
-)
-from application.vendors.ports import VendorReadPort
-from domain.vendors.interfaces import PageRequest
+from application.vendors.packages.dtos import ServicePackageDTO
+from application.vendors.shared.dtos import PageDTO
+from application.vendors.analytics.ports import VendorReadPort
+from domain.vendors.shared.pagination import PageRequest
 from django_app.vendors.models import ServicePackage
 from infrastructure.repos.analytics.django_read_repository import DjangoVendorAnalyticsReadRepositoryMixin
 

@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from application.vendors.errors import VendorApplicationConfigurationError
-from domain.vendors.entities import ServiceCategory, VendorProfile
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile
 from django_app.identity.models import User
 from django_app.vendors.models import VendorDomainEventOutbox
 from django_app.vendors.models import VendorProfile as DjangoVendorProfile

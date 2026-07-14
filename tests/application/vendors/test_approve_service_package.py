@@ -5,19 +5,16 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import (
-    ApproveServicePackageCommand,
-    AuthenticatedActor,
-    ModeratorActor,
-)
+from application.vendors.packages.commands import ApproveServicePackageCommand
+from application.vendors.shared.commands import AuthenticatedActor, ModeratorActor
 from application.vendors.errors import (
     InvalidVendorCommand,
     VendorOperationForbidden,
     VendorResourceNotFound,
     VendorVersionConflict,
 )
-from application.vendors.handlers import VendorCommandHandlers
-from domain.vendors.entities import PackageApprovalStatus, ServicePackage
+from application.vendors.shared.handlers import VendorCommandHandlers
+from domain.vendors.packages.entity import PackageApprovalStatus, ServicePackage
 
 
 class StrictUnusedDependency:

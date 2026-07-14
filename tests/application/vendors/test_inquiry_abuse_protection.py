@@ -7,12 +7,12 @@ from typing import get_type_hints
 
 import pytest
 
-from application.vendors.commands import SendInquiryCommand
+from application.vendors.inquiries.commands import SendInquiryCommand
 from application.vendors.errors import InquiryAbuseDenied, VendorApplicationConfigurationError
-from application.vendors.handlers import VendorCommandHandlers
-from application.vendors.ports import InquiryAbuseProtectionPort
+from application.vendors.shared.handlers import VendorCommandHandlers
+from application.vendors.inquiries.ports import InquiryAbuseProtectionPort
 from domain.shared.utils import utc_now
-from domain.vendors.entities import ServiceCategory, VendorProfile, VendorStatus
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile, VendorStatus
 
 
 class StrictUnusedDependency:
