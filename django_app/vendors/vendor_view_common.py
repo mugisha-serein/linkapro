@@ -216,6 +216,52 @@ def _stable_package_integrity_response(exc: Exception, *, status_code=status.HTT
     )
 
 
+def _message_from_response(response: Response, fallback: str) -> str:
+    data = response.data if isinstance(response.data, dict) else {}
+    return str(data.get("message") or data.get("detail") or fallback)
+
+
+def _add_success_contract(response: Response, *, code: str, message: str) -> Response:
+    if isinstance(response.data, dict):
+        response.data.setdefault("success", True)
+        response.data.setdefault("code", code)
+        response.data.setdefault("message", message)
+    return response
+
+
+def _add_error_contract(response: Response, *, code: str, message: str) -> Response:
+    if not isinstance(response.data, dict):
+        return response
+
+    field_errors = response.data.get("field_errors")
+    if field_errors is None:
+        field_errors = {
+            key: value
+            for key, value in response.data.items()
+            if isinstance(value, list)
+        }
+
+    response.data.setdefault("success", False)
+    response.data.setdefault("code", code)
+    response.data.setdefault("message", _message_from_response(response, message))
+    response.data.setdefault("detail", response.data["message"])
+    response.data.setdefault("field_errors", field_errors or {})
+    return response
+
+
+def _normalize_response_contract(
+    response: Response,
+    *,
+    success_code: str,
+    success_message: str,
+    error_code: str,
+    error_message: str,
+) -> Response:
+    if response.status_code >= status.HTTP_400_BAD_REQUEST:
+        return _add_error_contract(response, code=error_code, message=error_message)
+    return _add_success_contract(response, code=success_code, message=success_message)
+
+
 def _page_request_from_query(request) -> tuple[PageRequest | None, Response | None]:
     try:
         limit = int(request.query_params.get("limit", "50"))

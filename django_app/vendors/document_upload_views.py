@@ -1,7 +1,7 @@
 from django.conf import settings
 
-from .views import PDF_MIME_TYPE
-from .views import VendorVerificationDocumentView as BaseVendorVerificationDocumentView
+from .vendor_view_common import PDF_MIME_TYPE
+from .views.profile import VendorVerificationDocumentView as BaseVendorVerificationDocumentView
 
 
 PDF_EOF_TAIL_BYTES = 2048

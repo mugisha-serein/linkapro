@@ -1,7 +1,7 @@
 from django.urls import path
-from . import contract_views as c
+from .views import packages as v
 urlpatterns = [
-    path("packages/", c.ServicePackageListView.as_view(), name="package-list"),
-    path("packages/<uuid:package_id>/", c.ServicePackageDetailView.as_view(), name="package-detail"),
-    path("packages/<uuid:package_id>/activate/", c.ServicePackageActivateView.as_view(), name="package-activate"),
+    path("packages/", v.ServicePackageListView.as_view(), name="package-list"),
+    path("packages/<uuid:package_id>/", v.ServicePackageDetailView.as_view(), name="package-detail"),
+    path("packages/<uuid:package_id>/activate/", v.ServicePackageActivateView.as_view(), name="package-activate"),
 ]

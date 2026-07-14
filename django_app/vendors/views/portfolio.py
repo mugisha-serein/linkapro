@@ -6,6 +6,7 @@ from ..vendor_view_common import _actor
 from ..vendor_view_common import _portfolio_media_error
 from ..vendor_view_common import _log_portfolio_validation_failure
 from ..vendor_view_common import _safe_portfolio_display_url
+from ..vendor_view_common import _normalize_response_contract
 
 
 class PortfolioImageView(APIView):
@@ -116,7 +117,13 @@ class PortfolioImageView(APIView):
         """Delete a portfolio image."""
         profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
         if error_response:
-            return error_response
+            return _normalize_response_contract(
+                error_response,
+                success_code="vendor_portfolio_item_removed",
+                success_message="Portfolio item removed from active listings.",
+                error_code="vendor_portfolio_item_not_found",
+                error_message="Portfolio item not found or does not belong to this vendor.",
+            )
         query_handlers = get_query_handlers()
 
         # Verify ownership: fetch the image and check vendor_id
@@ -124,15 +131,27 @@ class PortfolioImageView(APIView):
         images = query_handlers.list_portfolio_images(query)
         image = next((img for img in images.items if img.id == image_id), None)
         if not image:
-            return vendor_error_response(
-                code="vendor_portfolio_item_not_found",
-                message="Image not found or does not belong to this vendor.",
-                status_code=status.HTTP_404_NOT_FOUND,
+            return _normalize_response_contract(
+                vendor_error_response(
+                    code="vendor_portfolio_item_not_found",
+                    message="Image not found or does not belong to this vendor.",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
+                success_code="vendor_portfolio_item_removed",
+                success_message="Portfolio item removed from active listings.",
+                error_code="vendor_portfolio_item_not_found",
+                error_message="Portfolio item not found or does not belong to this vendor.",
             )
 
         expected_version, version_error = resolve_expected_version(request)
         if version_error:
-            return version_error
+            return _normalize_response_contract(
+                version_error,
+                success_code="vendor_portfolio_item_removed",
+                success_message="Portfolio item removed from active listings.",
+                error_code="vendor_portfolio_item_not_found",
+                error_message="Portfolio item not found or does not belong to this vendor.",
+            )
 
         cmd = DeletePortfolioImageCommand(
             actor=_actor(request),
@@ -146,14 +165,27 @@ class PortfolioImageView(APIView):
         except Exception as exc:
             mapped = map_vendor_exception(exc)
             if mapped is not None:
-                return mapped
+                return _normalize_response_contract(
+                    mapped,
+                    success_code="vendor_portfolio_item_removed",
+                    success_message="Portfolio item removed from active listings.",
+                    error_code="vendor_portfolio_item_not_found",
+                    error_message="Portfolio item not found or does not belong to this vendor.",
+                )
             raise
-        return Response(
+        response = Response(
             {
                 "message": "Portfolio item removed from active listings.",
                 "id": str(image_id),
             },
             status=status.HTTP_200_OK,
+        )
+        return _normalize_response_contract(
+            response,
+            success_code="vendor_portfolio_item_removed",
+            success_message="Portfolio item removed from active listings.",
+            error_code="vendor_portfolio_item_not_found",
+            error_message="Portfolio item not found or does not belong to this vendor.",
         )
 
     def _serialize_image(self, dto: PortfolioImageDTO) -> dict:

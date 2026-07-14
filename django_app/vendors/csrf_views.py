@@ -1,7 +1,7 @@
 from django.views import View
 from rest_framework.views import APIView
 
-from .views import VendorProfileView as BaseVendorProfileView
+from .views.profile import VendorProfileView as BaseVendorProfileView
 
 
 class VendorProfileView(BaseVendorProfileView):

@@ -11,7 +11,19 @@ from ..vendor_view_common import _infer_image_content_type
 from ..vendor_view_common import _vendor_profile_incomplete_response
 from ..vendor_view_common import _has_submitted_verification_document
 from ..vendor_view_common import _get_public_marketplace_stats
+from ..vendor_view_common import _add_success_contract
+from ..vendor_view_common import _normalize_response_contract
 from application.vendors.shared.commands import OMITTED
+from django.views.decorators.csrf import ensure_csrf_cookie
+
+
+PDF_EOF_TAIL_BYTES = 2048
+PDF_SCAN_OVERLAP_BYTES = 32
+PDF_HEADER_BYTES = 4
+PDF_PAGE_MARKERS = (bytes.fromhex("2f54797065202f50616765"), bytes.fromhex("2f547970652f50616765"))
+PDF_PROTECTION_MARKER = bytes.fromhex("2f456e6372797074")
+PDF_EOF_MARKER = bytes.fromhex("2525454f46")
+PDF_HEADER_MARKER = bytes.fromhex("25504446")
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -280,20 +292,27 @@ class VendorCoverImageView(VendorBrandingMediaView):
 class VendorProfileStatusView(APIView):
     permission_classes = [IsAuthenticated, IsVendor]
 
+    @method_decorator(ensure_csrf_cookie)
     def get(self, request):
         profile, error_response = _get_current_vendor_profile(request)
         if error_response and profile is None:
-            return Response(
+            response = Response(
                 {
                     "profile": None,
                     "onboarding": build_vendor_onboarding_contract(None),
                 }
             )
-        return Response(
-            {
-                "profile": _serialize_profile(profile) if profile else None,
-                "onboarding": build_vendor_onboarding_contract(profile),
-            }
+        else:
+            response = Response(
+                {
+                    "profile": _serialize_profile(profile) if profile else None,
+                    "onboarding": build_vendor_onboarding_contract(profile),
+                }
+            )
+        return _add_success_contract(
+            response,
+            code="vendor_profile_status_loaded",
+            message="Vendor profile status loaded.",
         )
 
 
@@ -350,6 +369,15 @@ class VendorVerificationDocumentView(APIView):
     permission_classes = [IsAuthenticated, IsVendor]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
+    def _document_contract(self, response: Response) -> Response:
+        return _normalize_response_contract(
+            response,
+            success_code="vendor_verification_document_queued",
+            success_message="Document received. Verification will continue automatically.",
+            error_code="vendor_verification_document_invalid",
+            error_message="Upload a valid verification PDF.",
+        )
+
     def get(self, request):
         query_handlers = get_query_handlers()
         profile = query_handlers.get_vendor_by_user(request.user.id)
@@ -373,9 +401,11 @@ class VendorVerificationDocumentView(APIView):
         query_handlers = get_query_handlers()
         profile = query_handlers.get_vendor_by_user(request.user.id)
         if not profile:
-            return Response(
-                {"detail": "No vendor profile found."},
-                status=status.HTTP_404_NOT_FOUND
+            return self._document_contract(
+                Response(
+                    {"detail": "No vendor profile found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
             )
 
         serializer = VerificationDocumentUploadSerializer(data=request.data)
@@ -383,14 +413,16 @@ class VendorVerificationDocumentView(APIView):
 
         uploaded_document = request.FILES.get("document")
         if not uploaded_document:
-            return Response(
-                {"detail": "No document file provided."},
-                status=status.HTTP_400_BAD_REQUEST
+            return self._document_contract(
+                Response(
+                    {"detail": "No document file provided."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             )
 
         validation_error = self._validate_pdf(uploaded_document)
         if validation_error:
-            return Response(validation_error, status=status.HTTP_400_BAD_REQUEST)
+            return self._document_contract(Response(validation_error, status=status.HTTP_400_BAD_REQUEST))
 
         document_id = uuid.uuid4()
         if hasattr(uploaded_document, "seek"):
@@ -432,7 +464,7 @@ class VendorVerificationDocumentView(APIView):
                 extra={"document_id": str(document.id), "vendor_id": str(profile.id)},
             )
 
-        return Response(
+        response = Response(
             {
                 "status": "queued",
                 "document_id": str(document.id),
@@ -442,6 +474,7 @@ class VendorVerificationDocumentView(APIView):
             },
             status=status.HTTP_202_ACCEPTED,
         )
+        return self._document_contract(response)
 
     def _validate_pdf(self, uploaded_document) -> dict | None:
         max_size = int(getattr(settings, "VENDOR_VERIFICATION_DOCUMENT_MAX_SIZE_MB", 5)) * 1024 * 1024
@@ -454,28 +487,56 @@ class VendorVerificationDocumentView(APIView):
         if uploaded_document.size > max_size:
             return {"document": [f"Verification document is too large. Maximum size is {max_size // (1024 * 1024)}MB."]}
 
-        current_position = uploaded_document.tell() if hasattr(uploaded_document, "tell") else None
-        try:
-            uploaded_document.seek(0)
-            content = uploaded_document.read()
-        finally:
-            try:
-                uploaded_document.seek(current_position or 0)
-            except Exception:
-                pass
-
-        if not content.startswith(b"%PDF"):
+        scan = self._scan_pdf(uploaded_document)
+        if not scan["starts_with_pdf"]:
             return {"document": ["Verification document is not a valid PDF file."]}
-        if b"%%EOF" not in content[-2048:]:
+        if not scan["has_eof_marker"]:
             return {"document": ["Verification document appears to be incomplete or corrupt."]}
-        if b"/Encrypt" in content[:4096] or b"/Encrypt" in content:
+        if scan["is_protected"]:
             return {"document": ["Password-protected PDFs cannot be processed."]}
-        if not self._has_pdf_page(content):
+        if not scan["has_page"]:
             return {"document": ["Verification document must contain at least one page."]}
         return None
 
-    def _has_pdf_page(self, content: bytes) -> bool:
-        return b"/Type /Page" in content or b"/Type/Page" in content
+    def _scan_pdf(self, uploaded_document) -> dict:
+        current_position = uploaded_document.tell() if hasattr(uploaded_document, "tell") else None
+        header = b""
+        tail = b""
+        overlap = b""
+        has_page = False
+        is_protected = False
+
+        try:
+            if hasattr(uploaded_document, "seek"):
+                uploaded_document.seek(0)
+
+            for chunk in uploaded_document.chunks():
+                if isinstance(chunk, str):
+                    chunk = chunk.encode()
+                if not chunk:
+                    continue
+
+                if len(header) < PDF_HEADER_BYTES:
+                    header = (header + chunk)[:PDF_HEADER_BYTES]
+
+                scan_window = overlap + chunk
+                if PDF_PROTECTION_MARKER in scan_window:
+                    is_protected = True
+                if any(marker in scan_window for marker in PDF_PAGE_MARKERS):
+                    has_page = True
+
+                tail = (tail + chunk)[-PDF_EOF_TAIL_BYTES:]
+                overlap = scan_window[-PDF_SCAN_OVERLAP_BYTES:]
+        finally:
+            if hasattr(uploaded_document, "seek"):
+                uploaded_document.seek(current_position or 0)
+
+        return {
+            "starts_with_pdf": header.startswith(PDF_HEADER_MARKER),
+            "has_eof_marker": PDF_EOF_MARKER in tail,
+            "is_protected": is_protected,
+            "has_page": has_page,
+        }
 
     def _serialize_document(self, document: VerificationDocument) -> dict:
         return {
