@@ -19,7 +19,11 @@ from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
 from domain.vendors.profile.entity import profile_completion_errors_for
 from domain.vendors.shared.pagination import PageRequest
 from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile as DjangoVendorProfile
-from infrastructure.repos.analytics.metrics import total_views_trend, visibility_trend as load_visibility_trend
+from infrastructure.repos.analytics.metrics import (
+    inquiry_response_metrics,
+    total_views_trend,
+    visibility_trend as load_visibility_trend,
+)
 
 
 class DjangoVendorAnalyticsReadRepositoryMixin:
@@ -101,15 +105,7 @@ class DjangoVendorAnalyticsReadRepositoryMixin:
     def vendor_metrics(self, vendor_id: uuid.UUID) -> dict:
         profile = self._require_vendor(vendor_id)
         now = timezone.now()
-        inquiry_counts = Inquiry.objects.filter(vendor_id=vendor_id).aggregate(
-            total_inquiries=Count("id"),
-            unread_inquiries=Count("id", filter=Q(is_read=False)),
-            read_inquiries=Count("id", filter=Q(is_read=True)),
-            inquiries_mtd=Count(
-                "id",
-                filter=Q(created_at__year=now.year, created_at__month=now.month),
-            ),
-        )
+        inquiry_counts = inquiry_response_metrics(vendor_id, now=now)
         package_counts = ServicePackage.all_objects.filter(
             vendor_id=vendor_id,
             is_deleted=False,

@@ -9,9 +9,11 @@ from django_app.vendors.models import ServicePackage, VendorProfileViewed
 from infrastructure.repos.analytics import metrics
 from infrastructure.repos.analytics.metrics import (
     active_packages_count,
+    inquiry_response_metrics,
     log_profile_view,
     profile_strength_score,
     recent_security_actions,
+    response_backlog,
     response_rate,
     total_views_trend,
     views_by_month,
@@ -160,6 +162,49 @@ def test_response_rate_metric_uses_existing_inquiry_read_ratio():
     create_inquiry(vendor=vendor, is_read=False)
 
     assert response_rate(vendor.id) == 33.33
+
+
+def test_inquiry_response_metrics_include_oldest_unread_at_in_count_aggregate():
+    now = timezone.now()
+    vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    oldest = create_inquiry(vendor=vendor, is_read=False, created_at=now - timedelta(hours=5))
+    create_inquiry(vendor=vendor, is_read=False, created_at=now - timedelta(hours=1))
+    create_inquiry(vendor=vendor, is_read=True, created_at=now - timedelta(hours=10))
+
+    metrics_payload = inquiry_response_metrics(vendor.id, now=now)
+
+    assert metrics_payload["total_inquiries"] == 3
+    assert metrics_payload["unread_inquiries"] == 2
+    assert metrics_payload["read_inquiries"] == 1
+    assert metrics_payload["oldest_unread_at"] == oldest.created_at
+
+
+def test_response_backlog_reports_count_and_oldest_unread_age(monkeypatch):
+    now = timezone.now()
+    vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    oldest = create_inquiry(vendor=vendor, is_read=False, created_at=now - timedelta(hours=3, minutes=30))
+    create_inquiry(vendor=vendor, is_read=False, created_at=now - timedelta(hours=1))
+    create_inquiry(vendor=vendor, is_read=True, created_at=now - timedelta(hours=8))
+    monkeypatch.setattr(metrics.timezone, "now", lambda: now)
+
+    assert response_backlog(vendor.id) == {
+        "count": 2,
+        "oldest_unread_at": oldest.created_at.isoformat(),
+        "oldest_unread_age_hours": 3.5,
+    }
+
+
+def test_response_backlog_is_empty_without_unread_inquiries(monkeypatch):
+    now = timezone.now()
+    vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    create_inquiry(vendor=vendor, is_read=True, created_at=now - timedelta(hours=8))
+    monkeypatch.setattr(metrics.timezone, "now", lambda: now)
+
+    assert response_backlog(vendor.id) == {
+        "count": 0,
+        "oldest_unread_at": None,
+        "oldest_unread_age_hours": None,
+    }
 
 
 def test_optimization_alerts_emit_codes_from_existing_metrics():

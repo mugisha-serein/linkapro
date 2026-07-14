@@ -4,7 +4,7 @@ from datetime import date
 import uuid
 
 from django.db import IntegrityError
-from django.db.models import Count, F, Q, Sum
+from django.db.models import Count, F, Min, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
@@ -124,14 +124,45 @@ def active_packages_count(vendor_id: uuid.UUID) -> int:
     ).count()
 
 
-def response_rate(vendor_id: uuid.UUID) -> float:
+def inquiry_response_metrics(vendor_id: uuid.UUID, *, now=None) -> dict[str, object]:
+    now = now or timezone.now()
     counts = Inquiry.objects.filter(vendor_id=vendor_id).aggregate(
-        total=Count("id"),
-        read=Count("id", filter=Q(is_read=True)),
+        total_inquiries=Count("id"),
+        unread_inquiries=Count("id", filter=Q(is_read=False)),
+        read_inquiries=Count("id", filter=Q(is_read=True)),
+        inquiries_mtd=Count(
+            "id",
+            filter=Q(created_at__year=now.year, created_at__month=now.month),
+        ),
+        oldest_unread_at=Min("created_at", filter=Q(is_read=False)),
     )
-    total = counts["total"] or 0
-    read = counts["read"] or 0
+    return {
+        "total_inquiries": counts["total_inquiries"] or 0,
+        "unread_inquiries": counts["unread_inquiries"] or 0,
+        "read_inquiries": counts["read_inquiries"] or 0,
+        "inquiries_mtd": counts["inquiries_mtd"] or 0,
+        "oldest_unread_at": counts["oldest_unread_at"],
+    }
+
+
+def response_rate(vendor_id: uuid.UUID) -> float:
+    counts = inquiry_response_metrics(vendor_id)
+    total = counts["total_inquiries"] or 0
+    read = counts["read_inquiries"] or 0
     return round((read / total) * 100, 2) if total else 0.0
+
+
+def response_backlog(vendor_id: uuid.UUID) -> dict[str, object]:
+    counts = inquiry_response_metrics(vendor_id)
+    oldest_unread_at = counts["oldest_unread_at"]
+    oldest_unread_age_hours = None
+    if oldest_unread_at is not None:
+        oldest_unread_age_hours = round((timezone.now() - oldest_unread_at).total_seconds() / 3600, 2)
+    return {
+        "count": counts["unread_inquiries"],
+        "oldest_unread_at": oldest_unread_at.isoformat() if oldest_unread_at else None,
+        "oldest_unread_age_hours": oldest_unread_age_hours,
+    }
 
 
 def recent_security_actions(vendor_id: uuid.UUID, limit: int = 10) -> list[dict[str, object]]:
