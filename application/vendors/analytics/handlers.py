@@ -1,8 +1,20 @@
 from __future__ import annotations
 
 from domain.vendors.shared.pagination import PageRequest
-from application.vendors.analytics.dtos import VendorActivityDTO, VendorAnalyticsDTO, VendorDashboardSummaryDTO, VendorViewsTrendPointDTO
-from application.vendors.analytics.queries import GetVendorAnalyticsQuery, GetVendorDashboardSummaryQuery, GetVendorViewsTrendQuery, ListRecentVendorActivityQuery
+from application.vendors.analytics.dtos import (
+    VendorActivityDTO,
+    VendorAnalyticsDTO,
+    VendorDashboardSummaryDTO,
+    VendorVisibilityTrendDTO,
+    VendorViewsTrendPointDTO,
+)
+from application.vendors.analytics.queries import (
+    GetVendorAnalyticsQuery,
+    GetVendorDashboardSummaryQuery,
+    GetVendorVisibilityTrendQuery,
+    GetVendorViewsTrendQuery,
+    ListRecentVendorActivityQuery,
+)
 from application.vendors.errors import VendorResourceNotFound
 from application.vendors.shared.dtos import PageDTO
 
@@ -25,3 +37,7 @@ class AnalyticsQueryHandlersMixin:
         def get_views_trend(self, query: GetVendorViewsTrendQuery) -> tuple[VendorViewsTrendPointDTO, ...]:
             self._assert_actor_can_access_vendor(query)
             return self.read_repo.total_views_trend(query.vendor_id, query.months)
+
+        def get_visibility_trend(self, query: GetVendorVisibilityTrendQuery) -> VendorVisibilityTrendDTO:
+            self._assert_actor_can_access_vendor(query)
+            return self.read_repo.visibility_trend(query.vendor_id, query.months)

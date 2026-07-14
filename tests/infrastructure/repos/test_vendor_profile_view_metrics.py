@@ -4,7 +4,7 @@ import pytest
 
 from django_app.vendors.models import VendorProfileViewed
 from infrastructure.repos.analytics import metrics
-from infrastructure.repos.analytics.metrics import log_profile_view, total_views_trend, views_by_month
+from infrastructure.repos.analytics.metrics import log_profile_view, total_views_trend, views_by_month, visibility_trend
 from tests.factories import create_vendor_profile
 
 pytestmark = pytest.mark.django_db
@@ -53,3 +53,17 @@ def test_views_by_month_returns_single_year_monthly_breakdown():
     assert breakdown[1] == {"month": "2026-02", "views": 2}
     assert breakdown[2] == {"month": "2026-03", "views": 0}
     assert breakdown[-1] == {"month": "2026-12", "views": 1}
+
+
+def test_visibility_trend_reports_marketplace_impressions_as_unavailable(monkeypatch):
+    vendor = create_vendor_profile(status="approved")
+    monkeypatch.setattr(metrics.timezone, "localdate", lambda: date(2026, 7, 14))
+    log_profile_view(vendor.id, viewed_on=date(2026, 7, 14))
+
+    trend = visibility_trend(vendor.id, months=2)
+
+    assert trend["points"] == [
+        {"month": "2026-06", "profile_views": 0, "marketplace_impressions": None},
+        {"month": "2026-07", "profile_views": 1, "marketplace_impressions": None},
+    ]
+    assert trend["unavailable_metrics"] == ("marketplace_search_impressions",)

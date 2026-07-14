@@ -51,3 +51,16 @@ class VendorActivityDTO:
 class VendorViewsTrendPointDTO:
     month: str
     views: int
+
+
+@dataclass(frozen=True)
+class VendorVisibilityTrendPointDTO:
+    month: str
+    profile_views: int
+    marketplace_impressions: int | None
+
+
+@dataclass(frozen=True)
+class VendorVisibilityTrendDTO:
+    points: tuple[VendorVisibilityTrendPointDTO, ...]
+    unavailable_metrics: tuple[str, ...]

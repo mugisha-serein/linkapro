@@ -7,7 +7,13 @@ from domain.vendors.portfolio.interfaces import IPortfolioImageRepository
 from domain.vendors.profile.interfaces import IVendorProfileRepository
 from domain.vendors.shared.pagination import Page
 from application.vendors.analytics.handlers import AnalyticsQueryHandlersMixin
-from application.vendors.analytics.queries import GetVendorAnalyticsQuery, GetVendorDashboardSummaryQuery, GetVendorViewsTrendQuery, ListRecentVendorActivityQuery
+from application.vendors.analytics.queries import (
+    GetVendorAnalyticsQuery,
+    GetVendorDashboardSummaryQuery,
+    GetVendorVisibilityTrendQuery,
+    GetVendorViewsTrendQuery,
+    ListRecentVendorActivityQuery,
+)
 from application.vendors.errors import VendorApplicationConfigurationError
 from application.vendors.inquiries.handlers import InquiryQueryHandlersMixin
 from application.vendors.inquiries.queries import ListInquiriesQuery
@@ -49,6 +55,7 @@ class BaseVendorQueryHandler(VendorDTOMapperMixin):
                 | ListInquiriesQuery
                 | GetVendorDashboardSummaryQuery
                 | GetVendorAnalyticsQuery
+                | GetVendorVisibilityTrendQuery
                 | GetVendorViewsTrendQuery
                 | ListRecentVendorActivityQuery
             ),

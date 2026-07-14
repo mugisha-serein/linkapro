@@ -10,6 +10,8 @@ from django.utils import timezone
 
 from django_app.vendors.models import VendorProfileViewed
 
+MARKETPLACE_SEARCH_IMPRESSIONS = "marketplace_search_impressions"
+
 
 def _month_start(value: date) -> date:
     return value.replace(day=1)
@@ -80,3 +82,18 @@ def views_by_month(vendor_id: uuid.UUID, year: int) -> list[dict[str, int | str]
     if year < 1:
         raise ValueError("year must be positive")
     return _monthly_view_counts(vendor_id, start_month=date(year, 1, 1), months=12)
+
+
+def visibility_trend(vendor_id: uuid.UUID, months: int = 6) -> dict[str, object]:
+    profile_views = total_views_trend(vendor_id, months=months)
+    return {
+        "points": [
+            {
+                "month": point["month"],
+                "profile_views": point["views"],
+                "marketplace_impressions": None,
+            }
+            for point in profile_views
+        ],
+        "unavailable_metrics": (MARKETPLACE_SEARCH_IMPRESSIONS,),
+    }

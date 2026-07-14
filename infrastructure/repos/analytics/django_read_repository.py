@@ -5,14 +5,21 @@ import uuid
 from django.db.models import Count, Q
 from django.utils import timezone
 
-from application.vendors.analytics.dtos import VendorActivityDTO, VendorAnalyticsDTO, VendorDashboardSummaryDTO, VendorViewsTrendPointDTO
+from application.vendors.analytics.dtos import (
+    VendorActivityDTO,
+    VendorAnalyticsDTO,
+    VendorDashboardSummaryDTO,
+    VendorVisibilityTrendDTO,
+    VendorVisibilityTrendPointDTO,
+    VendorViewsTrendPointDTO,
+)
 from application.vendors.shared.dtos import PageDTO
 from application.vendors.errors import VendorResourceNotFound
 from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
 from domain.vendors.profile.entity import profile_completion_errors_for
 from domain.vendors.shared.pagination import PageRequest
 from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile as DjangoVendorProfile
-from infrastructure.repos.analytics.metrics import total_views_trend
+from infrastructure.repos.analytics.metrics import total_views_trend, visibility_trend as load_visibility_trend
 
 
 class DjangoVendorAnalyticsReadRepositoryMixin:
@@ -70,6 +77,25 @@ class DjangoVendorAnalyticsReadRepositoryMixin:
         return tuple(
             VendorViewsTrendPointDTO(month=str(point["month"]), views=int(point["views"]))
             for point in total_views_trend(vendor_id, months)
+        )
+
+    def visibility_trend(self, vendor_id: uuid.UUID, months: int = 6) -> VendorVisibilityTrendDTO:
+        self._require_vendor(vendor_id)
+        trend = load_visibility_trend(vendor_id, months=months)
+        return VendorVisibilityTrendDTO(
+            points=tuple(
+                VendorVisibilityTrendPointDTO(
+                    month=str(point["month"]),
+                    profile_views=int(point["profile_views"]),
+                    marketplace_impressions=(
+                        None
+                        if point["marketplace_impressions"] is None
+                        else int(point["marketplace_impressions"])
+                    ),
+                )
+                for point in trend["points"]
+            ),
+            unavailable_metrics=tuple(str(metric) for metric in trend["unavailable_metrics"]),
         )
 
     def vendor_metrics(self, vendor_id: uuid.UUID) -> dict:
