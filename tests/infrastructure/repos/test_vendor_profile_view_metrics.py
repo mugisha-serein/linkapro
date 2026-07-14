@@ -11,6 +11,7 @@ from infrastructure.repos.analytics.metrics import (
     views_by_month,
     visibility_trend,
 )
+from infrastructure.repos.analytics.rules import profile_strength_suggestions
 from tests.factories import create_vendor_profile
 
 pytestmark = pytest.mark.django_db
@@ -97,3 +98,29 @@ def test_profile_strength_score_never_reports_complete_when_domain_errors_remain
     )
 
     assert profile_strength_score(vendor.id) == 99
+
+
+def test_profile_strength_suggestions_map_domain_completion_errors_to_copy():
+    vendor = create_vendor_profile(
+        business_name="",
+        description="Too short",
+        contact_phone="",
+    )
+
+    assert profile_strength_suggestions(vendor.id) == {
+        "business_name": "Add your business name so clients can recognize your brand.",
+        "description": "Write a stronger business description with at least 20 characters.",
+        "contact_phone": "Add a contact phone number for client inquiries.",
+    }
+
+
+def test_profile_strength_suggestions_include_conditional_domain_errors():
+    vendor = create_vendor_profile(
+        category="other",
+        custom_category="",
+        description="Professional event coverage across Kigali and beyond.",
+    )
+
+    assert profile_strength_suggestions(vendor.id) == {
+        "custom_category": "Describe your service when choosing Other as your category.",
+    }
