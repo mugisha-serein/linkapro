@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from application.vendors.shared.commands import AuthenticatedActor
-from application.vendors.analytics.dtos import VendorDashboardSummaryDTO
-from application.vendors.analytics.queries import GetVendorDashboardSummaryQuery
-from django_app.vendors.views.analytics import VendorDashboardSummaryView
+from application.vendors.analytics.dtos import VendorDashboardSummaryDTO, VendorViewsTrendPointDTO
+from application.vendors.analytics.queries import GetVendorDashboardSummaryQuery, GetVendorViewsTrendQuery
+from django_app.vendors.views.analytics import VendorDashboardSummaryView, VendorViewsTrendView
 
 
 def test_dashboard_summary_view_builds_actor_aware_query():
@@ -50,3 +50,37 @@ def test_dashboard_summary_view_builds_actor_aware_query():
     assert query.vendor_id == vendor_id
     assert response.status_code == 200
     assert response.data["account_status"] == "approved"
+
+
+def test_views_trend_view_builds_actor_aware_query():
+    user_id = uuid.uuid4()
+    vendor_id = uuid.uuid4()
+    request = SimpleNamespace(user=SimpleNamespace(id=user_id), query_params={"months": "3"})
+    profile = SimpleNamespace(id=vendor_id)
+    handlers = Mock()
+    handlers.get_views_trend.return_value = (
+        VendorViewsTrendPointDTO(month="2026-05", views=1),
+        VendorViewsTrendPointDTO(month="2026-06", views=2),
+        VendorViewsTrendPointDTO(month="2026-07", views=3),
+    )
+
+    with patch(
+        "django_app.vendors.views.analytics._get_current_vendor_profile",
+        return_value=(profile, None),
+    ), patch(
+        "django_app.vendors.views.analytics.get_query_handlers",
+        return_value=handlers,
+    ):
+        response = VendorViewsTrendView().get(request)
+
+    query = handlers.get_views_trend.call_args.args[0]
+    assert isinstance(query, GetVendorViewsTrendQuery)
+    assert query.actor.user_id == user_id
+    assert query.vendor_id == vendor_id
+    assert query.months == 3
+    assert response.status_code == 200
+    assert response.data == [
+        {"month": "2026-05", "views": 1},
+        {"month": "2026-06", "views": 2},
+        {"month": "2026-07", "views": 3},
+    ]

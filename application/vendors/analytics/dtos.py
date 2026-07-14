@@ -45,3 +45,9 @@ class VendorActivityDTO:
     type: str
     message: str
     created_at: str
+
+
+@dataclass(frozen=True)
+class VendorViewsTrendPointDTO:
+    month: str
+    views: int

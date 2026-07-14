@@ -5,13 +5,14 @@ import uuid
 from django.db.models import Count, Q
 from django.utils import timezone
 
-from application.vendors.analytics.dtos import VendorActivityDTO, VendorAnalyticsDTO, VendorDashboardSummaryDTO
+from application.vendors.analytics.dtos import VendorActivityDTO, VendorAnalyticsDTO, VendorDashboardSummaryDTO, VendorViewsTrendPointDTO
 from application.vendors.shared.dtos import PageDTO
 from application.vendors.errors import VendorResourceNotFound
 from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
 from domain.vendors.profile.entity import profile_completion_errors_for
 from domain.vendors.shared.pagination import PageRequest
 from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile as DjangoVendorProfile
+from infrastructure.repos.analytics.metrics import total_views_trend
 
 
 class DjangoVendorAnalyticsReadRepositoryMixin:
@@ -62,6 +63,13 @@ class DjangoVendorAnalyticsReadRepositoryMixin:
             limit=page.limit,
             offset=page.offset,
             pagination_mode="cursor" if page.cursor else "offset",
+        )
+
+    def total_views_trend(self, vendor_id: uuid.UUID, months: int = 6) -> tuple[VendorViewsTrendPointDTO, ...]:
+        self._require_vendor(vendor_id)
+        return tuple(
+            VendorViewsTrendPointDTO(month=str(point["month"]), views=int(point["views"]))
+            for point in total_views_trend(vendor_id, months)
         )
 
     def vendor_metrics(self, vendor_id: uuid.UUID) -> dict:

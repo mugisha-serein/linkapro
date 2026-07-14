@@ -15,6 +15,7 @@ from ..vendor_view_common import _add_success_contract
 from ..vendor_view_common import _normalize_response_contract
 from application.vendors.shared.commands import OMITTED
 from django.views.decorators.csrf import ensure_csrf_cookie
+from infrastructure.repos.analytics.metrics import log_profile_view
 
 from ..vendor_view_common import _get_vendor_onboarding_state
 from ..vendor_view_common import _profile_completion_errors
@@ -609,6 +610,11 @@ class PublicVendorProfileView(APIView):
         )
         if not vendor:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            log_profile_view(vendor.id)
+        except Exception:
+            logger.warning("Vendor profile view tracking failed.", extra={"vendor_id": str(vendor.id)}, exc_info=True)
 
         marketplace_stats = _get_public_marketplace_stats(vendor.id)
         return api_success(
