@@ -4,7 +4,7 @@ import pytest
 
 from django_app.vendors.models import VendorProfileViewed
 from infrastructure.repos.analytics import metrics
-from infrastructure.repos.analytics.metrics import log_profile_view, total_views_trend
+from infrastructure.repos.analytics.metrics import log_profile_view, total_views_trend, views_by_month
 from tests.factories import create_vendor_profile
 
 pytestmark = pytest.mark.django_db
@@ -35,3 +35,21 @@ def test_total_views_trend_returns_zero_filled_monthly_series(monkeypatch):
         {"month": "2026-07", "views": 1},
     ]
     assert all(set(point) == {"month", "views"} for point in trend)
+
+
+def test_views_by_month_returns_single_year_monthly_breakdown():
+    vendor = create_vendor_profile(status="approved")
+    log_profile_view(vendor.id, viewed_on=date(2025, 12, 31))
+    log_profile_view(vendor.id, viewed_on=date(2026, 1, 1))
+    log_profile_view(vendor.id, viewed_on=date(2026, 2, 14))
+    log_profile_view(vendor.id, viewed_on=date(2026, 2, 14))
+    log_profile_view(vendor.id, viewed_on=date(2026, 12, 31))
+    log_profile_view(vendor.id, viewed_on=date(2027, 1, 1))
+
+    breakdown = views_by_month(vendor.id, 2026)
+
+    assert len(breakdown) == 12
+    assert breakdown[0] == {"month": "2026-01", "views": 1}
+    assert breakdown[1] == {"month": "2026-02", "views": 2}
+    assert breakdown[2] == {"month": "2026-03", "views": 0}
+    assert breakdown[-1] == {"month": "2026-12", "views": 1}
