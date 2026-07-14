@@ -13,6 +13,7 @@ from infrastructure.repos.analytics.metrics import (
     inquiry_conversion_rate,
     inquiry_response_metrics,
     log_profile_view,
+    portfolio_analytics,
     portfolio_quality_trend,
     profile_strength_score,
     recent_security_actions,
@@ -135,6 +136,29 @@ def test_portfolio_quality_trend_ignores_deleted_images():
 
     assert trend["current_average_score"] == 90.0
     assert trend["scored_images"] == 1
+
+
+def test_portfolio_analytics_composes_real_metrics_and_flags_per_image_tracking_gap():
+    vendor = create_vendor_profile(status="approved")
+    other_vendor = create_vendor_profile(status="approved")
+    create_portfolio_image(vendor=vendor, analyzer_score=80, is_active=True, order=0)
+    create_portfolio_image(vendor=vendor, analyzer_score=100, is_active=True, order=1)
+    create_portfolio_image(vendor=vendor, analyzer_score=20, is_active=False, order=2)
+    create_portfolio_image(vendor=other_vendor, analyzer_score=10, is_active=True, order=0)
+
+    analytics = portfolio_analytics(vendor.id)
+
+    assert analytics["portfolio_count"] == 2
+    assert analytics["quality_trend"]["current_average_score"] == 90.0
+    assert analytics["quality_trend"]["scored_images"] == 2
+    assert analytics["per_image_metrics"] is None
+    assert analytics["unavailable_metrics"] == (
+        "portfolio_quality_snapshots",
+        "portfolio_image_views",
+        "portfolio_image_engagements",
+    )
+    assert "no per-image view or engagement tracking" in analytics["schema_gap"]
+    assert analytics["proposed_schema"]["model"] == "PortfolioImageEngagementDaily"
 
 
 def test_profile_strength_score_represents_domain_completion_errors():

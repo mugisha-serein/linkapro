@@ -32,6 +32,19 @@ PORTFOLIO_QUALITY_SNAPSHOT_PROPOSAL = {
     },
     "unique": ("vendor_id", "snapshot_date"),
 }
+PORTFOLIO_IMAGE_VIEWS = "portfolio_image_views"
+PORTFOLIO_IMAGE_ENGAGEMENTS = "portfolio_image_engagements"
+PORTFOLIO_IMAGE_ENGAGEMENT_PROPOSAL = {
+    "model": "PortfolioImageEngagementDaily",
+    "fields": {
+        "vendor_id": "ForeignKey(VendorProfile)",
+        "image_id": "ForeignKey(PortfolioImage)",
+        "event_date": "date",
+        "view_count": "integer",
+        "engagement_count": "integer",
+    },
+    "unique": ("image_id", "event_date"),
+}
 INQUIRY_CONVERSION_STATUS_PROPOSAL = {
     "model": "Inquiry",
     "field": "status",
@@ -198,6 +211,27 @@ def portfolio_quality_trend(vendor_id: uuid.UUID) -> dict[str, object]:
             "requires periodic snapshots of the average analyzer_score over time."
         ),
         "proposed_schema": PORTFOLIO_QUALITY_SNAPSHOT_PROPOSAL,
+    }
+
+
+def portfolio_analytics(vendor_id: uuid.UUID) -> dict[str, object]:
+    quality_trend = portfolio_quality_trend(vendor_id)
+    portfolio_count = PortfolioImage.objects.filter(vendor_id=vendor_id, is_active=True).count()
+    return {
+        "portfolio_count": portfolio_count,
+        "quality_trend": quality_trend,
+        "per_image_metrics": None,
+        "unavailable_metrics": (
+            *quality_trend["unavailable_metrics"],
+            PORTFOLIO_IMAGE_VIEWS,
+            PORTFOLIO_IMAGE_ENGAGEMENTS,
+        ),
+        "schema_gap": (
+            "PortfolioImage has no per-image view or engagement tracking today. "
+            "Only profile-level views are recorded, so per-image portfolio analytics "
+            "cannot be derived without a dedicated tracking table."
+        ),
+        "proposed_schema": PORTFOLIO_IMAGE_ENGAGEMENT_PROPOSAL,
     }
 
 
