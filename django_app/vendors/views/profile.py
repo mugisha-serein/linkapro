@@ -358,7 +358,7 @@ class VendorSubmitForReviewView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        expected_version, version_error = resolve_expected_version(request)
+        expected_version, version_error = _resolve_profile_expected_version(request, profile)
         if version_error:
             return version_error
 
