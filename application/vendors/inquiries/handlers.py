@@ -52,5 +52,15 @@ class InquiryCommandHandlersMixin:
 class InquiryQueryHandlersMixin:
         def list_inquiries(self, query: ListInquiriesQuery) -> PageDTO[InquiryDTO]:
             self._assert_actor_can_access_vendor(query)
-            inquiries = self.inquiry_repo.list_by_vendor(query.vendor_id, query.page or PageRequest())
+            page = query.page or PageRequest()
+            if query.search_text:
+                inquiries = self.inquiry_repo.search(
+                    query.vendor_id,
+                    query.search_text,
+                    None,
+                    None,
+                    page,
+                )
+            else:
+                inquiries = self.inquiry_repo.list_by_vendor(query.vendor_id, page)
             return self._map_page(inquiries, self._to_inquiry_dto)

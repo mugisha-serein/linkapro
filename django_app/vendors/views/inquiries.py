@@ -15,7 +15,11 @@ class InquiryListView(APIView):
             return error_response
         query_handlers = get_query_handlers()
 
-        query = ListInquiriesQuery(actor=_actor(request), vendor_id=profile.id)
+        query = ListInquiriesQuery(
+            actor=_actor(request),
+            vendor_id=profile.id,
+            search_text=request.query_params.get("q"),
+        )
         inquiries = query_handlers.list_inquiries(query)
         return Response([self._serialize_inquiry(inq) for inq in inquiries.items])
 

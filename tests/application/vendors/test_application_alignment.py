@@ -288,6 +288,7 @@ class InquiryRepo:
         self.save_calls = []
         self.get_for_vendor_calls = []
         self.list_by_vendor_calls = []
+        self.search_calls = []
 
     def add(self, inquiry):
         self.add_calls.append(inquiry)
@@ -306,6 +307,11 @@ class InquiryRepo:
 
     def list_by_vendor(self, vendor_id, page):
         self.list_by_vendor_calls.append((vendor_id, page))
+        items = [inquiry for inquiry in self.inquiries.values() if inquiry.vendor_id == vendor_id]
+        return Page(items=items[: page.limit], total=len(items), limit=page.limit, offset=page.offset)
+
+    def search(self, vendor_id, query, status_filter, date_range, page):
+        self.search_calls.append((vendor_id, query, status_filter, date_range, page))
         items = [inquiry for inquiry in self.inquiries.values() if inquiry.vendor_id == vendor_id]
         return Page(items=items[: page.limit], total=len(items), limit=page.limit, offset=page.offset)
 
@@ -1802,6 +1808,9 @@ def test_page_results_are_mapped_to_page_dto_and_read_port_is_mandatory():
         is_active=False,
         is_deleted=False,
         deleted_at=None,
+        last_approved_at=None,
+        last_vendor_public_edit_at=None,
+        next_vendor_edit_allowed_at=None,
         version=0,
     )
     read_port.package_page = PageDTO(items=(package_dto,), total=1, limit=5, offset=0)
@@ -1830,6 +1839,18 @@ def test_page_results_are_mapped_to_page_dto_and_read_port_is_mandatory():
         query.list_inquiries(ListInquiriesQuery(actor=actor, vendor_id=vendor_id, page=PageRequest(limit=5))).items[0].id
         == inquiry.id
     )
+    assert (
+        query.list_inquiries(
+            ListInquiriesQuery(
+                actor=actor,
+                vendor_id=vendor_id,
+                page=PageRequest(limit=5),
+                search_text="planner",
+            )
+        ).items[0].id
+        == inquiry.id
+    )
+    assert query.inquiry_repo.search_calls[-1][:4] == (vendor_id, "planner", None, None)
     assert (
         query.list_service_packages(
             ListServicePackagesQuery(actor=actor, vendor_id=vendor_id, page=PageRequest(limit=5))
