@@ -8,6 +8,7 @@ from application.vendors.analytics.dtos import (
     VendorActivityDTO,
     VendorAnalyticsDTO,
     VendorDashboardSummaryDTO,
+    VendorPortfolioQualityTrendDTO,
     VendorVisibilityTrendDTO,
     VendorViewsTrendPointDTO,
 )
@@ -26,3 +27,5 @@ class VendorReadPort(Protocol):
     def total_views_trend(self, vendor_id: uuid.UUID, months: int = 6) -> tuple[VendorViewsTrendPointDTO, ...]: ...
 
     def visibility_trend(self, vendor_id: uuid.UUID, months: int = 6) -> VendorVisibilityTrendDTO: ...
+
+    def portfolio_quality_trend(self, vendor_id: uuid.UUID) -> VendorPortfolioQualityTrendDTO: ...

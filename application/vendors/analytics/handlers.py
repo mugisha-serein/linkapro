@@ -5,12 +5,14 @@ from application.vendors.analytics.dtos import (
     VendorActivityDTO,
     VendorAnalyticsDTO,
     VendorDashboardSummaryDTO,
+    VendorPortfolioQualityTrendDTO,
     VendorVisibilityTrendDTO,
     VendorViewsTrendPointDTO,
 )
 from application.vendors.analytics.queries import (
     GetVendorAnalyticsQuery,
     GetVendorDashboardSummaryQuery,
+    GetVendorPortfolioQualityTrendQuery,
     GetVendorVisibilityTrendQuery,
     GetVendorViewsTrendQuery,
     ListRecentVendorActivityQuery,
@@ -41,3 +43,10 @@ class AnalyticsQueryHandlersMixin:
         def get_visibility_trend(self, query: GetVendorVisibilityTrendQuery) -> VendorVisibilityTrendDTO:
             self._assert_actor_can_access_vendor(query)
             return self.read_repo.visibility_trend(query.vendor_id, query.months)
+
+        def get_portfolio_quality_trend(
+            self,
+            query: GetVendorPortfolioQualityTrendQuery,
+        ) -> VendorPortfolioQualityTrendDTO:
+            self._assert_actor_can_access_vendor(query)
+            return self.read_repo.portfolio_quality_trend(query.vendor_id)

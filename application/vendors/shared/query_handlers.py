@@ -11,6 +11,7 @@ from application.vendors.analytics.handlers import AnalyticsQueryHandlersMixin
 from application.vendors.analytics.queries import (
     GetVendorAnalyticsQuery,
     GetVendorDashboardSummaryQuery,
+    GetVendorPortfolioQualityTrendQuery,
     GetVendorVisibilityTrendQuery,
     GetVendorViewsTrendQuery,
     ListRecentVendorActivityQuery,
@@ -58,6 +59,7 @@ class BaseVendorQueryHandler(VendorDTOMapperMixin):
                 | ListInquiriesQuery
                 | GetVendorDashboardSummaryQuery
                 | GetVendorAnalyticsQuery
+                | GetVendorPortfolioQualityTrendQuery
                 | GetVendorVisibilityTrendQuery
                 | GetVendorViewsTrendQuery
                 | ListRecentVendorActivityQuery

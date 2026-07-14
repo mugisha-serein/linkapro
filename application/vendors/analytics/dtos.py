@@ -64,3 +64,13 @@ class VendorVisibilityTrendPointDTO:
 class VendorVisibilityTrendDTO:
     points: tuple[VendorVisibilityTrendPointDTO, ...]
     unavailable_metrics: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class VendorPortfolioQualityTrendDTO:
+    current_average_score: float | None
+    scored_images: int
+    points: tuple[dict[str, object], ...]
+    unavailable_metrics: tuple[str, ...]
+    schema_gap: str
+    proposed_schema: dict[str, object]

@@ -5,7 +5,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from application.vendors.analytics.queries import GetVendorAnalyticsQuery, GetVendorDashboardSummaryQuery, GetVendorViewsTrendQuery, ListRecentVendorActivityQuery
+from application.vendors.analytics.queries import (
+    GetVendorAnalyticsQuery,
+    GetVendorDashboardSummaryQuery,
+    GetVendorPortfolioQualityTrendQuery,
+    GetVendorViewsTrendQuery,
+    ListRecentVendorActivityQuery,
+)
 from django_app.common.api_responses import api_error
 from django_app.common.permissions import IsVendor
 from domain.vendors.shared.pagination import PageRequest
@@ -121,6 +127,26 @@ class VendorViewsTrendView(APIView):
                 months=months,
             )
             return Response([asdict(item) for item in get_query_handlers().get_views_trend(query)])
+        except Exception as exc:
+            mapped = map_vendor_exception(exc)
+            if mapped is not None:
+                return mapped
+            raise
+
+
+class VendorPortfolioQualityTrendView(APIView):
+    permission_classes = [IsAuthenticated, IsVendor]
+
+    def get(self, request):
+        profile, error_response = _get_current_vendor_profile(request, require_workspace=True)
+        if error_response:
+            return error_response
+        try:
+            query = GetVendorPortfolioQualityTrendQuery(
+                actor=_actor(request),
+                vendor_id=profile.id,
+            )
+            return Response(asdict(get_query_handlers().get_portfolio_quality_trend(query)))
         except Exception as exc:
             mapped = map_vendor_exception(exc)
             if mapped is not None:

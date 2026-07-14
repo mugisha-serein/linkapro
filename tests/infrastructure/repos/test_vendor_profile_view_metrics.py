@@ -13,6 +13,7 @@ from infrastructure.repos.analytics.metrics import (
     inquiry_conversion_rate,
     inquiry_response_metrics,
     log_profile_view,
+    portfolio_quality_trend,
     profile_strength_score,
     recent_security_actions,
     response_backlog,
@@ -22,7 +23,7 @@ from infrastructure.repos.analytics.metrics import (
     visibility_trend,
 )
 from infrastructure.repos.analytics.rules import optimization_alerts, profile_strength_suggestions
-from tests.factories import create_inquiry, create_service_package, create_user, create_vendor_profile
+from tests.factories import create_inquiry, create_portfolio_image, create_service_package, create_user, create_vendor_profile
 
 pytestmark = pytest.mark.django_db
 
@@ -103,6 +104,37 @@ def test_visibility_trend_reports_marketplace_impressions_as_unavailable(monkeyp
         {"month": "2026-07", "profile_views": 1, "marketplace_impressions": None},
     ]
     assert trend["unavailable_metrics"] == ("marketplace_search_impressions",)
+
+
+def test_portfolio_quality_trend_reports_current_average_and_snapshot_gap():
+    vendor = create_vendor_profile(status="approved")
+    other_vendor = create_vendor_profile(status="approved")
+    create_portfolio_image(vendor=vendor, analyzer_score=80, is_active=True)
+    create_portfolio_image(vendor=vendor, analyzer_score=100, is_active=True)
+    create_portfolio_image(vendor=vendor, analyzer_score=20, is_active=False)
+    create_portfolio_image(vendor=vendor, analyzer_score=None, is_active=True)
+    create_portfolio_image(vendor=other_vendor, analyzer_score=10, is_active=True)
+
+    trend = portfolio_quality_trend(vendor.id)
+
+    assert trend["current_average_score"] == 90.0
+    assert trend["scored_images"] == 2
+    assert trend["points"] == []
+    assert trend["unavailable_metrics"] == ("portfolio_quality_snapshots",)
+    assert "requires periodic snapshots" in trend["schema_gap"]
+    assert trend["proposed_schema"]["model"] == "PortfolioQualitySnapshot"
+
+
+def test_portfolio_quality_trend_ignores_deleted_images():
+    vendor = create_vendor_profile(status="approved")
+    deleted = create_portfolio_image(vendor=vendor, analyzer_score=10, is_active=True)
+    deleted.delete()
+    create_portfolio_image(vendor=vendor, analyzer_score=90, is_active=True)
+
+    trend = portfolio_quality_trend(vendor.id)
+
+    assert trend["current_average_score"] == 90.0
+    assert trend["scored_images"] == 1
 
 
 def test_profile_strength_score_represents_domain_completion_errors():

@@ -5,9 +5,22 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from application.vendors.shared.commands import AuthenticatedActor
-from application.vendors.analytics.dtos import VendorDashboardSummaryDTO, VendorViewsTrendPointDTO
-from application.vendors.analytics.queries import GetVendorDashboardSummaryQuery, GetVendorViewsTrendQuery
-from django_app.vendors.views.analytics import VendorDashboardSummaryView, VendorSecurityActionsView, VendorViewsTrendView
+from application.vendors.analytics.dtos import (
+    VendorDashboardSummaryDTO,
+    VendorPortfolioQualityTrendDTO,
+    VendorViewsTrendPointDTO,
+)
+from application.vendors.analytics.queries import (
+    GetVendorDashboardSummaryQuery,
+    GetVendorPortfolioQualityTrendQuery,
+    GetVendorViewsTrendQuery,
+)
+from django_app.vendors.views.analytics import (
+    VendorDashboardSummaryView,
+    VendorPortfolioQualityTrendView,
+    VendorSecurityActionsView,
+    VendorViewsTrendView,
+)
 
 
 def test_dashboard_summary_view_builds_actor_aware_query():
@@ -84,6 +97,41 @@ def test_views_trend_view_builds_actor_aware_query():
         {"month": "2026-06", "views": 2},
         {"month": "2026-07", "views": 3},
     ]
+
+
+def test_portfolio_quality_trend_view_builds_actor_aware_query():
+    user_id = uuid.uuid4()
+    vendor_id = uuid.uuid4()
+    request = SimpleNamespace(user=SimpleNamespace(id=user_id), query_params={})
+    profile = SimpleNamespace(id=vendor_id)
+    handlers = Mock()
+    handlers.get_portfolio_quality_trend.return_value = VendorPortfolioQualityTrendDTO(
+        current_average_score=90.0,
+        scored_images=2,
+        points=(),
+        unavailable_metrics=("portfolio_quality_snapshots",),
+        schema_gap="A real quality trend requires periodic snapshots.",
+        proposed_schema={"model": "PortfolioQualitySnapshot"},
+    )
+
+    with patch(
+        "django_app.vendors.views.analytics._get_current_vendor_profile",
+        return_value=(profile, None),
+    ), patch(
+        "django_app.vendors.views.analytics.get_query_handlers",
+        return_value=handlers,
+    ):
+        response = VendorPortfolioQualityTrendView().get(request)
+
+    query = handlers.get_portfolio_quality_trend.call_args.args[0]
+    assert isinstance(query, GetVendorPortfolioQualityTrendQuery)
+    assert query.actor.user_id == user_id
+    assert query.vendor_id == vendor_id
+    assert response.status_code == 200
+    assert response.data["current_average_score"] == 90.0
+    assert response.data["points"] == ()
+    assert response.data["unavailable_metrics"] == ("portfolio_quality_snapshots",)
+    assert response.data["proposed_schema"] == {"model": "PortfolioQualitySnapshot"}
 
 
 def test_security_actions_view_loads_recent_audit_actions_for_vendor():

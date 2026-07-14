@@ -4,17 +4,34 @@ from datetime import date, datetime, time
 import uuid
 
 from django.db import IntegrityError
-from django.db.models import Count, F, Min, Q, Sum
+from django.db.models import Avg, Count, F, Min, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
 from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
 from domain.vendors.profile.rules import get_profile_completion_errors
 from django_app.governance.models import AuditLog
-from django_app.vendors.models import Inquiry, ServicePackage, VendorProfile as DjangoVendorProfile, VendorProfileViewed
+from django_app.vendors.models import (
+    Inquiry,
+    PortfolioImage,
+    ServicePackage,
+    VendorProfile as DjangoVendorProfile,
+    VendorProfileViewed,
+)
 
 MARKETPLACE_SEARCH_IMPRESSIONS = "marketplace_search_impressions"
 INQUIRY_CONVERSION_RATE = "inquiry_conversion_rate"
+PORTFOLIO_QUALITY_SNAPSHOTS = "portfolio_quality_snapshots"
+PORTFOLIO_QUALITY_SNAPSHOT_PROPOSAL = {
+    "model": "PortfolioQualitySnapshot",
+    "fields": {
+        "vendor_id": "ForeignKey(VendorProfile)",
+        "snapshot_date": "date",
+        "average_analyzer_score": "decimal",
+        "active_image_count": "integer",
+    },
+    "unique": ("vendor_id", "snapshot_date"),
+}
 INQUIRY_CONVERSION_STATUS_PROPOSAL = {
     "model": "Inquiry",
     "field": "status",
@@ -158,6 +175,29 @@ def visibility_trend(vendor_id: uuid.UUID, months: int = 6) -> dict[str, object]
             for point in profile_views
         ],
         "unavailable_metrics": (MARKETPLACE_SEARCH_IMPRESSIONS,),
+    }
+
+
+def portfolio_quality_trend(vendor_id: uuid.UUID) -> dict[str, object]:
+    current = PortfolioImage.objects.filter(
+        vendor_id=vendor_id,
+        is_active=True,
+        analyzer_score__isnull=False,
+    ).aggregate(
+        average_score=Avg("analyzer_score"),
+        scored_images=Count("id"),
+    )
+    average_score = current["average_score"]
+    return {
+        "current_average_score": None if average_score is None else round(float(average_score), 2),
+        "scored_images": current["scored_images"] or 0,
+        "points": [],
+        "unavailable_metrics": (PORTFOLIO_QUALITY_SNAPSHOTS,),
+        "schema_gap": (
+            "PortfolioImage stores only the current analyzer_score. A real quality trend "
+            "requires periodic snapshots of the average analyzer_score over time."
+        ),
+        "proposed_schema": PORTFOLIO_QUALITY_SNAPSHOT_PROPOSAL,
     }
 
 

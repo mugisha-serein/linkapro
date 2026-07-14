@@ -10,12 +10,17 @@ import pytest
 from application.vendors.shared.commands import AuthenticatedActor
 from application.vendors.analytics.dtos import (
     VendorAnalyticsDTO,
+    VendorPortfolioQualityTrendDTO,
     VendorVisibilityTrendDTO,
     VendorVisibilityTrendPointDTO,
 )
 from application.vendors.shared.query_handlers import VendorQueryHandlers
 from application.vendors.analytics.ports import VendorReadPort
-from application.vendors.analytics.queries import GetVendorAnalyticsQuery, GetVendorVisibilityTrendQuery
+from application.vendors.analytics.queries import (
+    GetVendorAnalyticsQuery,
+    GetVendorPortfolioQualityTrendQuery,
+    GetVendorVisibilityTrendQuery,
+)
 
 
 class StrictUnusedRepository:
@@ -52,6 +57,9 @@ class AnalyticsReadPort:
     def visibility_trend(self, vendor_id, months=6):
         raise AssertionError("Visibility trend must not be queried.")
 
+    def portfolio_quality_trend(self, vendor_id):
+        raise AssertionError("Portfolio quality trend must not be queried.")
+
 
 class VisibilityTrendReadPort:
     def __init__(self, trend):
@@ -73,6 +81,31 @@ class VisibilityTrendReadPort:
 
     def recent_activity(self, vendor_id, page):
         raise AssertionError("Recent activity must not be queried.")
+
+
+class PortfolioQualityTrendReadPort:
+    def __init__(self, trend):
+        self.trend = trend
+        self.calls = []
+
+    def portfolio_quality_trend(self, vendor_id):
+        self.calls.append(vendor_id)
+        return self.trend
+
+    def analytics(self, vendor_id):
+        raise AssertionError("Analytics must not be queried.")
+
+    def dashboard_summary(self, vendor_id):
+        raise AssertionError("Dashboard summary must not be queried.")
+
+    def list_service_packages(self, vendor_id, page):
+        raise AssertionError("Service packages must not be queried.")
+
+    def recent_activity(self, vendor_id, page):
+        raise AssertionError("Recent activity must not be queried.")
+
+    def visibility_trend(self, vendor_id, months=6):
+        raise AssertionError("Visibility trend must not be queried.")
 
 
 def _analytics(
@@ -250,3 +283,54 @@ def test_vendor_query_handler_authorizes_and_returns_visibility_trend_dto_unchan
     assert isinstance(result, VendorVisibilityTrendDTO)
     assert authorization.calls == [(actor, vendor_id)]
     assert read_port.calls == [(vendor_id, 3)]
+
+
+def test_vendor_portfolio_quality_trend_dto_exposes_snapshot_gap():
+    trend = VendorPortfolioQualityTrendDTO(
+        current_average_score=88.5,
+        scored_images=2,
+        points=(),
+        unavailable_metrics=("portfolio_quality_snapshots",),
+        schema_gap="A real quality trend requires periodic snapshots.",
+        proposed_schema={"model": "PortfolioQualitySnapshot"},
+    )
+
+    assert trend.current_average_score == 88.5
+    assert trend.points == ()
+    assert trend.unavailable_metrics == ("portfolio_quality_snapshots",)
+    assert trend.proposed_schema["model"] == "PortfolioQualitySnapshot"
+
+    with pytest.raises(FrozenInstanceError):
+        trend.scored_images = 3
+
+
+def test_vendor_query_handler_authorizes_and_returns_portfolio_quality_trend_dto_unchanged():
+    vendor_id = uuid.uuid4()
+    actor = AuthenticatedActor(user_id=uuid.uuid4())
+    trend = VendorPortfolioQualityTrendDTO(
+        current_average_score=None,
+        scored_images=0,
+        points=(),
+        unavailable_metrics=("portfolio_quality_snapshots",),
+        schema_gap="A real quality trend requires periodic snapshots.",
+        proposed_schema={"model": "PortfolioQualitySnapshot"},
+    )
+    read_port = PortfolioQualityTrendReadPort(trend)
+    authorization = AuthorizationPort()
+    unused = StrictUnusedRepository()
+    handler = VendorQueryHandlers(
+        vendor_repo=unused,
+        image_repo=unused,
+        inquiry_repo=unused,
+        read_repo=read_port,
+        authorization_port=authorization,
+    )
+
+    result = handler.get_portfolio_quality_trend(
+        GetVendorPortfolioQualityTrendQuery(actor=actor, vendor_id=vendor_id)
+    )
+
+    assert result is trend
+    assert isinstance(result, VendorPortfolioQualityTrendDTO)
+    assert authorization.calls == [(actor, vendor_id)]
+    assert read_port.calls == [vendor_id]

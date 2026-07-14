@@ -9,6 +9,7 @@ from application.vendors.analytics.dtos import (
     VendorActivityDTO,
     VendorAnalyticsDTO,
     VendorDashboardSummaryDTO,
+    VendorPortfolioQualityTrendDTO,
     VendorVisibilityTrendDTO,
     VendorVisibilityTrendPointDTO,
     VendorViewsTrendPointDTO,
@@ -21,6 +22,7 @@ from domain.vendors.shared.pagination import PageRequest
 from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile as DjangoVendorProfile
 from infrastructure.repos.analytics.metrics import (
     inquiry_response_metrics,
+    portfolio_quality_trend as load_portfolio_quality_trend,
     total_views_trend,
     visibility_trend as load_visibility_trend,
 )
@@ -100,6 +102,22 @@ class DjangoVendorAnalyticsReadRepositoryMixin:
                 for point in trend["points"]
             ),
             unavailable_metrics=tuple(str(metric) for metric in trend["unavailable_metrics"]),
+        )
+
+    def portfolio_quality_trend(self, vendor_id: uuid.UUID) -> VendorPortfolioQualityTrendDTO:
+        self._require_vendor(vendor_id)
+        trend = load_portfolio_quality_trend(vendor_id)
+        return VendorPortfolioQualityTrendDTO(
+            current_average_score=(
+                None
+                if trend["current_average_score"] is None
+                else float(trend["current_average_score"])
+            ),
+            scored_images=int(trend["scored_images"]),
+            points=tuple(dict(point) for point in trend["points"]),
+            unavailable_metrics=tuple(str(metric) for metric in trend["unavailable_metrics"]),
+            schema_gap=str(trend["schema_gap"]),
+            proposed_schema=dict(trend["proposed_schema"]),
         )
 
     def vendor_metrics(self, vendor_id: uuid.UUID) -> dict:

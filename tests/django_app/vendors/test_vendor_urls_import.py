@@ -6,5 +6,9 @@ def test_vendor_urlconf_imports_and_exposes_critical_routes():
     assert reverse("vendor-dashboard-summary") == "/api/django/vendors/dashboard-summary/"
     assert reverse("vendor-analytics") == "/api/django/vendors/analytics/"
     assert reverse("vendor-analytics-views-trend") == "/api/django/vendors/analytics/views-trend/"
+    assert (
+        reverse("vendor-analytics-portfolio-quality-trend")
+        == "/api/django/vendors/analytics/portfolio-quality-trend/"
+    )
     assert reverse("vendor-analytics-security-actions") == "/api/django/vendors/analytics/security-actions/"
     assert reverse("vendor-activity") == "/api/django/vendors/activity/"
