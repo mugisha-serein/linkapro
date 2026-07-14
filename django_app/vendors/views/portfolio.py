@@ -35,14 +35,15 @@ class PortfolioImageView(APIView):
                 )
             return error_response
         if profile.status in {VendorProfileModel.Status.REJECTED, VendorProfileModel.Status.SUSPENDED}:
-            onboarding = build_vendor_onboarding_contract(profile)
+            onboarding = _vendor_onboarding_state(profile)
+            message = _onboarding_message(profile, onboarding)
             return Response(
                 {
                     "code": VENDOR_SUSPENDED_CODE if profile.status == VendorProfileModel.Status.SUSPENDED else VENDOR_PROFILE_INCOMPLETE_CODE,
-                    "message": onboarding["message"],
-                    "field_errors": {"media": [onboarding["message"]]},
-                    "redirect_to": onboarding["redirect_to"],
+                    "message": message,
+                    "field_errors": {"media": [message]},
                     "onboarding": onboarding,
+                    "action": onboarding["action"],
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )

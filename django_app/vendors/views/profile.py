@@ -16,6 +16,10 @@ from ..vendor_view_common import _normalize_response_contract
 from application.vendors.shared.commands import OMITTED
 from django.views.decorators.csrf import ensure_csrf_cookie
 
+from ..vendor_view_common import _get_vendor_onboarding_state
+from ..vendor_view_common import _profile_completion_errors
+from ..vendor_view_common import _vendor_onboarding_state
+
 
 PDF_EOF_TAIL_BYTES = 2048
 PDF_SCAN_OVERLAP_BYTES = 32
@@ -295,18 +299,21 @@ class VendorProfileStatusView(APIView):
     @method_decorator(ensure_csrf_cookie)
     def get(self, request):
         profile, error_response = _get_current_vendor_profile(request)
+        onboarding = _get_vendor_onboarding_state(request)
         if error_response and profile is None:
             response = Response(
                 {
                     "profile": None,
-                    "onboarding": build_vendor_onboarding_contract(None),
+                    "onboarding": onboarding,
+                    "action": onboarding["action"],
                 }
             )
         else:
             response = Response(
                 {
                     "profile": _serialize_profile(profile) if profile else None,
-                    "onboarding": build_vendor_onboarding_contract(profile),
+                    "onboarding": onboarding,
+                    "action": onboarding["action"],
                 }
             )
         return _add_success_contract(
@@ -325,19 +332,19 @@ class VendorSubmitForReviewView(APIView):
         if error_response:
             return error_response
 
-        completion_errors = vendor_field_errors(profile)
+        completion_errors = _profile_completion_errors(profile)
         if completion_errors:
             return _vendor_profile_incomplete_response(profile, completion_errors)
 
         if not _has_submitted_verification_document(profile.id):
-            onboarding = build_vendor_onboarding_contract(profile)
+            onboarding = _vendor_onboarding_state(profile)
             return Response(
                 {
                     "code": "vendor_verification_document_required",
                     "message": "Upload a verification PDF before submitting your profile for review.",
                     "field_errors": {"document": ["Upload a verification PDF before submitting your profile for review."]},
-                    "redirect_to": onboarding["redirect_to"],
                     "onboarding": onboarding,
+                    "action": onboarding["action"],
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -382,14 +389,15 @@ class VendorVerificationDocumentView(APIView):
         query_handlers = get_query_handlers()
         profile = query_handlers.get_vendor_by_user(request.user.id)
         if not profile:
+            onboarding = _get_vendor_onboarding_state(request)
             return Response(
                 {
                     "code": VENDOR_PROFILE_INCOMPLETE_CODE,
                     "message": "Save your vendor profile before uploading verification documents.",
                     "detail": "No vendor profile found.",
-                    "redirect_to": VENDOR_PROFILE_SETUP_REDIRECT,
                     "field_errors": {},
-                    "onboarding": build_vendor_onboarding_contract(None),
+                    "onboarding": onboarding,
+                    "action": onboarding["action"],
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
@@ -470,7 +478,7 @@ class VendorVerificationDocumentView(APIView):
                 "document_id": str(document.id),
                 "processing_deferred": processing_deferred,
                 "message": DOCUMENT_RECEIVED_MESSAGE,
-                "onboarding": build_vendor_onboarding_contract(profile),
+                "onboarding": _vendor_onboarding_state(profile),
             },
             status=status.HTTP_202_ACCEPTED,
         )

@@ -44,7 +44,7 @@ class TestVendorProfileViews:
         response = self.client.get(url)
         assert response.status_code == 404
         assert response.data["onboarding"]["profile_status"] == "missing"
-        assert response.data["redirect_to"] == "/vendor/profile/setup"
+        assert response.data["action"] == {"method": "POST", "path": "/api/django/vendors/profile/"}
 
     def test_get_profile_status_returns_missing_contract_when_none(self):
         response = self.client.get(reverse("vendor-profile-status"))
@@ -52,7 +52,7 @@ class TestVendorProfileViews:
         assert response.status_code == 200
         assert response.data["profile"] is None
         assert response.data["onboarding"]["profile_status"] == "missing"
-        assert response.data["onboarding"]["redirect_to"] == "/vendor/profile/setup"
+        assert response.data["onboarding"]["action"] == {"method": "POST", "path": "/api/django/vendors/profile/"}
 
     def test_create_profile_success(self):
         url = reverse("vendor-profile")
@@ -255,7 +255,7 @@ class TestVendorProfileViews:
 
         assert response.status_code == 403
         assert response.data["code"] == "vendor_profile_incomplete"
-        assert response.data["redirect_to"] == "/vendor/profile/setup"
+        assert response.data["onboarding"]["action"] is None
 
     def test_pending_vendor_can_access_dashboard_summary(self):
         DjangoProfile.objects.create(

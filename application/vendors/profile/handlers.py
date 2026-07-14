@@ -5,6 +5,7 @@ from typing import Callable
 
 from domain.vendors.profile.entity import VendorProfile, VendorStatus
 from domain.vendors.profile.errors import VendorProfileValidationError
+from domain.vendors.profile.rules import is_draft_incomplete, is_pending_review
 from domain.vendors.shared.pagination import PageRequest
 from application.vendors.errors import DuplicateVendorProfile, InvalidVendorCommand, VendorResourceNotFound
 from application.vendors.profile.commands import (
@@ -18,7 +19,7 @@ from application.vendors.profile.commands import (
     UpdateVendorProfileCommand,
 )
 from application.vendors.profile.dtos import VendorProfileDTO
-from application.vendors.profile.queries import GetVendorQuery
+from application.vendors.profile.queries import GetVendorOnboardingStateQuery, GetVendorQuery
 from application.vendors.shared.commands import OMITTED
 from application.vendors.shared.dtos import PageDTO
 
@@ -146,6 +147,65 @@ class ProfileCommandHandlersMixin:
 
 
 class ProfileQueryHandlersMixin:
+        def get_vendor_onboarding_state(self, query: GetVendorOnboardingStateQuery) -> dict:
+            profile = self.vendor_repo.get_by_user_id(query.actor.user_id)
+            if profile is None:
+                return {
+                    "profile_status": "missing",
+                    "can_access_dashboard": False,
+                    "must_complete_profile": True,
+                    "can_submit_for_review": False,
+                    "marketplace_visible": False,
+                    "action": {"method": "POST", "path": "/api/django/vendors/profile/"},
+                }
+
+            status = profile.status.value
+            complete = not profile.get_profile_completion_errors()
+            if status == VendorStatus.APPROVED.value:
+                return {
+                    "profile_status": status,
+                    "can_access_dashboard": True,
+                    "must_complete_profile": False,
+                    "can_submit_for_review": False,
+                    "marketplace_visible": True,
+                    "action": None,
+                }
+            if is_pending_review(profile):
+                return {
+                    "profile_status": status,
+                    "can_access_dashboard": True,
+                    "must_complete_profile": False,
+                    "can_submit_for_review": False,
+                    "marketplace_visible": False,
+                    "action": None,
+                }
+            if status == VendorStatus.SUSPENDED.value:
+                return {
+                    "profile_status": status,
+                    "can_access_dashboard": False,
+                    "must_complete_profile": False,
+                    "can_submit_for_review": False,
+                    "marketplace_visible": False,
+                    "action": None,
+                }
+            if status == VendorStatus.REJECTED.value:
+                return {
+                    "profile_status": status,
+                    "can_access_dashboard": False,
+                    "must_complete_profile": True,
+                    "can_submit_for_review": complete,
+                    "marketplace_visible": False,
+                    "action": None,
+                }
+            return {
+                "profile_status": status,
+                "can_access_dashboard": False,
+                "must_complete_profile": True,
+                "can_submit_for_review": complete,
+                "marketplace_visible": False,
+                "action": {"method": "POST", "path": "/api/django/vendors/profile/"} if is_draft_incomplete(profile) else None,
+            }
+
         def get_vendor(self, query: GetVendorQuery) -> VendorProfileDTO | None:
             self._assert_actor_can_access_vendor(query)
             profile = self.vendor_repo.get_by_id(query.vendor_id)
