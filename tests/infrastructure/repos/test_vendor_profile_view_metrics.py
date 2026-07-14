@@ -2,17 +2,19 @@ from datetime import date
 
 import pytest
 
-from django_app.vendors.models import VendorProfileViewed
+from django_app.vendors.models import ServicePackage, VendorProfileViewed
 from infrastructure.repos.analytics import metrics
 from infrastructure.repos.analytics.metrics import (
+    active_packages_count,
     log_profile_view,
     profile_strength_score,
+    response_rate,
     total_views_trend,
     views_by_month,
     visibility_trend,
 )
-from infrastructure.repos.analytics.rules import profile_strength_suggestions
-from tests.factories import create_vendor_profile
+from infrastructure.repos.analytics.rules import optimization_alerts, profile_strength_suggestions
+from tests.factories import create_inquiry, create_service_package, create_vendor_profile
 
 pytestmark = pytest.mark.django_db
 
@@ -124,3 +126,66 @@ def test_profile_strength_suggestions_include_conditional_domain_errors():
     assert profile_strength_suggestions(vendor.id) == {
         "custom_category": "Describe your service when choosing Other as your category.",
     }
+
+
+def test_active_packages_count_uses_existing_package_metric_rules():
+    vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    create_service_package(
+        vendor=vendor,
+        approval_status=ServicePackage.ApprovalStatus.APPROVED,
+        is_active=True,
+    )
+    create_service_package(
+        vendor=vendor,
+        approval_status=ServicePackage.ApprovalStatus.APPROVED,
+        is_active=False,
+    )
+    create_service_package(
+        vendor=vendor,
+        approval_status=ServicePackage.ApprovalStatus.REJECTED,
+        is_active=False,
+    )
+
+    assert active_packages_count(vendor.id) == 1
+
+
+def test_response_rate_metric_uses_existing_inquiry_read_ratio():
+    vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    create_inquiry(vendor=vendor, is_read=True)
+    create_inquiry(vendor=vendor, is_read=False)
+    create_inquiry(vendor=vendor, is_read=False)
+
+    assert response_rate(vendor.id) == 33.33
+
+
+def test_optimization_alerts_emit_codes_from_existing_metrics():
+    vendor = create_vendor_profile(
+        business_name="",
+        description="Too short",
+        contact_phone="",
+    )
+    create_inquiry(vendor=vendor, is_read=True)
+    create_inquiry(vendor=vendor, is_read=False)
+    create_inquiry(vendor=vendor, is_read=False)
+
+    assert optimization_alerts(vendor.id) == (
+        "profile_strength_low",
+        "no_active_packages",
+        "response_rate_low",
+    )
+
+
+def test_optimization_alerts_stay_empty_when_thresholds_pass():
+    vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    create_service_package(
+        vendor=vendor,
+        approval_status=ServicePackage.ApprovalStatus.APPROVED,
+        is_active=True,
+    )
+    create_inquiry(vendor=vendor, is_read=True)
+    create_inquiry(vendor=vendor, is_read=False)
+
+    assert profile_strength_score(vendor.id) == 100
+    assert active_packages_count(vendor.id) == 1
+    assert response_rate(vendor.id) == 50.0
+    assert optimization_alerts(vendor.id) == ()

@@ -4,13 +4,13 @@ from datetime import date
 import uuid
 
 from django.db import IntegrityError
-from django.db.models import F, Sum
+from django.db.models import Count, F, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
 from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
 from domain.vendors.profile.rules import get_profile_completion_errors
-from django_app.vendors.models import VendorProfile as DjangoVendorProfile, VendorProfileViewed
+from django_app.vendors.models import Inquiry, ServicePackage, VendorProfile as DjangoVendorProfile, VendorProfileViewed
 
 MARKETPLACE_SEARCH_IMPRESSIONS = "marketplace_search_impressions"
 
@@ -112,3 +112,22 @@ def profile_strength_score(vendor_id: uuid.UUID) -> int:
     if errors:
         return min(score, 99)
     return score
+
+
+def active_packages_count(vendor_id: uuid.UUID) -> int:
+    return ServicePackage.all_objects.filter(
+        vendor_id=vendor_id,
+        is_deleted=False,
+        is_active=True,
+        approval_status=ServicePackage.ApprovalStatus.APPROVED,
+    ).count()
+
+
+def response_rate(vendor_id: uuid.UUID) -> float:
+    counts = Inquiry.objects.filter(vendor_id=vendor_id).aggregate(
+        total=Count("id"),
+        read=Count("id", filter=Q(is_read=True)),
+    )
+    total = counts["total"] or 0
+    read = counts["read"] or 0
+    return round((read / total) * 100, 2) if total else 0.0
