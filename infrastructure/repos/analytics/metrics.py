@@ -14,6 +14,13 @@ from django_app.governance.models import AuditLog
 from django_app.vendors.models import Inquiry, ServicePackage, VendorProfile as DjangoVendorProfile, VendorProfileViewed
 
 MARKETPLACE_SEARCH_IMPRESSIONS = "marketplace_search_impressions"
+INQUIRY_CONVERSION_RATE = "inquiry_conversion_rate"
+INQUIRY_CONVERSION_STATUS_PROPOSAL = {
+    "model": "Inquiry",
+    "field": "status",
+    "type": "enum",
+    "values": ("new", "responded", "converted", "declined"),
+}
 
 
 def _month_start(value: date) -> date:
@@ -214,6 +221,19 @@ def response_backlog(vendor_id: uuid.UUID) -> dict[str, object]:
         "count": counts["unread_inquiries"],
         "oldest_unread_at": oldest_unread_at.isoformat() if oldest_unread_at else None,
         "oldest_unread_age_hours": oldest_unread_age_hours,
+    }
+
+
+def inquiry_conversion_rate(vendor_id: uuid.UUID) -> dict[str, object]:
+    return {
+        "vendor_id": str(vendor_id),
+        "conversion_rate": None,
+        "unavailable_metrics": (INQUIRY_CONVERSION_RATE,),
+        "schema_gap": (
+            "Inquiry has no converted/booked/hired signal today; is_read only "
+            "means the vendor opened the inquiry and cannot support conversion."
+        ),
+        "proposed_schema": INQUIRY_CONVERSION_STATUS_PROPOSAL,
     }
 
 

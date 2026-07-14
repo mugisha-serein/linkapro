@@ -10,6 +10,7 @@ from infrastructure.repos.analytics import metrics
 from infrastructure.repos.analytics.metrics import (
     active_packages_count,
     inquiries_by_month,
+    inquiry_conversion_rate,
     inquiry_response_metrics,
     log_profile_view,
     profile_strength_score,
@@ -224,6 +225,30 @@ def test_response_backlog_is_empty_without_unread_inquiries(monkeypatch):
         "count": 0,
         "oldest_unread_at": None,
         "oldest_unread_age_hours": None,
+    }
+
+
+def test_inquiry_conversion_rate_reports_schema_gap_without_is_read_approximation():
+    vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    create_inquiry(vendor=vendor, is_read=True)
+    create_inquiry(vendor=vendor, is_read=False)
+
+    result = inquiry_conversion_rate(vendor.id)
+
+    assert result == {
+        "vendor_id": str(vendor.id),
+        "conversion_rate": None,
+        "unavailable_metrics": ("inquiry_conversion_rate",),
+        "schema_gap": (
+            "Inquiry has no converted/booked/hired signal today; is_read only "
+            "means the vendor opened the inquiry and cannot support conversion."
+        ),
+        "proposed_schema": {
+            "model": "Inquiry",
+            "field": "status",
+            "type": "enum",
+            "values": ("new", "responded", "converted", "declined"),
+        },
     }
 
 
