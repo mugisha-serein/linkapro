@@ -264,6 +264,7 @@ class PackageRepo:
         self.add_calls = []
         self.save_calls = []
         self.get_for_vendor_calls = []
+        self.search_calls = []
 
     def add(self, package):
         self.add_calls.append(package)
@@ -279,6 +280,11 @@ class PackageRepo:
         self.get_for_vendor_calls.append((vendor_id, package_id))
         package = self.packages.get(package_id)
         return package if package and package.vendor_id == vendor_id else None
+
+    def search(self, vendor_id, query, tier_filter, page):
+        self.search_calls.append((vendor_id, query, tier_filter, page))
+        items = [package for package in self.packages.values() if package.vendor_id == vendor_id]
+        return Page(items=items[: page.limit], total=len(items), limit=page.limit, offset=page.offset)
 
 
 class InquiryRepo:
@@ -1792,6 +1798,8 @@ def test_page_results_are_mapped_to_page_dto_and_read_port_is_mandatory():
     profile.id = vendor_id
     image = _image(vendor_id)
     inquiry = _inquiry(vendor_id)
+    package = _package(vendor_id)
+    package_repo = PackageRepo([package])
     read_port = ReadPort()
     auth = AuthorizationPort()
     actor = _actor()
@@ -1825,7 +1833,14 @@ def test_page_results_are_mapped_to_page_dto_and_read_port_is_mandatory():
         unauthenticated_query.get_vendor(GetVendorQuery(actor=actor, vendor_id=vendor_id))
     assert exc_info.value.field_errors == {"authorization_port": ["Vendor authorization is required."]}
 
-    query = VendorQueryHandlers(VendorRepo([profile]), ImageRepo([image]), InquiryRepo([inquiry]), read_port, auth)
+    query = VendorQueryHandlers(
+        VendorRepo([profile]),
+        ImageRepo([image]),
+        InquiryRepo([inquiry]),
+        read_port,
+        auth,
+        package_repo=package_repo,
+    )
 
     assert query.list_pending_approvals(PageRequest(limit=5)).items[0].id == profile.id
     assert query.get_vendor(GetVendorQuery(actor=actor, vendor_id=vendor_id)).id == vendor_id
@@ -1857,6 +1872,18 @@ def test_page_results_are_mapped_to_page_dto_and_read_port_is_mandatory():
         ).items
         == (package_dto,)
     )
+    assert (
+        query.list_service_packages(
+            ListServicePackagesQuery(
+                actor=actor,
+                vendor_id=vendor_id,
+                page=PageRequest(limit=5),
+                search_text="standard",
+            )
+        ).items[0].id
+        == package.id
+    )
+    assert package_repo.search_calls[-1][:3] == (vendor_id, "standard", None)
     assert query.get_dashboard_summary(GetVendorDashboardSummaryQuery(actor=actor, vendor_id=vendor_id)) == read_port.summary
     assert query.get_analytics(GetVendorAnalyticsQuery(actor=actor, vendor_id=vendor_id)) == read_port.analytics_payload
     assert (

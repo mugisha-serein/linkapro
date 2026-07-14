@@ -60,4 +60,5 @@ def get_query_handlers(
         inquiry_repo=DjangoInquiryRepository(),
         read_repo=DjangoVendorReadRepository(),
         authorization_port=authorization_port or DjangoVendorAuthorizationAdapter(),
+        package_repo=DjangoServicePackageRepository(),
     )

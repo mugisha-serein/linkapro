@@ -5,6 +5,7 @@ import uuid
 from domain.vendors.packages.entity import ServicePackage
 from domain.vendors.shared.pagination import Page, PageRequest
 
+
 class IServicePackageRepository(ABC):
     @abstractmethod
     def add(self, package: ServicePackage) -> ServicePackage: ...
@@ -17,6 +18,16 @@ class IServicePackageRepository(ABC):
 
     @abstractmethod
     def list_by_vendor(self, vendor_id: uuid.UUID, page: PageRequest | None = None) -> Page[ServicePackage]: ...
+
+    @abstractmethod
+    def search(
+        self,
+        vendor_id: uuid.UUID,
+        query: str | None,
+        tier_filter: str | None,
+        page: PageRequest | None = None,
+    ) -> Page[ServicePackage]: ...
+
     @abstractmethod
     def save(self, package: ServicePackage, *, expected_version: int) -> ServicePackage: ...
     @abstractmethod
