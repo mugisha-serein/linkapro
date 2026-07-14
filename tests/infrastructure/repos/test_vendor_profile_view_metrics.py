@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 
 import pytest
 
@@ -9,6 +9,7 @@ from django_app.vendors.models import ServicePackage, VendorProfileViewed
 from infrastructure.repos.analytics import metrics
 from infrastructure.repos.analytics.metrics import (
     active_packages_count,
+    inquiries_by_month,
     inquiry_response_metrics,
     log_profile_view,
     profile_strength_score,
@@ -68,6 +69,25 @@ def test_views_by_month_returns_single_year_monthly_breakdown():
     assert breakdown[1] == {"month": "2026-02", "views": 2}
     assert breakdown[2] == {"month": "2026-03", "views": 0}
     assert breakdown[-1] == {"month": "2026-12", "views": 1}
+
+
+def test_inquiries_by_month_uses_same_zero_filled_monthly_window(monkeypatch):
+    vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    other_vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    monkeypatch.setattr(metrics.timezone, "localdate", lambda: date(2026, 7, 14))
+    create_inquiry(vendor=vendor, created_at=datetime(2026, 5, 1, tzinfo=dt_timezone.utc))
+    create_inquiry(vendor=vendor, created_at=datetime(2026, 7, 1, tzinfo=dt_timezone.utc))
+    create_inquiry(vendor=vendor, created_at=datetime(2026, 7, 14, tzinfo=dt_timezone.utc))
+    create_inquiry(vendor=vendor, created_at=datetime(2026, 4, 30, tzinfo=dt_timezone.utc))
+    create_inquiry(vendor=other_vendor, created_at=datetime(2026, 7, 14, tzinfo=dt_timezone.utc))
+
+    trend = inquiries_by_month(vendor.id, months=3)
+
+    assert trend == [
+        {"month": "2026-05", "inquiries": 1},
+        {"month": "2026-06", "inquiries": 0},
+        {"month": "2026-07", "inquiries": 2},
+    ]
 
 
 def test_visibility_trend_reports_marketplace_impressions_as_unavailable(monkeypatch):

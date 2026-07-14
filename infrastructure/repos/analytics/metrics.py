@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time
 import uuid
 
 from django.db import IntegrityError
@@ -23,6 +23,42 @@ def _month_start(value: date) -> date:
 def _shift_month(value: date, months: int) -> date:
     month_index = value.year * 12 + (value.month - 1) + months
     return date(month_index // 12, month_index % 12 + 1, 1)
+
+
+def _monthly_counts(
+    queryset,
+    *,
+    date_field: str,
+    count_alias: str,
+    start_month: date,
+    months: int,
+    datetime_bounds: bool = False,
+) -> list[dict[str, int | str]]:
+    end_month = _shift_month(start_month, months)
+    start_boundary = start_month
+    end_boundary = end_month
+    if datetime_bounds:
+        start_boundary = timezone.make_aware(datetime.combine(start_month, time.min))
+        end_boundary = timezone.make_aware(datetime.combine(end_month, time.min))
+    filters = {
+        f"{date_field}__gte": start_boundary,
+        f"{date_field}__lt": end_boundary,
+    }
+    rows = (
+        queryset.filter(**filters)
+        .annotate(month=TruncMonth(date_field))
+        .values("month")
+        .annotate(count=Count("id"))
+        .order_by("month")
+    )
+    counts = {row["month"].strftime("%Y-%m"): int(row["count"] or 0) for row in rows}
+    return [
+        {
+            "month": month.strftime("%Y-%m"),
+            count_alias: counts.get(month.strftime("%Y-%m"), 0),
+        }
+        for month in (_shift_month(start_month, offset) for offset in range(months))
+    ]
 
 
 def _monthly_view_counts(vendor_id: uuid.UUID, *, start_month: date, months: int) -> list[dict[str, int | str]]:
@@ -85,6 +121,22 @@ def views_by_month(vendor_id: uuid.UUID, year: int) -> list[dict[str, int | str]
     if year < 1:
         raise ValueError("year must be positive")
     return _monthly_view_counts(vendor_id, start_month=date(year, 1, 1), months=12)
+
+
+def inquiries_by_month(vendor_id: uuid.UUID, months: int = 6) -> list[dict[str, int | str]]:
+    if months < 1:
+        raise ValueError("months must be positive")
+
+    current_month = _month_start(timezone.localdate())
+    start_month = _shift_month(current_month, -(months - 1))
+    return _monthly_counts(
+        Inquiry.objects.filter(vendor_id=vendor_id),
+        date_field="created_at",
+        count_alias="inquiries",
+        start_month=start_month,
+        months=months,
+        datetime_bounds=True,
+    )
 
 
 def visibility_trend(vendor_id: uuid.UUID, months: int = 6) -> dict[str, object]:
