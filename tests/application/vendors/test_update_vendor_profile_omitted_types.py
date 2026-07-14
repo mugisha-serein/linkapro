@@ -5,12 +5,8 @@ from types import NoneType
 from typing import get_args, get_type_hints
 import uuid
 
-from application.vendors.commands import (
-    OMITTED,
-    AuthenticatedActor,
-    OmittedValue,
-    UpdateVendorProfileCommand,
-)
+from application.vendors.profile.commands import UpdateVendorProfileCommand
+from application.vendors.shared.commands import OMITTED, AuthenticatedActor, OmittedValue
 
 
 STRING_UPDATE_FIELDS = (

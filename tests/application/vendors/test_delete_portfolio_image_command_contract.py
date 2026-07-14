@@ -6,10 +6,9 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import (
-    AuthenticatedActor,
-    DeletePortfolioImageCommand,
-)
+from application.vendors.portfolio.commands import DeletePortfolioImageCommand
+from application.vendors.shared.commands import AuthenticatedActor
+from application.vendors.shared.handlers import VendorCommandHandlers
 
 
 def test_delete_portfolio_image_command_contains_only_current_use_case_inputs():
@@ -56,8 +55,6 @@ def test_delete_portfolio_image_command_runtime_behavior_is_unchanged_without_at
 
 
 def test_delete_portfolio_image_handler_accepts_the_reduced_command_contract():
-    from application.vendors.handlers import VendorCommandHandlers
-
     signature = inspect.signature(VendorCommandHandlers.delete_portfolio_image)
 
     assert tuple(signature.parameters) == ("self", "cmd")

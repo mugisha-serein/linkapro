@@ -11,7 +11,10 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 import json
 
-from application.vendors.dtos import InquiryDTO, PortfolioImageDTO, ServicePackageDTO, VendorProfileDTO
+from application.vendors.inquiries.dtos import InquiryDTO
+from application.vendors.packages.dtos import ServicePackageDTO
+from application.vendors.portfolio.dtos import PortfolioImageDTO
+from application.vendors.profile.dtos import VendorProfileDTO
 from application.vendors.errors import VendorConflict, VendorIdempotencyConflict
 from django_app.vendors.models import VendorIdempotencyRecord
 

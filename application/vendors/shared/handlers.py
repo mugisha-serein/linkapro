@@ -23,9 +23,13 @@ from application.vendors.errors import (
     VendorVersionConflict,
 )
 from application.vendors.inquiries.commands import SendInquiryCommand
+from application.vendors.inquiries.handlers import InquiryCommandHandlersMixin
+from application.vendors.packages.handlers import PackageCommandHandlersMixin
+from application.vendors.portfolio.handlers import PortfolioCommandHandlersMixin
 from application.vendors.inquiries.ports import InquiryAbuseProtectionPort
 from application.vendors.portfolio.ports import PortfolioImageCreationPort, PortfolioReorderUnitOfWork
 from application.vendors.profile.commands import UpdateVendorProfileCommand
+from application.vendors.profile.handlers import ProfileCommandHandlersMixin
 from application.vendors.shared.mappers import VendorDTOMapperMixin
 from application.vendors.shared.commands import OMITTED
 from application.vendors.shared.ports import VendorAggregateUnitOfWork, VendorAuthorizationPort, VendorIdempotencyPort
@@ -236,3 +240,26 @@ class BaseVendorCommandHandler(TransitionExecutorMixin, VendorDTOMapperMixin):
             }
             canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
             return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+
+
+class VendorCommandHandlers(
+    ProfileCommandHandlersMixin,
+    PortfolioCommandHandlersMixin,
+    PackageCommandHandlersMixin,
+    InquiryCommandHandlersMixin,
+    BaseVendorCommandHandler,
+):
+    def queue_portfolio_media(self, cmd):
+        return PortfolioCommandHandlersMixin.queue_portfolio_media(self, cmd)
+
+    def mark_portfolio_media_processing(self, cmd):
+        return PortfolioCommandHandlersMixin.mark_portfolio_media_processing(self, cmd)
+
+    def mark_portfolio_media_uploaded(self, cmd):
+        return PortfolioCommandHandlersMixin.mark_portfolio_media_uploaded(self, cmd)
+
+    def update_portfolio_caption(self, cmd):
+        return PortfolioCommandHandlersMixin.update_portfolio_caption(self, cmd)
+
+    def update_vendor_branding_media(self, cmd):
+        return ProfileCommandHandlersMixin.update_vendor_branding_media(self, cmd)

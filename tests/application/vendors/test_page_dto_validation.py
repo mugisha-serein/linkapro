@@ -4,7 +4,7 @@ from typing import get_args, get_type_hints
 
 import pytest
 
-from application.vendors.dtos import PageDTO
+from application.vendors.shared.dtos import PageDTO
 
 
 def test_page_dto_accepts_valid_boundary_values_and_normalizes_next_cursor():

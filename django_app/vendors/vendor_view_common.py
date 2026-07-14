@@ -32,33 +32,19 @@ from .models import VendorProfile as VendorProfileModel
 from .models import ServicePackage as ServicePackageModel
 from .throttles import PublicVendorInquiryThrottle
 from .services import get_command_handlers, get_query_handlers
-from application.vendors.commands import (
-    AuthenticatedActor,
-    CreateVendorProfileCommand,
-    UpdateVendorProfileCommand,
-    SubmitVendorForReviewCommand,
-    AddPortfolioImageCommand,
-    DeletePortfolioImageCommand,
-    ReorderPortfolioImagesCommand,
-    CreateServicePackageCommand,
-    UpdateServicePackageCommand,
-    DeactivateServicePackageCommand,
-    ActivateServicePackageCommand,
-    SendInquiryCommand,
-    ResourceVersion,
-)
-from application.vendors.queries import (
-    GetVendorQuery,
-    ListInquiriesQuery,
-    ListPortfolioImagesQuery,
-    ListServicePackagesQuery,
-)
-from application.vendors.dtos import (
-    VendorProfileDTO,
-    PortfolioImageDTO,
-    ServicePackageDTO,
-    InquiryDTO,
-)
+from application.vendors.inquiries.commands import SendInquiryCommand
+from application.vendors.packages.commands import CreateServicePackageCommand, UpdateServicePackageCommand, DeactivateServicePackageCommand, ActivateServicePackageCommand
+from application.vendors.portfolio.commands import AddPortfolioImageCommand, DeletePortfolioImageCommand, ReorderPortfolioImagesCommand
+from application.vendors.profile.commands import CreateVendorProfileCommand, UpdateVendorProfileCommand, SubmitVendorForReviewCommand
+from application.vendors.shared.commands import AuthenticatedActor, ResourceVersion
+from application.vendors.inquiries.queries import ListInquiriesQuery
+from application.vendors.packages.queries import ListServicePackagesQuery
+from application.vendors.portfolio.queries import ListPortfolioImagesQuery
+from application.vendors.profile.queries import GetVendorQuery
+from application.vendors.inquiries.dtos import InquiryDTO
+from application.vendors.packages.dtos import ServicePackageDTO
+from application.vendors.portfolio.dtos import PortfolioImageDTO
+from application.vendors.profile.dtos import VendorProfileDTO
 from application.vendors.profile.onboarding_policy import (
     SETUP_ROUTE,
     build_vendor_onboarding_contract,

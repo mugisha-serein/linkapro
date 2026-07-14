@@ -26,7 +26,7 @@ LEGACY_SIDE_EFFECT_MODULES = (
 def test_vendor_command_handlers_exposes_all_extended_handlers_after_direct_import_only():
     script = """
 import sys
-from application.vendors.handlers import VendorCommandHandlers
+from application.vendors.shared.handlers import VendorCommandHandlers
 
 expected = {
     'queue_portfolio_media',
@@ -62,12 +62,12 @@ assert legacy_imports == [], legacy_imports
 
 
 def test_extended_handlers_are_normal_methods_declared_on_vendor_command_handlers():
-    from application.vendors.handlers import VendorCommandHandlers
+    from application.vendors.shared.handlers import VendorCommandHandlers
 
     for method_name in HANDLER_METHODS:
         method = VendorCommandHandlers.__dict__.get(method_name)
         assert callable(method), method_name
-        assert method.__module__ == "application.vendors.handlers"
+        assert method.__module__ == "application.vendors.shared.handlers"
         assert method.__qualname__ == f"VendorCommandHandlers.{method_name}"
 
 

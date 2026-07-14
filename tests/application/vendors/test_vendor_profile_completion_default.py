@@ -1,8 +1,5 @@
-from application.vendors.dtos import VendorProfileDTO
-from application.vendors.onboarding_policy import (
-    build_vendor_onboarding_contract,
-    vendor_field_errors,
-)
+from application.vendors.profile.dtos import VendorProfileDTO
+from application.vendors.profile.onboarding_policy import build_vendor_onboarding_contract, vendor_field_errors
 
 
 def _profile(**overrides):

@@ -4,9 +4,9 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from application.vendors.commands import AuthenticatedActor
-from application.vendors.dtos import VendorDashboardSummaryDTO
-from application.vendors.queries import GetVendorDashboardSummaryQuery
+from application.vendors.shared.commands import AuthenticatedActor
+from application.vendors.analytics.dtos import VendorDashboardSummaryDTO
+from application.vendors.analytics.queries import GetVendorDashboardSummaryQuery
 from django_app.vendors.views.analytics import VendorDashboardSummaryView
 
 

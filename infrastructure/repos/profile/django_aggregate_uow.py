@@ -6,7 +6,7 @@ from typing import Any
 from django.db import transaction
 
 from application.vendors.errors import VendorApplicationConfigurationError
-from application.vendors.ports import VendorAggregateUnitOfWork
+from application.vendors.shared.ports import VendorAggregateUnitOfWork
 from domain.vendors.inquiries.entity import Inquiry
 from domain.vendors.packages.entity import ServicePackage
 from domain.vendors.portfolio.entity import PortfolioImage

@@ -4,10 +4,10 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import AuthenticatedActor
+from application.vendors.shared.commands import AuthenticatedActor
 from application.vendors.errors import VendorVersionConflict
-from application.vendors.handlers import VendorCommandHandlers
-from application.vendors.portfolio_media_commands import UpdatePortfolioCaptionCommand
+from application.vendors.shared.handlers import VendorCommandHandlers
+from application.vendors.portfolio.commands import UpdatePortfolioCaptionCommand
 from domain.vendors.portfolio.entity import PortfolioImage, PortfolioQualityStatus, PortfolioUploadStatus, PortfolioVisibilityStatus
 
 

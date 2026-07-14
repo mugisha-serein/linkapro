@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from application.vendors.errors import VendorConflict, VendorVersionConflict
-from application.vendors.handlers import VendorCommandHandlers
+from application.vendors.shared.handlers import VendorCommandHandlers
 
 
 def test_vendor_version_conflict_preserves_existing_conflict_contract_and_context():

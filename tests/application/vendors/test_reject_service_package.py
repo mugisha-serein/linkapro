@@ -5,9 +5,10 @@ import uuid
 
 import pytest
 
-from application.vendors.commands import ModeratorActor, RejectServicePackageCommand
+from application.vendors.packages.commands import RejectServicePackageCommand
+from application.vendors.shared.commands import ModeratorActor
 from application.vendors.errors import VendorVersionConflict
-from application.vendors.handlers import VendorCommandHandlers
+from application.vendors.shared.handlers import VendorCommandHandlers
 from domain.vendors.packages.entity import PackageApprovalStatus, ServicePackage
 from domain.vendors.packages.errors import PackageValidationError
 

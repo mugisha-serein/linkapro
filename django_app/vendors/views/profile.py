@@ -11,6 +11,7 @@ from ..vendor_view_common import _infer_image_content_type
 from ..vendor_view_common import _vendor_profile_incomplete_response
 from ..vendor_view_common import _has_submitted_verification_document
 from ..vendor_view_common import _get_public_marketplace_stats
+from application.vendors.shared.commands import OMITTED
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -72,8 +73,6 @@ class VendorProfileView(APIView):
             return version_error
 
         def _field(name: str):
-            from application.vendors.commands import OMITTED
-
             return data[name] if name in data else OMITTED
 
         cmd = UpdateVendorProfileCommand(

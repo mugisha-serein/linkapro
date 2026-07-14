@@ -6,11 +6,16 @@ from domain.vendors.inquiries.interfaces import IInquiryRepository
 from domain.vendors.portfolio.interfaces import IPortfolioImageRepository
 from domain.vendors.profile.interfaces import IVendorProfileRepository
 from domain.vendors.shared.pagination import Page
+from application.vendors.analytics.handlers import AnalyticsQueryHandlersMixin
 from application.vendors.analytics.queries import GetVendorAnalyticsQuery, GetVendorDashboardSummaryQuery, ListRecentVendorActivityQuery
 from application.vendors.errors import VendorApplicationConfigurationError
+from application.vendors.inquiries.handlers import InquiryQueryHandlersMixin
 from application.vendors.inquiries.queries import ListInquiriesQuery
+from application.vendors.packages.handlers import PackageQueryHandlersMixin
 from application.vendors.packages.queries import ListServicePackagesQuery
+from application.vendors.portfolio.handlers import PortfolioQueryHandlersMixin
 from application.vendors.portfolio.queries import ListPortfolioImagesQuery
+from application.vendors.profile.handlers import ProfileQueryHandlersMixin
 from application.vendors.profile.queries import GetVendorQuery
 from application.vendors.shared.dtos import PageDTO
 from application.vendors.shared.mappers import VendorDTOMapperMixin
@@ -62,3 +67,14 @@ class BaseVendorQueryHandler(VendorDTOMapperMixin):
                 offset=page.offset,
                 next_cursor=page.next_cursor,
             )
+
+
+class VendorQueryHandlers(
+    ProfileQueryHandlersMixin,
+    PortfolioQueryHandlersMixin,
+    PackageQueryHandlersMixin,
+    InquiryQueryHandlersMixin,
+    AnalyticsQueryHandlersMixin,
+    BaseVendorQueryHandler,
+):
+    pass

@@ -5,12 +5,8 @@ import uuid
 from django.db.models import Count, Q
 from django.utils import timezone
 
-from application.vendors.dtos import (
-    PageDTO,
-    VendorActivityDTO,
-    VendorAnalyticsDTO,
-    VendorDashboardSummaryDTO,
-)
+from application.vendors.analytics.dtos import VendorActivityDTO, VendorAnalyticsDTO, VendorDashboardSummaryDTO
+from application.vendors.shared.dtos import PageDTO
 from application.vendors.errors import VendorResourceNotFound
 from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
 from domain.vendors.profile.entity import profile_completion_errors_for

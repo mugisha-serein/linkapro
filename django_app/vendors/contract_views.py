@@ -6,7 +6,7 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 
-from application.vendors.commands import DeactivateServicePackageCommand, UpdateServicePackageCommand
+from application.vendors.packages.commands import DeactivateServicePackageCommand, UpdateServicePackageCommand
 from .api_contracts import map_vendor_exception, resolve_expected_version, response_with_version, vendor_error_response
 from domain.vendors.packages.rules import PackageEditCooldownError, VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS, effective_next_edit_allowed_at
 from domain.vendors.packages.rules import PackageValidationError

@@ -8,21 +8,9 @@ from typing import Mapping, Sequence, get_type_hints
 
 import pytest
 
-from application.vendors import onboarding_policy
-from application.vendors.onboarding_policy import (
-    COMPLETE_PROFILE,
-    DASHBOARD_ROUTE,
-    OPEN_DASHBOARD,
-    SETUP_ROUTE,
-    VendorOnboardingDTO,
-    VendorOnboardingRedirectIntent,
-    build_vendor_onboarding_contract,
-    vendor_field_errors,
-)
-from application.vendors.ports import (
-    ProfileCompletionErrors,
-    VendorProfileCompletionProvider,
-)
+from application.vendors.profile import onboarding_policy
+from application.vendors.profile.onboarding_policy import COMPLETE_PROFILE, DASHBOARD_ROUTE, OPEN_DASHBOARD, SETUP_ROUTE, VendorOnboardingDTO, VendorOnboardingRedirectIntent, build_vendor_onboarding_contract, vendor_field_errors
+from application.vendors.profile.ports import ProfileCompletionErrors, VendorProfileCompletionProvider
 
 
 class Profile:

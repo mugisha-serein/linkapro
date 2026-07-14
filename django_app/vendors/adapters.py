@@ -7,13 +7,14 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from application.vendors.commands import AuthenticatedActor, ModeratorActor
+from application.vendors.shared.commands import AuthenticatedActor, ModeratorActor
 from application.vendors.errors import (
     InquiryAbuseDenied,
     VendorOperationForbidden,
     VendorResourceNotFound,
 )
-from application.vendors.ports import InquiryAbuseProtectionPort, VendorAuthorizationPort
+from application.vendors.inquiries.ports import InquiryAbuseProtectionPort
+from application.vendors.shared.ports import VendorAuthorizationPort
 from django_app.identity.models import User
 
 from .abuse_models import InquiryAbuseRecord

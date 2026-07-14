@@ -3,12 +3,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from application.vendors.commands import (
-    ModeratorActor,
-    RejectVendorCommand,
-    ReinstateVendorCommand,
-    SuspendVendorCommand,
-)
+from application.vendors.profile.commands import RejectVendorCommand, ReinstateVendorCommand, SuspendVendorCommand
+from application.vendors.shared.commands import ModeratorActor
 from django_app.common.api_responses import api_success
 from django_app.common.permissions import IsAdmin
 from django_app.governance.marketplace_outbox import enqueue_vendor_projection, enqueue_vendor_projection_by_id

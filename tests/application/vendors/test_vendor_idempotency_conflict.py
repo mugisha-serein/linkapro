@@ -9,7 +9,7 @@ from application.vendors.errors import (
     VendorIdempotencyConflict,
     VendorVersionConflict,
 )
-from application.vendors.handlers import VendorCommandHandlers
+from application.vendors.shared.handlers import VendorCommandHandlers
 
 
 def test_vendor_idempotency_conflict_has_stable_code_and_message():
