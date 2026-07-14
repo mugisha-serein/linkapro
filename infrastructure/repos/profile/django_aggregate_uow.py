@@ -7,7 +7,10 @@ from django.db import transaction
 
 from application.vendors.errors import VendorApplicationConfigurationError
 from application.vendors.ports import VendorAggregateUnitOfWork
-from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
+from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.packages.entity import ServicePackage
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import VendorProfile
 from infrastructure.adapters.django_vendor_event_outbox import DjangoVendorEventOutboxDispatcher
 from infrastructure.repos.inquiries.django_repository import DjangoInquiryRepository
 from infrastructure.repos.packages.django_repository import DjangoServicePackageRepository

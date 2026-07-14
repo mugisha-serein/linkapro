@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from domain.vendors.entities import VendorProfile
-from domain.vendors.entities import profile_completion_errors_for
+from domain.vendors.profile.entity import VendorProfile
+from domain.vendors.profile.entity import profile_completion_errors_for
 
 
 from application.vendors.profile.ports import VendorProfileCompletionProvider

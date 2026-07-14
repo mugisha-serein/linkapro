@@ -12,7 +12,7 @@ from application.vendors.dtos import PageDTO, VendorActivityDTO
 from application.vendors.handlers import VendorQueryHandlers
 from application.vendors.ports import VendorReadPort
 from application.vendors.queries import ListRecentVendorActivityQuery
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.shared.pagination import PageRequest
 
 
 class StrictUnusedRepository:

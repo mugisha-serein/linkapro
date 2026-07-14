@@ -12,7 +12,7 @@ from django_app.common.permissions import IsAdmin
 from django_app.identity.models import PasswordResetEmailDelivery, User
 from django_app.events.models import Event
 from django_app.vendors.models import PortfolioImage, ServicePackage, VendorProfile, VerificationDocument
-from domain.vendors.package_edit_policy import effective_next_edit_allowed_at
+from domain.vendors.packages.rules import effective_next_edit_allowed_at
 from .marketplace_outbox import enqueue_vendor_delete_projection, enqueue_vendor_projection, enqueue_vendor_projection_by_id
 from .models import AuditLog, ContentFlag
 from .policy_reasons import (

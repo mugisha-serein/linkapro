@@ -10,7 +10,7 @@ from application.vendors.errors import (
     VendorOperationForbidden,
     VendorResourceNotFound,
 )
-from domain.vendors.errors import ConcurrentVendorUpdate, VendorDomainError
+from domain.vendors.shared.aggregate import ConcurrentVendorUpdate, VendorDomainError
 
 
 EXPECTED_VERSION_CODE = "vendor_expected_version_invalid"

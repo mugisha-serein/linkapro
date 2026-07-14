@@ -8,7 +8,7 @@ import pytest
 from application.vendors.commands import AuthenticatedActor, SubmitVendorForReviewCommand, UpdateVendorProfileCommand
 from application.vendors.errors import InvalidVendorCommand
 from application.vendors.handlers import VendorCommandHandlers, _translate_profile_update_validation
-from domain.vendors.errors import InvalidVendorTransition, VendorProfileValidationError
+from domain.vendors.profile.errors import InvalidVendorTransition, VendorProfileValidationError
 
 
 class StrictUnusedDependency:

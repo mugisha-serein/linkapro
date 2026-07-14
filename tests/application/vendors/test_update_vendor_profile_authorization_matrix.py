@@ -7,7 +7,7 @@ import pytest
 from application.vendors.commands import AuthenticatedActor, UpdateVendorProfileCommand
 from application.vendors.errors import VendorOperationForbidden
 from application.vendors.handlers import VendorCommandHandlers
-from domain.vendors.entities import ServiceCategory, VendorProfile
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile
 from tests.application.vendors.strict_vendor_profile_repository import (
     StrictVendorProfileRepository,
 )

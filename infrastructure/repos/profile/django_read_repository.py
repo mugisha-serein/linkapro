@@ -7,7 +7,7 @@ from application.vendors.dtos import (
     ServicePackageDTO,
 )
 from application.vendors.ports import VendorReadPort
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.shared.pagination import PageRequest
 from django_app.vendors.models import ServicePackage
 from infrastructure.repos.analytics.django_read_repository import DjangoVendorAnalyticsReadRepositoryMixin
 

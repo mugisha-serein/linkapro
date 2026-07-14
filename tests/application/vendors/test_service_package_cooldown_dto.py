@@ -8,7 +8,7 @@ import uuid
 
 from application.vendors.dtos import ServicePackageDTO
 from application.vendors.handlers import VendorCommandHandlers
-from domain.vendors.entities import ServicePackage
+from domain.vendors.packages.entity import ServicePackage
 
 
 def _package(

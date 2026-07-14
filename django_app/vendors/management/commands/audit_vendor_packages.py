@@ -3,8 +3,9 @@ import json
 from django.core.management.base import BaseCommand
 
 from django_app.vendors.models import ServicePackage as DjangoPackage
-from domain.vendors.entities import ServicePackage
-from domain.vendors.errors import PackageValidationError, VendorDomainError
+from domain.vendors.packages.entity import ServicePackage
+from domain.vendors.packages.errors import PackageValidationError
+from domain.vendors.shared.aggregate import VendorDomainError
 
 
 class Command(BaseCommand):

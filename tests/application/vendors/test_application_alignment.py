@@ -65,23 +65,15 @@ from application.vendors.queries import (
     ListServicePackagesQuery,
 )
 from domain.shared.utils import utc_now
-from domain.vendors.entities import (
-    Inquiry,
-    PackageApprovalStatus,
-    PortfolioImage,
-    ServiceCategory,
-    ServicePackage,
-    VendorProfile,
-    VendorStatus,
-)
-from domain.vendors.events import (
-    InquiryReceived,
-    PortfolioMediaReordered,
-    ServicePackageCreated,
-    VendorApproved,
-    VendorProfileUpdated,
-)
-from domain.vendors.interfaces import Page, PageRequest
+from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.packages.entity import PackageApprovalStatus, ServicePackage
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile, VendorStatus
+from domain.vendors.inquiries.events import InquiryReceived
+from domain.vendors.packages.events import ServicePackageCreated
+from domain.vendors.portfolio.events import PortfolioMediaReordered
+from domain.vendors.profile.events import VendorApproved, VendorProfileUpdated
+from domain.vendors.shared.pagination import Page, PageRequest
 
 
 def _actor(user_id: uuid.UUID | None = None) -> AuthenticatedActor:

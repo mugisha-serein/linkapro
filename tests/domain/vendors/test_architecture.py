@@ -50,22 +50,41 @@ def test_vendor_domain_has_no_framework_or_infrastructure_imports():
     assert offenders == []
 
 
-<<<<<<< HEAD
-def test_vendor_domain_has_no_legacy_profile_completion_module():
+def test_vendor_domain_has_no_legacy_flat_modules():
     domain_root = Path(__file__).parents[3] / "domain" / "vendors"
 
     assert not (domain_root / "profile_completion.py").exists()
-=======
+    for module_name in (
+        "entities.py",
+        "errors.py",
+        "events.py",
+        "interfaces.py",
+        "validation.py",
+        "package_rules.py",
+        "package_edit_policy.py",
+        "inquiry_policy.py",
+    ):
+        assert not (domain_root / module_name).exists()
+
+
 def test_vendor_domain_modules_import_and_public_exports_exist():
     package = importlib.import_module("domain.vendors")
 
     for module_name in [
-        "domain.vendors.entities",
-        "domain.vendors.events",
-        "domain.vendors.interfaces",
-        "domain.vendors.package_rules",
-        "domain.vendors.package_edit_policy",
-        "domain.vendors.validation",
+        "domain.vendors.inquiries.entity",
+        "domain.vendors.inquiries.interfaces",
+        "domain.vendors.inquiries.rules",
+        "domain.vendors.packages.entity",
+        "domain.vendors.packages.interfaces",
+        "domain.vendors.packages.rules",
+        "domain.vendors.portfolio.entity",
+        "domain.vendors.portfolio.interfaces",
+        "domain.vendors.portfolio.rules",
+        "domain.vendors.profile.entity",
+        "domain.vendors.profile.interfaces",
+        "domain.vendors.profile.rules",
+        "domain.vendors.shared.pagination",
+        "domain.vendors.shared.validation",
     ]:
         importlib.import_module(module_name)
 
@@ -87,7 +106,7 @@ def test_vendor_domain_protected_state_is_mutated_only_by_entities():
     offenders: list[str] = []
 
     for path in sorted(domain_root.rglob("*.py")):
-        if path.name == "entities.py":
+        if path.name == "entity.py":
             continue
         module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(module):
@@ -98,4 +117,3 @@ def test_vendor_domain_protected_state_is_mutated_only_by_entities():
                     offenders.append(f"{path.relative_to(domain_root)} assigns {target.attr}")
 
     assert offenders == []
->>>>>>> 10f5ff3bfc380a74a329a887cb4f25cfc9ab55aa

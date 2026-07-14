@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, Protocol, Sequence
 import uuid
 
-from domain.vendors.entities import PortfolioImage
+from domain.vendors.portfolio.entity import PortfolioImage
 
 class PortfolioReorderUnitOfWork(Protocol):
     """Loads and atomically persists the complete active portfolio set for one vendor."""

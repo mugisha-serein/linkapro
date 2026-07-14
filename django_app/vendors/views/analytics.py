@@ -12,7 +12,7 @@ from application.vendors.queries import (
 )
 from django_app.common.api_responses import api_error
 from django_app.common.permissions import IsVendor
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.shared.pagination import PageRequest
 
 from ..api_contracts import map_vendor_exception
 from ..services import get_query_handlers

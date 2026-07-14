@@ -5,7 +5,10 @@ from datetime import timedelta
 from typing import Callable, Generic, Literal, Protocol, TypeAlias, TypeVar
 import uuid
 
-from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
+from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.packages.entity import ServicePackage
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import VendorProfile
 from application.vendors.shared.commands import AuthenticatedActor, ModeratorActor
 
 T = TypeVar("T")

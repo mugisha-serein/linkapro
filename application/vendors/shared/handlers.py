@@ -6,8 +6,14 @@ import json
 import uuid
 from typing import Callable, Sequence
 
-from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
-from domain.vendors.interfaces import IInquiryRepository, IPortfolioImageRepository, IServicePackageRepository, IVendorProfileRepository
+from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.packages.entity import ServicePackage
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import VendorProfile
+from domain.vendors.inquiries.interfaces import IInquiryRepository
+from domain.vendors.packages.interfaces import IServicePackageRepository
+from domain.vendors.portfolio.interfaces import IPortfolioImageRepository
+from domain.vendors.profile.interfaces import IVendorProfileRepository
 from application.vendors.errors import (
     DuplicateVendorProfile,
     InvalidVendorCommand,

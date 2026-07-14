@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Callable
 
-from domain.vendors.interfaces import IInquiryRepository, IPortfolioImageRepository, IVendorProfileRepository, Page
+from domain.vendors.inquiries.interfaces import IInquiryRepository
+from domain.vendors.portfolio.interfaces import IPortfolioImageRepository
+from domain.vendors.profile.interfaces import IVendorProfileRepository
+from domain.vendors.shared.pagination import Page
 from application.vendors.analytics.queries import GetVendorAnalyticsQuery, GetVendorDashboardSummaryQuery, ListRecentVendorActivityQuery
 from application.vendors.errors import VendorApplicationConfigurationError
 from application.vendors.inquiries.queries import ListInquiriesQuery

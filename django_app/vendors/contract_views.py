@@ -8,13 +8,9 @@ from rest_framework.response import Response
 
 from application.vendors.commands import DeactivateServicePackageCommand, UpdateServicePackageCommand
 from .api_contracts import map_vendor_exception, resolve_expected_version, response_with_version, vendor_error_response
-from domain.vendors.package_edit_policy import (
-    PackageEditCooldownError,
-    VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS,
-    effective_next_edit_allowed_at,
-)
-from domain.vendors.package_rules import PackageValidationError
-from domain.vendors.errors import ConcurrentVendorUpdate, VendorDomainError
+from domain.vendors.packages.rules import PackageEditCooldownError, VENDOR_PACKAGE_EDIT_COOLDOWN_DAYS, effective_next_edit_allowed_at
+from domain.vendors.packages.rules import PackageValidationError
+from domain.vendors.shared.aggregate import ConcurrentVendorUpdate, VendorDomainError
 
 from .document_upload_views import VendorVerificationDocumentView as BaseVendorVerificationDocumentView
 from .models import ServicePackage as ServicePackageModel

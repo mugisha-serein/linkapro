@@ -9,7 +9,7 @@ from application.governance.commands import (
 )
 from application.governance.handlers import GovernanceCommandHandlers, GovernanceQueryHandlers
 from domain.governance.entities import ContentFlag, FlagStatus, ContentType
-from domain.vendors.entities import VendorProfile, VendorStatus, ServiceCategory
+from domain.vendors.profile.entity import VendorProfile, VendorStatus, ServiceCategory
 from domain.identity.entities import User, UserRole, Email
 
 

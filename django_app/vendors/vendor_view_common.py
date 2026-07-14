@@ -64,9 +64,9 @@ from application.vendors.profile.onboarding_policy import (
     build_vendor_onboarding_contract,
     vendor_field_errors,
 )
-from domain.vendors.package_rules import PackageValidationError
-from domain.vendors.errors import ConcurrentVendorUpdate, VendorDomainError
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.packages.rules import PackageValidationError
+from domain.vendors.shared.aggregate import ConcurrentVendorUpdate, VendorDomainError
+from domain.vendors.shared.pagination import PageRequest
 from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
 from .api_contracts import map_vendor_exception, resolve_expected_version, response_with_version, vendor_error_response
 

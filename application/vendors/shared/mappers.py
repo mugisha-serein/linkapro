@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
+from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.packages.entity import ServicePackage
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import VendorProfile
 from application.vendors.inquiries.dtos import InquiryDTO
 from application.vendors.packages.dtos import ServicePackageDTO
 from application.vendors.portfolio.dtos import PortfolioImageDTO

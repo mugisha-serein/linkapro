@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 import uuid
 
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.shared.pagination import PageRequest
 from application.vendors.analytics.dtos import VendorActivityDTO, VendorAnalyticsDTO, VendorDashboardSummaryDTO
 from application.vendors.packages.dtos import ServicePackageDTO
 from application.vendors.shared.dtos import PageDTO

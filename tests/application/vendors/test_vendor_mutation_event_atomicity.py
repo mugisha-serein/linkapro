@@ -6,8 +6,8 @@ import pytest
 
 from application.vendors.commands import AuthenticatedActor, UpdateVendorProfileCommand
 from application.vendors.handlers import VendorCommandHandlers
-from domain.vendors.entities import VendorProfile
-from domain.vendors.events import VendorProfileUpdated
+from domain.vendors.profile.entity import VendorProfile
+from domain.vendors.profile.events import VendorProfileUpdated
 
 
 class StrictUnusedDependency:

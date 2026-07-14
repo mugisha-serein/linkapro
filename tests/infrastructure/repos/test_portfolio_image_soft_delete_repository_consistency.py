@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 import uuid
 
-from domain.vendors.entities import PortfolioImage
+from domain.vendors.portfolio.entity import PortfolioImage
 from infrastructure.repos.portfolio import django_repository as repo_module
 from infrastructure.repos.portfolio.django_repository import DjangoPortfolioImageRepository
 

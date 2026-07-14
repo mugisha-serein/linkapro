@@ -1,10 +1,10 @@
 import uuid
 import pytest
-from domain.vendors.entities import (
-    VendorProfile, VendorStatus, ServiceCategory,
-    PortfolioImage, ServicePackage, Inquiry
-)
-from domain.vendors.errors import ConcurrentVendorUpdate
+from domain.vendors.inquiries.entity import Inquiry
+from domain.vendors.packages.entity import ServicePackage
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import VendorProfile, VendorStatus, ServiceCategory
+from domain.vendors.shared.aggregate import ConcurrentVendorUpdate
 from infrastructure.repos.inquiries.django_repository import DjangoInquiryRepository
 from infrastructure.repos.packages.django_repository import DjangoServicePackageRepository
 from infrastructure.repos.portfolio.django_repository import DjangoPortfolioImageRepository

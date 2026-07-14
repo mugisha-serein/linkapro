@@ -17,7 +17,7 @@ from application.vendors.errors import (
     VendorVersionConflict,
 )
 from application.vendors.handlers import VendorCommandHandlers
-from domain.vendors.entities import PackageApprovalStatus, ServicePackage
+from domain.vendors.packages.entity import PackageApprovalStatus, ServicePackage
 
 
 class StrictUnusedDependency:

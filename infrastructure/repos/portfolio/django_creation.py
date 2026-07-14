@@ -8,7 +8,7 @@ from django.db.models import Max
 
 from application.vendors.errors import VendorConflict, VendorResourceNotFound
 from application.vendors.ports import PortfolioImageCreationPort
-from domain.vendors.entities import PortfolioImage
+from domain.vendors.portfolio.entity import PortfolioImage
 from django_app.vendors.models import PortfolioImage as DjangoImage
 from django_app.vendors.models import VendorProfile as DjangoVendor
 

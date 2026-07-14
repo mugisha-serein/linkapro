@@ -3,9 +3,9 @@ from __future__ import annotations
 import uuid
 from typing import Callable
 
-from domain.vendors.entities import VendorProfile, VendorStatus
-from domain.vendors.errors import VendorProfileValidationError
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.profile.entity import VendorProfile, VendorStatus
+from domain.vendors.profile.errors import VendorProfileValidationError
+from domain.vendors.shared.pagination import PageRequest
 from application.vendors.errors import DuplicateVendorProfile, InvalidVendorCommand, VendorResourceNotFound
 from application.vendors.profile.commands import (
     ApproveVendorCommand,

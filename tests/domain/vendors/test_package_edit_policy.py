@@ -5,13 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from domain.shared.utils import utc_now
-from domain.vendors.errors import PackageValidationError
-from domain.vendors.package_edit_policy import (
-    PackageEditCooldownError,
-    ensure_vendor_package_edit_allowed,
-    mark_vendor_package_public_edit,
-    package_public_fields_changed,
-)
+from domain.vendors.packages.errors import PackageValidationError
+from domain.vendors.packages.rules import PackageEditCooldownError, ensure_vendor_package_edit_allowed, mark_vendor_package_public_edit, package_public_fields_changed
 
 
 def package(**overrides):

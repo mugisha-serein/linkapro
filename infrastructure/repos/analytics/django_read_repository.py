@@ -12,9 +12,9 @@ from application.vendors.dtos import (
     VendorDashboardSummaryDTO,
 )
 from application.vendors.errors import VendorResourceNotFound
-from domain.vendors.entities import VendorProfile as DomainVendorProfile
-from domain.vendors.entities import profile_completion_errors_for
-from domain.vendors.interfaces import PageRequest
+from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
+from domain.vendors.profile.entity import profile_completion_errors_for
+from domain.vendors.shared.pagination import PageRequest
 from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile as DjangoVendorProfile
 
 

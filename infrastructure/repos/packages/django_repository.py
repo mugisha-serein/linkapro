@@ -7,9 +7,10 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
-from domain.vendors.entities import ServicePackage as DomainPackage
-from domain.vendors.errors import ConcurrentVendorUpdate, VendorDomainError
-from domain.vendors.interfaces import IServicePackageRepository, Page, PageRequest
+from domain.vendors.packages.entity import ServicePackage as DomainPackage
+from domain.vendors.shared.aggregate import ConcurrentVendorUpdate, VendorDomainError
+from domain.vendors.packages.interfaces import IServicePackageRepository
+from domain.vendors.shared.pagination import Page, PageRequest
 from django_app.vendors.models import ServicePackage as DjangoPackage, VendorProfile as DjangoVendor
 from infrastructure.repos.exceptions import RepositoryNotFoundError
 

@@ -7,7 +7,7 @@ import pytest
 
 from application.vendors.dtos import PortfolioImageDTO
 from application.vendors.handlers import VendorCommandHandlers
-from domain.vendors.entities import PortfolioImage
+from domain.vendors.portfolio.entity import PortfolioImage
 
 
 def _required_dto_values() -> dict:

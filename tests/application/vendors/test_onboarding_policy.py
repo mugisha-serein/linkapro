@@ -4,7 +4,7 @@ from application.vendors.onboarding_policy import (
     build_vendor_onboarding_contract,
     vendor_field_errors,
 )
-from domain.vendors.entities import VendorProfile, profile_completion_errors_for
+from domain.vendors.profile.entity import VendorProfile, profile_completion_errors_for
 
 
 PROFILE_CREATE_ACTION = {

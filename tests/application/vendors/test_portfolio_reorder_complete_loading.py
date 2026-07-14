@@ -11,7 +11,7 @@ from application.vendors.commands import (
 )
 from application.vendors.handlers import VendorCommandHandlers
 from application.vendors.ports import PortfolioReorderUnitOfWork
-from domain.vendors.entities import PortfolioImage
+from domain.vendors.portfolio.entity import PortfolioImage
 
 
 class StrictUnusedDependency:

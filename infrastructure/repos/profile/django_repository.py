@@ -7,9 +7,10 @@ from django.db import IntegrityError, transaction
 from django.db.models import F
 
 from application.vendors.errors import DuplicateVendorProfile
-from domain.vendors.errors import ConcurrentVendorUpdate, VendorDomainError
-from domain.vendors.entities import VendorProfile as DomainProfile, VendorStatus, ServiceCategory
-from domain.vendors.interfaces import IVendorProfileRepository, Page, PageRequest
+from domain.vendors.shared.aggregate import ConcurrentVendorUpdate, VendorDomainError
+from domain.vendors.profile.entity import VendorProfile as DomainProfile, VendorStatus, ServiceCategory
+from domain.vendors.profile.interfaces import IVendorProfileRepository
+from domain.vendors.shared.pagination import Page, PageRequest
 from django_app.vendors.models import VendorProfile as DjangoProfile
 from django_app.identity.models import User
 from django_app.governance.marketplace_outbox import enqueue_vendor_delete_projection, enqueue_vendor_projection

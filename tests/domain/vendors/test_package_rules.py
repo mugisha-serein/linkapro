@@ -2,8 +2,8 @@ from decimal import Decimal
 
 import pytest
 
-from domain.vendors.errors import PackageValidationError
-from domain.vendors.package_rules import validate_service_package_rules
+from domain.vendors.packages.errors import PackageValidationError
+from domain.vendors.packages.rules import validate_service_package_rules
 
 
 def valid_rules_payload(**overrides):

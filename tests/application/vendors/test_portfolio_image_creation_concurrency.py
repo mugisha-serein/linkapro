@@ -14,7 +14,8 @@ from application.vendors.errors import VendorApplicationConfigurationError
 from application.vendors.handlers import VendorCommandHandlers
 from application.vendors.ports import PortfolioImageCreationPort
 from domain.shared.utils import utc_now
-from domain.vendors.entities import PortfolioImage, ServiceCategory, VendorProfile, VendorStatus
+from domain.vendors.portfolio.entity import PortfolioImage
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile, VendorStatus
 
 
 class StrictUnusedDependency:

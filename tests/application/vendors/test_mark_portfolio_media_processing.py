@@ -8,8 +8,8 @@ from application.vendors.commands import AuthenticatedActor
 from application.vendors.errors import VendorVersionConflict
 from application.vendors.handlers import VendorCommandHandlers
 from application.vendors.portfolio_media_commands import MarkPortfolioMediaProcessingCommand
-from domain.vendors.entities import PortfolioImage, PortfolioQualityStatus, PortfolioUploadStatus, PortfolioVisibilityStatus
-from domain.vendors.errors import InvalidPortfolioTransition
+from domain.vendors.portfolio.entity import PortfolioImage, PortfolioQualityStatus, PortfolioUploadStatus, PortfolioVisibilityStatus
+from domain.vendors.portfolio.errors import InvalidPortfolioTransition
 
 
 class StrictUnusedDependency:

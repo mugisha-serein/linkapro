@@ -12,7 +12,7 @@ from application.vendors.errors import InquiryAbuseDenied, VendorApplicationConf
 from application.vendors.handlers import VendorCommandHandlers
 from application.vendors.ports import InquiryAbuseProtectionPort
 from domain.shared.utils import utc_now
-from domain.vendors.entities import ServiceCategory, VendorProfile, VendorStatus
+from domain.vendors.profile.entity import ServiceCategory, VendorProfile, VendorStatus
 
 
 class StrictUnusedDependency:
