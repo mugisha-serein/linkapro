@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 from application.vendors.shared.commands import AuthenticatedActor
 from application.vendors.analytics.dtos import VendorDashboardSummaryDTO, VendorViewsTrendPointDTO
 from application.vendors.analytics.queries import GetVendorDashboardSummaryQuery, GetVendorViewsTrendQuery
-from django_app.vendors.views.analytics import VendorDashboardSummaryView, VendorViewsTrendView
+from django_app.vendors.views.analytics import VendorDashboardSummaryView, VendorSecurityActionsView, VendorViewsTrendView
 
 
 def test_dashboard_summary_view_builds_actor_aware_query():
@@ -84,3 +84,48 @@ def test_views_trend_view_builds_actor_aware_query():
         {"month": "2026-06", "views": 2},
         {"month": "2026-07", "views": 3},
     ]
+
+
+def test_security_actions_view_loads_recent_audit_actions_for_vendor():
+    user_id = uuid.uuid4()
+    vendor_id = uuid.uuid4()
+    request = SimpleNamespace(user=SimpleNamespace(id=user_id), query_params={"limit": "2"})
+    profile = SimpleNamespace(id=vendor_id)
+    actions = [
+        {
+            "id": str(uuid.uuid4()),
+            "admin": None,
+            "action_type": "suspend_vendor",
+            "target_type": "vendor_profile",
+            "target_id": str(vendor_id),
+            "details": {"reason": "policy"},
+            "created_at": "2026-07-14T10:00:00+00:00",
+        },
+    ]
+
+    with patch(
+        "django_app.vendors.views.analytics._get_current_vendor_profile",
+        return_value=(profile, None),
+    ), patch(
+        "django_app.vendors.views.analytics.recent_security_actions",
+        return_value=actions,
+    ) as recent_actions:
+        response = VendorSecurityActionsView().get(request)
+
+    recent_actions.assert_called_once_with(vendor_id, limit=2)
+    assert response.status_code == 200
+    assert response.data == actions
+
+
+def test_security_actions_view_rejects_invalid_limit():
+    request = SimpleNamespace(user=SimpleNamespace(id=uuid.uuid4()), query_params={"limit": "0"})
+    profile = SimpleNamespace(id=uuid.uuid4())
+
+    with patch(
+        "django_app.vendors.views.analytics._get_current_vendor_profile",
+        return_value=(profile, None),
+    ):
+        response = VendorSecurityActionsView().get(request)
+
+    assert response.status_code == 400
+    assert response.data["code"] == "vendor_security_actions_limit_invalid"

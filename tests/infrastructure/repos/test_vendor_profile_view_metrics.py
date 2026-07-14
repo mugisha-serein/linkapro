@@ -1,20 +1,24 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
+from django.utils import timezone
+
+from django_app.governance.models import AuditLog
 from django_app.vendors.models import ServicePackage, VendorProfileViewed
 from infrastructure.repos.analytics import metrics
 from infrastructure.repos.analytics.metrics import (
     active_packages_count,
     log_profile_view,
     profile_strength_score,
+    recent_security_actions,
     response_rate,
     total_views_trend,
     views_by_month,
     visibility_trend,
 )
 from infrastructure.repos.analytics.rules import optimization_alerts, profile_strength_suggestions
-from tests.factories import create_inquiry, create_service_package, create_vendor_profile
+from tests.factories import create_inquiry, create_service_package, create_user, create_vendor_profile
 
 pytestmark = pytest.mark.django_db
 
@@ -189,3 +193,46 @@ def test_optimization_alerts_stay_empty_when_thresholds_pass():
     assert active_packages_count(vendor.id) == 1
     assert response_rate(vendor.id) == 50.0
     assert optimization_alerts(vendor.id) == ()
+
+
+def test_recent_security_actions_reads_existing_audit_log_by_vendor_target_id():
+    admin = create_user(role="admin")
+    vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    other_vendor = create_vendor_profile(description="Professional event coverage across Kigali and beyond.")
+    older = AuditLog.objects.create(
+        admin=admin,
+        action_type=AuditLog.ActionType.APPROVE_VENDOR,
+        target_type="vendor_profile",
+        target_id=vendor.id,
+        details={"reason": "approved"},
+        created_at=timezone.now() - timedelta(minutes=5),
+    )
+    newer = AuditLog.objects.create(
+        admin=None,
+        action_type=AuditLog.ActionType.SUSPEND_VENDOR,
+        target_type="vendor_profile",
+        target_id=vendor.id,
+        details={"reason": "policy"},
+        created_at=timezone.now(),
+    )
+    AuditLog.objects.create(
+        admin=admin,
+        action_type=AuditLog.ActionType.REJECT_VENDOR,
+        target_type="vendor_profile",
+        target_id=other_vendor.id,
+        details={"reason": "other vendor"},
+        created_at=timezone.now(),
+    )
+
+    actions = recent_security_actions(vendor.id, limit=2)
+
+    assert [item["id"] for item in actions] == [str(newer.id), str(older.id)]
+    assert actions[0] == {
+        "id": str(newer.id),
+        "admin": None,
+        "action_type": AuditLog.ActionType.SUSPEND_VENDOR,
+        "target_type": "vendor_profile",
+        "target_id": str(vendor.id),
+        "details": {"reason": "policy"},
+        "created_at": newer.created_at.isoformat(),
+    }

@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
 from domain.vendors.profile.rules import get_profile_completion_errors
+from django_app.governance.models import AuditLog
 from django_app.vendors.models import Inquiry, ServicePackage, VendorProfile as DjangoVendorProfile, VendorProfileViewed
 
 MARKETPLACE_SEARCH_IMPRESSIONS = "marketplace_search_impressions"
@@ -131,3 +132,28 @@ def response_rate(vendor_id: uuid.UUID) -> float:
     total = counts["total"] or 0
     read = counts["read"] or 0
     return round((read / total) * 100, 2) if total else 0.0
+
+
+def recent_security_actions(vendor_id: uuid.UUID, limit: int = 10) -> list[dict[str, object]]:
+    if isinstance(limit, bool):
+        raise ValueError("limit must be a positive integer")
+    limit = int(limit)
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
+    logs = (
+        AuditLog.objects.select_related("admin")
+        .filter(target_id=vendor_id)
+        .order_by("-created_at", "-id")[:limit]
+    )
+    return [
+        {
+            "id": str(log.id),
+            "admin": str(log.admin_id) if log.admin_id else None,
+            "action_type": log.action_type,
+            "target_type": log.target_type,
+            "target_id": str(log.target_id),
+            "details": log.details,
+            "created_at": log.created_at.isoformat(),
+        }
+        for log in logs
+    ]
