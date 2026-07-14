@@ -30,6 +30,15 @@ PDF_EOF_MARKER = bytes.fromhex("2525454f46")
 PDF_HEADER_MARKER = bytes.fromhex("25504446")
 
 
+def _resolve_profile_expected_version(request, profile):
+    expected_version, version_error = resolve_expected_version(request)
+    if version_error is None:
+        return expected_version, None
+    if isinstance(version_error.data, dict) and version_error.data.get("code") == "vendor_expected_version_required":
+        return profile.version, None
+    return None, version_error
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class VendorProfileView(APIView):
     permission_classes = [IsAuthenticated, IsVendor]
@@ -84,7 +93,7 @@ class VendorProfileView(APIView):
         if not serializer.is_valid():
             return _validation_error_response(serializer.errors, profile=profile)
         data = serializer.validated_data
-        expected_version, version_error = resolve_expected_version(request)
+        expected_version, version_error = _resolve_profile_expected_version(request, profile)
         if version_error:
             return version_error
 
