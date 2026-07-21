@@ -13,7 +13,7 @@ from payments.infrastructure.repositories import (
 )
 from payments.infrastructure.retry_scheduler import CeleryRetryScheduler
 from payments.infrastructure.vault_key_provider import VaultKeyProvider
-from infrastructure.adapters.django_event_dispatcher import DjangoEventDispatcher
+from payments.infrastructure.django_event_outbox import DjangoPaymentEventOutboxDispatcher
 
 
 def build_payment_key_provider() -> VaultKeyProvider:
@@ -35,7 +35,7 @@ def build_payment_command_handlers() -> PaymentCommandHandlers:
         audit_logger=DjangoAuditLogger(key_provider),
         retry_scheduler=CeleryRetryScheduler(),
         expiry_scanner=build_payment_expiry_scanner(key_provider),
-        event_dispatcher=DjangoEventDispatcher(),
+        event_dispatcher=DjangoPaymentEventOutboxDispatcher(),
     )
 
 

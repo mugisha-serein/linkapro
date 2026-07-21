@@ -61,6 +61,7 @@ app.conf.update(
         "tasks.identity_domain_events",
         "tasks.marketplace_sync",
         "tasks.notifications",
+        "tasks.payment_domain_events",
         "tasks.vendor_domain_events",
         "payments.tasks",
     )

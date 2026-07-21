@@ -1,0 +1,5 @@
+Subject: Your LinkaPro payment expired
+
+Your payment for reference {{ payment_reference }} expired before it was completed.
+
+Review payment status: {{ cta_url }}
