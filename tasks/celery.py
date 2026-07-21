@@ -55,6 +55,7 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 # Django apps, so Celery autodiscovery will not import them by itself.
 app.conf.update(
     imports=(
+        "tasks.document_domain_events",
         "tasks.document_tasks",
         "tasks.email_tasks",
         "tasks.image_tasks",

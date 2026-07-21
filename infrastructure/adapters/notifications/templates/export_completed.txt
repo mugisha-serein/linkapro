@@ -1,0 +1,5 @@
+Subject: Your LinkaPro export is ready
+
+Your {{ export_type }} export for {{ event_name|default:"your event" }} is ready to download.
+
+Download export: {{ cta_url }}

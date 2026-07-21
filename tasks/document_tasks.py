@@ -10,6 +10,9 @@ from django.conf import settings
 from django.core.files.storage import default_storage
 from django.db.models import Q
 
+from domain.documents.events import ExportCompleted
+from domain.shared.utils import utc_now
+from infrastructure.adapters.django_document_event_outbox import DjangoDocumentEventOutboxDispatcher
 from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
 from infrastructure.adapters.document_verification import DocumentVerificationAdapter
 from infrastructure.repos.django_export_job_repository import DjangoExportJobRepository
@@ -58,9 +61,7 @@ def generate_pdf_task(self, job_id: str, event_id: str, export_type: str):
 
         job.complete(file_url)
         repo.save(job)
-
-        # Send email notification (optional)
-        # send_export_ready_email(job.requested_by.email, file_url)
+        _dispatch_export_completed(job)
 
     except Exception as e:
         job.fail(str(e))
@@ -131,6 +132,7 @@ def generate_excel_task(self, job_id: str, event_id: str, export_type: str):
 
         job.complete(file_url)
         repo.save(job)
+        _dispatch_export_completed(job)
 
     except Exception as e:
         job.fail(str(e))
@@ -274,3 +276,17 @@ def _mark_document_upload_failed(document: VerificationDocument, message: str) -
     document.verification_status = VerificationDocument.VerificationStatus.FAILED
     document.failure_reason = message
     document.save(update_fields=["upload_status", "verification_status", "failure_reason", "updated_at"])
+
+
+def _dispatch_export_completed(job) -> None:
+    DjangoDocumentEventOutboxDispatcher().dispatch(
+        ExportCompleted(
+            job_id=job.id,
+            event_id=job.event_id,
+            outbox_event_id=job.id,
+            export_type=job.export_type,
+            requested_by=job.requested_by,
+            file_url=job.file_url,
+            occurred_at=utc_now(),
+        )
+    )
