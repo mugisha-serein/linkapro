@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from django_app.identity.models import IdentityDomainEventOutbox
+from django_app.identity.session_revocation import revoke_user_sessions
 
 
 MAX_IDENTITY_EVENT_ATTEMPTS = 5
@@ -63,8 +64,7 @@ def publish_identity_domain_event(event_id: str | uuid.UUID) -> bool:
         event.save(update_fields=["status", "attempts", "updated_at"])
 
     try:
-        # Identity domain events are durably recorded for downstream consumers. No
-        # external side effect is required yet, so publishing marks the event observable.
+        _consume_identity_event(event)
         with transaction.atomic():
             event = IdentityDomainEventOutbox.objects.select_for_update().get(id=event_id)
             event.status = IdentityDomainEventOutbox.Status.PUBLISHED
@@ -90,3 +90,21 @@ def _mark_failed_or_pending(event_id: str | uuid.UUID, exc: Exception) -> None:
             delay = min(2 ** event.attempts, 300)
             event.next_attempt_at = timezone.now() + timedelta(seconds=delay)
         event.save(update_fields=["status", "last_error", "next_attempt_at", "updated_at"])
+
+
+def _consume_identity_event(event: IdentityDomainEventOutbox) -> None:
+    if event.event_type == "UserPasswordChanged":
+        revoke_user_sessions(
+            event.aggregate_id,
+            reason=_event_reason(event.payload) or "credential_change",
+        )
+
+
+def _event_reason(payload: dict) -> str | None:
+    reason = payload.get("reason")
+    if isinstance(reason, dict):
+        reason = reason.get("value")
+    if reason is None:
+        return None
+    reason = str(reason).strip()
+    return reason or None

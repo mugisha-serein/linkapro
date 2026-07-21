@@ -5,6 +5,7 @@ from datetime import datetime, UTC
 
 from domain.identity.entities import UserRole
 from domain.identity.events import (
+    UserActivated,
     UserDeactivated,
     UserLoggedIn,
     UserOAuthLinked,
@@ -12,6 +13,7 @@ from domain.identity.events import (
     UserRegistered,
     UserTwoFactorDisabled,
     UserTwoFactorEnabled,
+    UserVerified,
 )
 from domain.identity.value_objects import Email
 from domain.identity.value_objects import InvalidSecurityReasonError, SecurityReason
@@ -35,6 +37,8 @@ class TestIdentityEvents:
             UserRegistered,
             UserLoggedIn,
             UserPasswordChanged,
+            UserVerified,
+            UserActivated,
             UserOAuthLinked,
             UserDeactivated,
             UserTwoFactorEnabled,

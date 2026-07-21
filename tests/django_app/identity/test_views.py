@@ -14,10 +14,16 @@ from domain.identity.value_objects import Email, PasswordHash, PlainPassword
 from infrastructure.repos.django_user_repository import DjangoUserRepository
 from infrastructure.adapters.password_hasher import DjangoPasswordHasher
 from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_token_hash
-from django_app.identity.models import PasswordResetEmailDelivery, PasswordResetToken, User as DjangoUser
+from django_app.identity.models import (
+    IdentityDomainEventOutbox,
+    PasswordResetEmailDelivery,
+    PasswordResetToken,
+    User as DjangoUser,
+)
 from django_app.identity.password_reset_email import send_password_reset_email
 from django_app.identity.throttles import rate_limit_hash
 from tasks.email_tasks import send_password_reset_email_task
+from tasks.identity_domain_events import publish_identity_domain_event
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -1031,9 +1037,19 @@ class TestIdentityViews:
             "status": "password_reset",
         }
         assert user.check_password("NewValidPass1!") is True
+        outbox = IdentityDomainEventOutbox.objects.get(
+            aggregate_id=user.id,
+            event_type="UserPasswordChanged",
+        )
+        assert outbox.payload["reason"]["value"] == "credential_recovery"
         assert reset_token.status == PasswordResetToken.Status.USED
         assert reset_token.used_at is not None
         assert reset_token.used_ip_hash
+        assert publish_identity_domain_event(outbox.id) is True
+        user.refresh_from_db()
+        outbox.refresh_from_db()
+        assert user.auth_token_version == 1
+        assert outbox.status == IdentityDomainEventOutbox.Status.PUBLISHED
 
     def test_reset_password_token_cannot_be_reused(self):
         user = DjangoUser.objects.create_user(

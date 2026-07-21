@@ -1,3 +1,11 @@
+"""Application-layer identity command and query handlers.
+
+Password reset is intentionally owned by ``django_app.identity`` because that
+flow includes HTTP throttling, one-time token records, and delivery audit
+records in the Django app. Keeping it out of this handler avoids a second reset
+path that could drift from the canonical security controls.
+"""
+
 from django.core.cache import cache
 
 import pyotp
@@ -5,15 +13,12 @@ import base64
 import qrcode
 from io import BytesIO
 import uuid
-from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from datetime import timedelta
+from typing import Optional
 
 from domain.identity.entities import User, UserRole, OAuthToken
 from domain.identity.value_objects import (
-    Email,
     PasswordHash,
-    PlainPassword,
-    OAuthProvider,
     TOTPSecret,
 )
 from domain.shared.utils import utc_now
@@ -21,9 +26,7 @@ from domain.identity.interfaces import IUserRepository, IOAuthTokenRepository
 from domain.identity.events import (
     UserRegistered,
     UserLoggedIn,
-    UserPasswordChanged,
     UserOAuthLinked,
-    UserDeactivated,
 )
 from .auth_policy import AuthenticationDecision, AuthenticationStatus, IdentityAuthenticationPolicy
 from .commands import (
@@ -33,14 +36,13 @@ from .commands import (
     LoginUserCommand,
     OAuthLoginCommand,
     ChangePasswordCommand,
-    RequestPasswordResetCommand,
-    ResetPasswordCommand,
     VerifyEmailCommand,
     UpdateProfileCommand,
     DeactivateUserCommand,
     VerifyTwoFactorSetupCommand,
 )
 from .dtos import TwoFactorSetupDTO, UserDTO
+from .mappers import to_user_dto
 from .queries import GetUserByIdQuery, GetUserByEmailQuery
 
 
@@ -64,6 +66,10 @@ class IdentityCommandHandlers:
         self.event_dispatcher = event_dispatcher
         self.auth_policy = IdentityAuthenticationPolicy(token_service)
 
+    def _dispatch_recorded_events(self, user: User) -> None:
+        for event in user.pull_events():
+            self.event_dispatcher.dispatch(event)
+
     def register_user(self, cmd: RegisterUserCommand) -> UserDTO:
         # Check if email already exists
         existing = self.user_repo.get_by_email(cmd.email)
@@ -74,7 +80,7 @@ class IdentityCommandHandlers:
         hashed = self.password_hasher.hash(cmd.plain_password)
 
         # Create user entity
-        user = User(
+        user = User.register_new(
             id=uuid.uuid4(),
             email=cmd.email,
             password_hash=PasswordHash(hashed),
@@ -96,7 +102,7 @@ class IdentityCommandHandlers:
             )
         )
 
-        return self._to_dto(saved_user)
+        return to_user_dto(saved_user)
 
     def login_user(self, cmd: LoginUserCommand) -> AuthenticationDecision:
         user = self.user_repo.get_by_email(cmd.email)
@@ -216,42 +222,7 @@ class IdentityCommandHandlers:
         new_hash = self.password_hasher.hash(cmd.new_plain_password)
         user.change_password(PasswordHash(new_hash))
         self.user_repo.save(user)
-
-        self.event_dispatcher.dispatch(
-            UserPasswordChanged(user_id=user.id, occurred_at=utc_now())
-        )
-
-    def request_password_reset(self, cmd: RequestPasswordResetCommand) -> None:
-        user = self.user_repo.get_by_email(cmd.email)
-        if not user:
-            # Don't reveal existence; just return silently
-            return
-
-        # Create reset token (short-lived, one-time use)
-        reset_token = self.token_service.create_password_reset_token(str(user.id))
-        # In real implementation, we would store token hash or use a separate table.
-
-    def reset_password(self, cmd: ResetPasswordCommand) -> None:
-        # Validate reset token
-        user_id_str = self.token_service.verify_password_reset_token(cmd.reset_token)
-        if not user_id_str:
-            raise ValueError("Invalid or expired reset token")
-
-        user_id = uuid.UUID(user_id_str)
-        user = self.user_repo.get_by_id(user_id)
-        if not user:
-            raise ValueError("User not found")
-
-        # Hash new password
-        new_hash = self.password_hasher.hash(cmd.new_plain_password)
-        user.change_password(PasswordHash(new_hash))
-        self.user_repo.save(user)
-
-        # Optionally invalidate token (if stored) - not implemented here
-
-        self.event_dispatcher.dispatch(
-            UserPasswordChanged(user_id=user.id, occurred_at=utc_now())
-        )
+        self._dispatch_recorded_events(user)
 
     def verify_email(self, cmd: VerifyEmailCommand) -> None:
         user_id_str = self.token_service.verify_email_verification_token(cmd.verification_token)
@@ -265,19 +236,17 @@ class IdentityCommandHandlers:
 
         user.mark_verified()
         self.user_repo.save(user)
+        self._dispatch_recorded_events(user)
 
     def update_profile(self, cmd: UpdateProfileCommand) -> UserDTO:
         user = self.user_repo.get_by_id(cmd.user_id)
         if not user:
             raise ValueError("User not found")
 
-        if cmd.first_name is not None:
-            user.first_name = cmd.first_name
-        if cmd.last_name is not None:
-            user.last_name = cmd.last_name
+        user.update_profile(first_name=cmd.first_name, last_name=cmd.last_name)
 
         saved = self.user_repo.save(user)
-        return self._to_dto(saved)
+        return to_user_dto(saved)
 
     def deactivate_user(self, cmd: DeactivateUserCommand) -> None:
         user = self.user_repo.get_by_id(cmd.user_id)
@@ -286,10 +255,7 @@ class IdentityCommandHandlers:
 
         user.deactivate()
         self.user_repo.save(user)
-
-        self.event_dispatcher.dispatch(
-            UserDeactivated(user_id=user.id, occurred_at=utc_now())
-        )
+        self._dispatch_recorded_events(user)
     
     def enable_two_factor(self, cmd: EnableTwoFactorCommand) -> TwoFactorSetupDTO:
         user = self.user_repo.get_by_id(cmd.user_id)
@@ -334,7 +300,10 @@ class IdentityCommandHandlers:
 
         # Store the secret permanently and enable 2FA
         self.user_repo.set_totp_secret(user.id, TOTPSecret(secret))
+        user.enable_two_factor()
+        self.user_repo.save(user)
         cache.delete(f"totp_setup_{user.id}")
+        self._dispatch_recorded_events(user)
 
     def login_two_factor(self, cmd: LoginTwoFactorCommand) -> AuthenticationDecision:
         # Decode temp token to get user_id and check it's not expired
@@ -373,26 +342,6 @@ class IdentityCommandHandlers:
 
         return self.auth_policy.issue_authenticated_login(user)
 
-    def _to_dto(self, user: User) -> UserDTO:
-        has_password = bool(user.password_hash)
-        return UserDTO(
-            id=user.id,
-            email=str(user.email),
-            first_name=user.first_name,
-            last_name=user.last_name,
-            role=user.role.value,
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            created_at=user.created_at,
-            last_login=user.last_login,
-            display_name=f"{user.first_name} {user.last_name}".strip() or str(user.email),
-            has_password=has_password,
-            requires_password_setup=not has_password,
-            two_factor_enabled=user.two_factor_enabled,
-            is_authenticated=True,
-            onboarding_complete=user.is_verified and has_password,
-        )
-
 
 class IdentityQueryHandlers:
     """Read-only queries for identity."""
@@ -404,44 +353,10 @@ class IdentityQueryHandlers:
         user = self.user_repo.get_by_id(query.user_id)
         if not user:
             return None
-        has_password = bool(user.password_hash)
-        return UserDTO(
-            id=user.id,
-            email=str(user.email),
-            first_name=user.first_name,
-            last_name=user.last_name,
-            role=user.role.value,
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            created_at=user.created_at,
-            last_login=user.last_login,
-            display_name=f"{user.first_name} {user.last_name}".strip() or str(user.email),
-            has_password=has_password,
-            requires_password_setup=not has_password,
-            two_factor_enabled=user.two_factor_enabled,
-            is_authenticated=True,
-            onboarding_complete=user.is_verified and has_password,
-        )
+        return to_user_dto(user)
 
     def get_user_by_email(self, query: GetUserByEmailQuery) -> Optional[UserDTO]:
         user = self.user_repo.get_by_email(query.email)
         if not user:
             return None
-        has_password = bool(user.password_hash)
-        return UserDTO(
-            id=user.id,
-            email=str(user.email),
-            first_name=user.first_name,
-            last_name=user.last_name,
-            role=user.role.value,
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            created_at=user.created_at,
-            last_login=user.last_login,
-            display_name=f"{user.first_name} {user.last_name}".strip() or str(user.email),
-            has_password=has_password,
-            requires_password_setup=not has_password,
-            two_factor_enabled=user.two_factor_enabled,
-            is_authenticated=True,
-            onboarding_complete=user.is_verified and has_password,
-        )
+        return to_user_dto(user)

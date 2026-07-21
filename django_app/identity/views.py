@@ -28,6 +28,7 @@ from application.identity.oauth_state import (
     set_oauth_state_cookie,
 )
 from application.identity.queries import GetUserByIdQuery
+from domain.identity.events import UserPasswordChanged as DomainUserPasswordChanged
 from django_app.common.api_responses import api_error, api_success
 
 from .serializers import (
@@ -75,6 +76,7 @@ from .throttles import (
     record_mfa_failure,
 )
 from django_app.identity.models import PasswordResetToken, User
+from infrastructure.adapters.django_identity_event_outbox import DjangoIdentityEventOutboxDispatcher
 from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_value_hash
 
 logger = logging.getLogger(__name__)
@@ -725,6 +727,12 @@ class ResetPasswordView(APIView):
 
             user.set_password(serializer.validated_data["new_password"])
             user.save(update_fields=["password", "updated_at"])
+            password_changed_event = DomainUserPasswordChanged(
+                user_id=user.id,
+                occurred_at=timezone.now(),
+                reason="credential_recovery",
+            )
+            DjangoIdentityEventOutboxDispatcher().dispatch(password_changed_event)
             token_record.status = PasswordResetToken.Status.USED
             token_record.used_at = timezone.now()
             token_record.used_ip_hash = password_reset_value_hash(_client_ip(request))
