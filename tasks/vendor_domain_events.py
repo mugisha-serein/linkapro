@@ -1,16 +1,28 @@
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 import uuid
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from django_app.vendors.models import VendorDomainEventOutbox
+from django_app.vendors.models import Inquiry, VendorDomainEventOutbox, VendorProfile
 
 
+logger = logging.getLogger(__name__)
 MAX_VENDOR_EVENT_ATTEMPTS = 5
+EVENT_TO_TEMPLATE = {
+    "VendorSubmittedForReview": "vendor_submitted_for_review",
+    "VendorApproved": "vendor_approved",
+    "VendorRejected": "vendor_rejected",
+    "VendorSuspended": "vendor_suspended",
+    "VendorReinstated": "vendor_reinstated",
+    "VendorProfileUpdated": "vendor_profile_updated",
+    "InquiryReceived": "inquiry_received",
+}
 
 
 @shared_task(bind=True, name="tasks.vendor_domain_events.publish_vendor_domain_event_task", max_retries=0)
@@ -72,10 +84,71 @@ def publish_vendor_domain_event(event_id: str | uuid.UUID) -> bool:
             event.last_error = None
             event.next_attempt_at = None
             event.save(update_fields=["status", "published_at", "last_error", "next_attempt_at", "updated_at"])
+        try:
+            _enqueue_email_notification(event)
+        except Exception:
+            logger.exception(
+                "vendor_notification_enqueue_failed",
+                extra={"event_id": str(event.id), "event_type": event.event_type},
+            )
         return True
     except Exception as exc:
         _mark_failed_or_pending(event_id, exc)
         raise
+
+
+def _enqueue_email_notification(event: VendorDomainEventOutbox) -> None:
+    template = EVENT_TO_TEMPLATE.get(event.event_type)
+    if not template:
+        return
+
+    notification = _notification_for_event(event, template)
+    if notification is None:
+        return
+
+    from tasks.notifications import send_email_task
+
+    send_email_task.delay(**notification)
+
+
+def _notification_for_event(event: VendorDomainEventOutbox, template: str) -> dict | None:
+    payload = event.payload or {}
+    vendor_id = payload.get("vendor_id") or payload.get("aggregate_id") or event.aggregate_id
+    vendor = VendorProfile.objects.filter(id=vendor_id).only("id", "business_name", "contact_email").first()
+    if vendor is None:
+        return None
+
+    context = {
+        "business_name": vendor.business_name,
+        "cta_url": _vendor_dashboard_url(),
+    }
+    if payload.get("reason"):
+        context["reason"] = payload["reason"]
+
+    if event.event_type == "InquiryReceived":
+        inquiry_id = payload.get("inquiry_id")
+        inquiry = Inquiry.objects.filter(id=inquiry_id).only("id", "client_name", "vendor_id").first()
+        if inquiry is not None:
+            context["client_name"] = inquiry.client_name
+            context["cta_url"] = _vendor_inquiry_url(inquiry.id)
+
+    return {
+        "to": vendor.contact_email,
+        "template": template,
+        "context": context,
+    }
+
+
+def _frontend_url() -> str:
+    return (getattr(settings, "FRONTEND_URL", "") or "").strip().rstrip("/")
+
+
+def _vendor_dashboard_url() -> str:
+    return f"{_frontend_url()}/vendors/dashboard"
+
+
+def _vendor_inquiry_url(inquiry_id: uuid.UUID) -> str:
+    return f"{_frontend_url()}/vendors/inquiries/{inquiry_id}"
 
 
 def _mark_failed_or_pending(event_id: str | uuid.UUID, exc: Exception) -> None:
