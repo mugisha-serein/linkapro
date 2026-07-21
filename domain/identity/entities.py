@@ -1,4 +1,11 @@
-"""Identity domain entities."""
+"""Identity domain entities.
+
+The identity ``User`` aggregate remains a mutable dataclass for now because its
+repository and application handlers persist in-place state changes directly.
+Vendor aggregates moved to a stricter immutable/candidate-transition style, but
+changing identity to that model is a larger migration; keeping this note makes
+the difference intentional rather than architectural drift.
+"""
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -156,8 +163,19 @@ class User:
         )
 
     def mark_verified(self) -> None:
+        from .events import UserVerified
+
+        if self.is_verified:
+            return
         self.is_verified = True
         self.updated_at = utc_now()
+        self._record_event(
+            UserVerified(
+                user_id=self.id,
+                occurred_at=self.updated_at,
+                auth_token_version=self.auth_token_version,
+            )
+        )
 
     def deactivate(self) -> None:
         from .events import UserDeactivated
@@ -175,10 +193,19 @@ class User:
         )
 
     def activate(self) -> None:
+        from .events import UserActivated
+
         if self.is_active:
             return
         self.is_active = True
         self.updated_at = utc_now()
+        self._record_event(
+            UserActivated(
+                user_id=self.id,
+                occurred_at=self.updated_at,
+                auth_token_version=self.auth_token_version,
+            )
+        )
 
     def enable_two_factor(self) -> None:
         from .events import UserTwoFactorEnabled

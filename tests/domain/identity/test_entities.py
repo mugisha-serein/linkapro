@@ -6,10 +6,12 @@ from freezegun import freeze_time
 
 from domain.identity.entities import AccountStatus, User, OAuthToken, UserRole
 from domain.identity.events import (
+    UserActivated,
     UserDeactivated,
     UserPasswordChanged,
     UserTwoFactorDisabled,
     UserTwoFactorEnabled,
+    UserVerified,
 )
 from domain.identity.value_objects import (
     Email,
@@ -282,6 +284,44 @@ class TestUserEntity:
         assert user.is_active is True
         assert user.updated_at == first_updated_at
         assert user.auth_token_version == 0
+
+    def test_mark_verified_records_domain_event_once(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            is_verified=False,
+        )
+        user.mark_verified()
+        user.mark_verified()
+        events = user.pull_events()
+        assert user.is_verified is True
+        assert len(events) == 1
+        assert isinstance(events[0], UserVerified)
+        assert events[0].user_id == user.id
+        assert events[0].auth_token_version == user.auth_token_version
+
+    def test_activate_records_domain_event_once(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            is_active=False,
+        )
+        user.activate()
+        user.activate()
+        events = user.pull_events()
+        assert user.is_active is True
+        assert len(events) == 1
+        assert isinstance(events[0], UserActivated)
+        assert events[0].user_id == user.id
+        assert events[0].auth_token_version == user.auth_token_version
 
     def test_two_factor_mutations_record_domain_events(self):
         user = User(
