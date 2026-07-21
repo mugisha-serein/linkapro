@@ -34,13 +34,6 @@ class OAuthLoginCommand:
 
 
 @dataclass(frozen=True)
-class ChangePasswordCommand:
-    user_id: uuid.UUID
-    old_plain_password: PlainPassword
-    new_plain_password: PlainPassword
-
-
-@dataclass(frozen=True)
 class VerifyEmailCommand:
     verification_token: str
 

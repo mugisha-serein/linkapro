@@ -35,6 +35,14 @@ def mock_event_dispatcher():
     return Mock()
 
 
+@pytest.fixture(autouse=True)
+def mock_identity_session(monkeypatch):
+    monkeypatch.setattr(
+        "application.identity.auth_policy.create_identity_session",
+        lambda *, user_id, token_family: "session-id",
+    )
+
+
 @pytest.fixture
 def use_case(mock_user_repo, mock_oauth_repo, mock_token_service, mock_event_dispatcher):
     return GoogleLoginUseCase(
@@ -69,6 +77,7 @@ class TestGoogleLoginUseCase:
                 "refresh_token": "google_refresh",
                 "expires_in": 3600,
             },
+            signup_role="planner",
         )
 
         assert result.requires_2fa is False
@@ -78,9 +87,9 @@ class TestGoogleLoginUseCase:
         assert result.bootstrap_user["email"] == "new.oauth@example.com"
         assert mock_user_repo.save.call_count == 2
         mock_oauth_repo.save.assert_called_once()
-        mock_token_service.create_session_tokens.assert_called_once()
-        mock_token_service.create_access_token.assert_not_called()
-        mock_token_service.create_refresh_token.assert_not_called()
+        mock_token_service.create_session_tokens.assert_not_called()
+        mock_token_service.create_access_token.assert_called_once()
+        mock_token_service.create_refresh_token.assert_called_once()
 
     def test_creates_vendor_when_signup_role_is_vendor(
         self,

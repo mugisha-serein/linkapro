@@ -1,9 +1,10 @@
 """Application-layer identity command and query handlers.
 
-Password reset is intentionally owned by ``django_app.identity`` because that
-flow includes HTTP throttling, one-time token records, and delivery audit
-records in the Django app. Keeping it out of this handler avoids a second reset
-path that could drift from the canonical security controls.
+Password mutation flows are intentionally owned by ``django_app.identity`` for
+now because they include HTTP throttling, one-time token records, delivery audit
+records, and session/cookie coordination. Keeping them out of this handler
+avoids a second password path that could drift from the canonical security
+controls.
 """
 
 from django.core.cache import cache
@@ -35,7 +36,6 @@ from .commands import (
     RegisterUserCommand,
     LoginUserCommand,
     OAuthLoginCommand,
-    ChangePasswordCommand,
     VerifyEmailCommand,
     UpdateProfileCommand,
     DeactivateUserCommand,
@@ -206,23 +206,6 @@ class IdentityCommandHandlers:
         )
 
         return decision
-
-    def change_password(self, cmd: ChangePasswordCommand) -> None:
-        user = self.user_repo.get_by_id(cmd.user_id)
-        if not user:
-            raise ValueError("User not found")
-        if not user.password_hash:
-            raise ValueError("Account does not use password authentication")
-
-        # Verify old password
-        if not self.password_hasher.verify(cmd.old_plain_password, user.password_hash):
-            raise ValueError("Current password is incorrect")
-
-        # Hash new password
-        new_hash = self.password_hasher.hash(cmd.new_plain_password)
-        user.change_password(PasswordHash(new_hash))
-        self.user_repo.save(user)
-        self._dispatch_recorded_events(user)
 
     def verify_email(self, cmd: VerifyEmailCommand) -> None:
         user_id_str = self.token_service.verify_email_verification_token(cmd.verification_token)

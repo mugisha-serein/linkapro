@@ -108,25 +108,6 @@ def clear_oauth_state_cookie(response) -> None:
     )
 
 
-def build_oauth_state(signup_role: str) -> str:
-    """Legacy helper retained for tests/callers that only need a signed state value."""
-    return issue_oauth_state(signup_role).state
-
-
-def parse_oauth_state(state: str | None) -> Optional[str]:
-    """Legacy parser retained for non-browser-bound callers; production callback uses consume_oauth_state."""
-    payload = _decode_signed_payload(state)
-    if not payload:
-        return None
-    role = (payload.get("role") or "").strip().lower()
-    exp = payload.get("exp")
-    if role not in ALLOWED_OAUTH_SIGNUP_ROLES:
-        return None
-    if not isinstance(exp, int) or exp < int(time.time()):
-        return None
-    return role
-
-
 def _encode_signed_payload(payload: dict) -> str:
     payload_b64 = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     payload_b64 = payload_b64.decode("utf-8").rstrip("=")
