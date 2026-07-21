@@ -14,12 +14,10 @@ from fastapi_app.config import get_database_engine_options, normalize_database_u
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / ".env")
 
-DATABASE_URL = os.getenv("FASTAPI_DATABASE_URL") or os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("FASTAPI_DATABASE_URL")
 
 if not DATABASE_URL:
-    raise RuntimeError(
-        "DATABASE_URL is missing. Set FASTAPI_DATABASE_URL or DATABASE_URL in environment."
-    )
+    raise RuntimeError("FASTAPI_DATABASE_URL is missing.")
 
 DATABASE_URL = normalize_database_url(DATABASE_URL)
 
