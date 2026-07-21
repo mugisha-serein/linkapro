@@ -1,0 +1,5 @@
+Subject: Your LinkaPro vendor profile is approved
+
+{{ business_name|default:"Your vendor profile" }} is approved and can now appear in the marketplace.
+
+Open your vendor dashboard: {{ cta_url }}

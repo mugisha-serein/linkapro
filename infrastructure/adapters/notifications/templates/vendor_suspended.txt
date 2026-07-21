@@ -1,0 +1,5 @@
+Subject: Your LinkaPro vendor profile is suspended
+
+{{ business_name|default:"Your vendor profile" }} is currently suspended{% if reason %}: {{ reason }}{% endif %}.
+
+View account status: {{ cta_url }}

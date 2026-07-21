@@ -1,0 +1,5 @@
+Subject: Your LinkaPro vendor profile is active again
+
+{{ business_name|default:"Your vendor profile" }} has been reinstated and can resume marketplace activity.
+
+Open your vendor dashboard: {{ cta_url }}
