@@ -207,6 +207,21 @@ class User:
             )
         )
 
+    def update_profile(
+        self,
+        *,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+    ) -> None:
+        next_first_name = self.first_name if first_name is None else first_name
+        next_last_name = self.last_name if last_name is None else last_name
+        name = PersonName(next_first_name, next_last_name)
+        if name.first_name == self.first_name and name.last_name == self.last_name:
+            return
+        self.first_name = name.first_name
+        self.last_name = name.last_name
+        self.updated_at = utc_now()
+
     def enable_two_factor(self) -> None:
         from .events import UserTwoFactorEnabled
 

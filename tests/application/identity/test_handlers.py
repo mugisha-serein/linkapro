@@ -1,9 +1,11 @@
 import uuid
 import pytest
+import pyotp
 from datetime import datetime, timedelta, UTC
 from unittest.mock import Mock, ANY
 
-from domain.identity.entities import User, UserRole
+from domain.identity.entities import User, UserRole, OAuthToken
+from domain.identity.events import UserDeactivated, UserPasswordChanged, UserTwoFactorEnabled
 from domain.identity.value_objects import Email, PasswordHash, PlainPassword, OAuthProvider
 from application.identity.commands import (
     RegisterUserCommand,
@@ -12,6 +14,7 @@ from application.identity.commands import (
     ChangePasswordCommand,
     UpdateProfileCommand,
     DeactivateUserCommand,
+    VerifyTwoFactorSetupCommand,
 )
 from application.identity.handlers import IdentityCommandHandlers
 from application.identity.dtos import UserDTO
@@ -45,6 +48,15 @@ def mock_token_service():
 def mock_event_dispatcher():
     return Mock()
 
+
+@pytest.fixture(autouse=True)
+def mock_identity_session(monkeypatch):
+    monkeypatch.setattr(
+        "application.identity.auth_policy.create_identity_session",
+        lambda *, user_id, token_family: "session-id",
+    )
+
+
 @pytest.fixture
 def handlers(mock_user_repo, mock_oauth_repo, mock_password_hasher, mock_token_service, mock_event_dispatcher):
     return IdentityCommandHandlers(
@@ -63,7 +75,7 @@ class TestRegisterUser:
 
         cmd = RegisterUserCommand(
             email=Email("new@example.com"),
-            plain_password=PlainPassword("StrongPass1"),
+            plain_password=PlainPassword("StrongPass1!"),
             first_name="New",
             last_name="User",
             role="planner",
@@ -80,6 +92,22 @@ class TestRegisterUser:
         assert result.email == "new@example.com"
         assert result.role == "planner"
 
+    def test_registration_uses_self_registration_role_guard(self, handlers, mock_user_repo):
+        mock_user_repo.get_by_email.return_value = None
+
+        cmd = RegisterUserCommand(
+            email=Email("admin@example.com"),
+            plain_password=PlainPassword("StrongPass1!"),
+            first_name="Admin",
+            last_name="User",
+            role="admin",
+        )
+
+        with pytest.raises(ValueError, match="Role cannot self-register"):
+            handlers.register_user(cmd)
+
+        mock_user_repo.save.assert_not_called()
+
     def test_register_with_existing_email_raises_error(self, handlers, mock_user_repo):
         existing_user = User(
             id=uuid.uuid4(),
@@ -93,7 +121,7 @@ class TestRegisterUser:
 
         cmd = RegisterUserCommand(
             email=Email("exists@example.com"),
-            plain_password=PlainPassword("StrongPass1"),
+            plain_password=PlainPassword("StrongPass1!"),
             first_name="A",
             last_name="B",
             role="planner",
@@ -119,7 +147,7 @@ class TestLoginUser:
 
         cmd = LoginUserCommand(
             email=Email("user@example.com"),
-            plain_password=PlainPassword("StrongPass1"),
+            plain_password=PlainPassword("StrongPass1!"),
         )
 
         result = handlers.login_user(cmd)
@@ -128,7 +156,9 @@ class TestLoginUser:
         assert result.status is AuthenticationStatus.AUTHENTICATED
         assert str(result.user.email) == "user@example.com"
         assert result.access_token == "access_token"
-        mock_token_service.create_session_tokens.assert_called_once_with(str(user.id), user.role.value)
+        mock_token_service.create_access_token.assert_called_once()
+        mock_token_service.create_refresh_token.assert_called_once()
+        mock_token_service.create_session_tokens.assert_not_called()
         mock_user_repo.save.assert_called_once()  # last_login updated
 
     def test_login_invalid_credentials(self, handlers, mock_user_repo, mock_password_hasher):
@@ -136,7 +166,7 @@ class TestLoginUser:
 
         cmd = LoginUserCommand(
             email=Email("wrong@example.com"),
-            plain_password=PlainPassword("StrongPass1"),
+            plain_password=PlainPassword("StrongPass1!"),
         )
 
         result = handlers.login_user(cmd)
@@ -156,7 +186,7 @@ class TestLoginUser:
 
         cmd = LoginUserCommand(
             email=Email("deactivated@example.com"),
-            plain_password=PlainPassword("StrongPass1"),
+            plain_password=PlainPassword("StrongPass1!"),
         )
 
         result = handlers.login_user(cmd)
@@ -179,7 +209,7 @@ class TestLoginUser:
 
         cmd = LoginUserCommand(
             email=Email("mfa@example.com"),
-            plain_password=PlainPassword("StrongPass1"),
+            plain_password=PlainPassword("StrongPass1!"),
         )
 
         result = handlers.login_user(cmd)
@@ -216,7 +246,7 @@ class TestOAuthLogin:
         assert result.status is AuthenticationStatus.AUTHENTICATED
         # User is saved twice: once after creation, once after record_login()
         assert mock_user_repo.save.call_count == 2
-        mock_oauth_repo.save.assert_called_once()
+        assert mock_oauth_repo.save.call_count == 2
         # At least two events are dispatched: UserOAuthLinked and UserRegistered
         assert handlers.event_dispatcher.dispatch.call_count >= 2
 
@@ -229,8 +259,15 @@ class TestOAuthLogin:
             last_name="User",
             role=UserRole.PLANNER,
         )
-        oauth_token = Mock()
-        oauth_token.user_id = user.id
+        oauth_token = OAuthToken(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            provider=OAuthProvider.GOOGLE,
+            provider_user_id="google123",
+            access_token="old_access",
+            refresh_token="old_refresh",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
         mock_oauth_repo.get_by_provider_and_user.return_value = oauth_token
         mock_user_repo.get_by_id.return_value = user
 
@@ -248,7 +285,7 @@ class TestOAuthLogin:
         result = handlers.oauth_login(cmd)
 
         mock_oauth_repo.save.assert_called_once()
-        assert oauth_token.access_token == "new_access"
+        assert oauth_token.access_token.reveal_for_provider_sync() == "new_access"
         assert result.status is AuthenticationStatus.AUTHENTICATED
 
 
@@ -267,8 +304,8 @@ class TestChangePassword:
 
         cmd = ChangePasswordCommand(
             user_id=user.id,
-            old_plain_password=PlainPassword("OldPass1"),
-            new_plain_password=PlainPassword("NewPass1"),
+            old_plain_password=PlainPassword("OldPass1!"),
+            new_plain_password=PlainPassword("NewPass1!"),
         )
 
         handlers.change_password(cmd)
@@ -276,7 +313,10 @@ class TestChangePassword:
         mock_password_hasher.verify.assert_called_once()
         mock_password_hasher.hash.assert_called_once()
         mock_user_repo.save.assert_called_once()
-        mock_event_dispatcher.dispatch.assert_called_once()
+        event = mock_event_dispatcher.dispatch.call_args.args[0]
+        assert isinstance(event, UserPasswordChanged)
+        assert event.user_id == user.id
+        assert event.auth_token_version == user.auth_token_version
 
     def test_incorrect_old_password_raises(self, handlers, mock_user_repo, mock_password_hasher):
         user = User(
@@ -292,8 +332,8 @@ class TestChangePassword:
 
         cmd = ChangePasswordCommand(
             user_id=user.id,
-            old_plain_password=PlainPassword("WrongPass1"),
-            new_plain_password=PlainPassword("NewPass1"),
+            old_plain_password=PlainPassword("WrongPass1!"),
+            new_plain_password=PlainPassword("NewPass1!"),
         )
 
         with pytest.raises(ValueError, match="incorrect"):
@@ -325,6 +365,24 @@ class TestUpdateProfile:
         assert result.last_name == "NewLast"
         mock_user_repo.save.assert_called_once()
 
+    def test_update_fields_uses_domain_name_validation(self, handlers, mock_user_repo):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("user@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="Old",
+            last_name="Name",
+            role=UserRole.PLANNER,
+        )
+        mock_user_repo.get_by_id.return_value = user
+
+        cmd = UpdateProfileCommand(user_id=user.id, first_name="   ")
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            handlers.update_profile(cmd)
+
+        mock_user_repo.save.assert_not_called()
+
 
 class TestDeactivateUser:
     def test_deactivate(self, handlers, mock_user_repo, mock_event_dispatcher):
@@ -344,4 +402,34 @@ class TestDeactivateUser:
 
         assert user.is_active is False
         mock_user_repo.save.assert_called_once()
-        mock_event_dispatcher.dispatch.assert_called_once()
+        event = mock_event_dispatcher.dispatch.call_args.args[0]
+        assert isinstance(event, UserDeactivated)
+        assert event.user_id == user.id
+        assert event.auth_token_version == user.auth_token_version
+
+
+class TestTwoFactorSetup:
+    def test_verify_setup_enables_user_through_entity(self, handlers, mock_user_repo, mock_event_dispatcher, monkeypatch):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("mfa@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="MFA",
+            last_name="User",
+            role=UserRole.PLANNER,
+        )
+        secret = pyotp.random_base32()
+        token = pyotp.TOTP(secret).now()
+        mock_user_repo.get_by_id.return_value = user
+        monkeypatch.setattr("application.identity.handlers.cache.get", lambda key: secret)
+        monkeypatch.setattr("application.identity.handlers.cache.delete", Mock())
+
+        handlers.verify_two_factor_setup(VerifyTwoFactorSetupCommand(user_id=user.id, token=token))
+
+        assert user.two_factor_enabled is True
+        mock_user_repo.set_totp_secret.assert_called_once()
+        mock_user_repo.save.assert_called_once_with(user)
+        event = mock_event_dispatcher.dispatch.call_args.args[0]
+        assert isinstance(event, UserTwoFactorEnabled)
+        assert event.user_id == user.id
+        assert event.auth_token_version == user.auth_token_version

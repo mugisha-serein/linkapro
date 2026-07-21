@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 
 from domain.identity.entities import User, UserRole
 from domain.identity.value_objects import Email, PasswordHash, PlainPassword
+from infrastructure.adapters.django_event_dispatcher import user_password_changed
 from infrastructure.repos.django_user_repository import DjangoUserRepository
 from infrastructure.adapters.password_hasher import DjangoPasswordHasher
 from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_token_hash
@@ -1013,12 +1014,27 @@ class TestIdentityViews:
             role="planner",
         )
         token = _issue_reset_token(user)
+        captured_events = []
 
-        response = self.client.post(
-            reverse("reset-password"),
-            {"token": token, "new_password": "NewValidPass1!"},
-            format="json",
+        def capture_password_changed(sender, event, **kwargs):
+            captured_events.append(event)
+
+        user_password_changed.connect(
+            capture_password_changed,
+            weak=False,
+            dispatch_uid="test_reset_password_valid_token_resets_password_successfully",
         )
+
+        try:
+            response = self.client.post(
+                reverse("reset-password"),
+                {"token": token, "new_password": "NewValidPass1!"},
+                format="json",
+            )
+        finally:
+            user_password_changed.disconnect(
+                dispatch_uid="test_reset_password_valid_token_resets_password_successfully",
+            )
 
         user.refresh_from_db()
         reset_token = PasswordResetToken.objects.get(user=user)
@@ -1031,6 +1047,10 @@ class TestIdentityViews:
             "status": "password_reset",
         }
         assert user.check_password("NewValidPass1!") is True
+        assert user.auth_token_version == 1
+        assert len(captured_events) == 1
+        assert captured_events[0].user_id == user.id
+        assert str(captured_events[0].reason) == "credential_recovery"
         assert reset_token.status == PasswordResetToken.Status.USED
         assert reset_token.used_at is not None
         assert reset_token.used_ip_hash

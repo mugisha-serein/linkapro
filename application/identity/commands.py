@@ -41,17 +41,6 @@ class ChangePasswordCommand:
 
 
 @dataclass(frozen=True)
-class RequestPasswordResetCommand:
-    email: Email
-
-
-@dataclass(frozen=True)
-class ResetPasswordCommand:
-    reset_token: str
-    new_plain_password: PlainPassword
-
-
-@dataclass(frozen=True)
 class VerifyEmailCommand:
     verification_token: str
 
