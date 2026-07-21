@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 
 @dataclass(frozen=True)
@@ -9,6 +9,7 @@ class FraudSignalEvent:
     provider_reference: str
     reason: str
     occurred_at: datetime
+    event_id: UUID = field(default_factory=uuid4)
 
 
 @dataclass(frozen=True)
@@ -18,9 +19,11 @@ class PaymentCompleted:
     amount_minor: int
     currency: str
     occurred_at: datetime
+    event_id: UUID = field(default_factory=uuid4)
 
 
 @dataclass(frozen=True)
 class PaymentExpired:
     payment_id: UUID
     occurred_at: datetime
+    event_id: UUID = field(default_factory=uuid4)

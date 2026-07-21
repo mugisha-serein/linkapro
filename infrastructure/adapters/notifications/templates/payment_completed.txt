@@ -1,0 +1,5 @@
+Subject: Your LinkaPro payment receipt
+
+We received your payment of {{ amount }} {{ currency }} for reference {{ payment_reference }}.
+
+View payment receipt: {{ cta_url }}

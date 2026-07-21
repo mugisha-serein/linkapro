@@ -1,0 +1,5 @@
+Subject: Vendor profile submitted for review
+
+{{ business_name|default:"A vendor" }} submitted a profile for marketplace review.
+
+Review vendor profile: {{ cta_url }}

@@ -14,6 +14,7 @@ Jinja2==3.1.6
 python-decouple==3.8
 django-cors-headers==4.3.1
 python-dotenv==1.2.2
+resend==2.34.0
 pyotp==2.9.0
 qrcode==8.2
 tenacity==9.1.4

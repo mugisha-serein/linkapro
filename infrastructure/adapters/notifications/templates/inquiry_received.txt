@@ -1,0 +1,5 @@
+Subject: New client inquiry on LinkaPro
+
+{{ client_name|default:"A client" }} sent {{ business_name|default:"your business" }} a new inquiry.
+
+Read the inquiry: {{ cta_url }}

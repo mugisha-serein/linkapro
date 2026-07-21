@@ -1,0 +1,5 @@
+Subject: Vendor profile updated
+
+{{ business_name|default:"A vendor profile" }} was updated and may need a fresh review.
+
+Review profile changes: {{ cta_url }}

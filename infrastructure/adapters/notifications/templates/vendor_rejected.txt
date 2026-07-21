@@ -1,0 +1,5 @@
+Subject: Your LinkaPro vendor profile needs changes
+
+{{ business_name|default:"Your vendor profile" }} was not approved yet{% if reason %}: {{ reason }}{% endif %}.
+
+Update your vendor profile: {{ cta_url }}
