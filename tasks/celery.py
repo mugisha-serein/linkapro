@@ -58,6 +58,7 @@ app.conf.update(
         "tasks.document_tasks",
         "tasks.email_tasks",
         "tasks.image_tasks",
+        "tasks.identity_domain_events",
         "tasks.marketplace_sync",
         "tasks.notifications",
         "tasks.vendor_domain_events",

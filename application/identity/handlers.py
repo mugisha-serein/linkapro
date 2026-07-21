@@ -230,12 +230,6 @@ class IdentityCommandHandlers:
         # Create reset token (short-lived, one-time use)
         reset_token = self.token_service.create_password_reset_token(str(user.id))
         # In real implementation, we would store token hash or use a separate table.
-        # For now, we'll dispatch an event that triggers an email.
-        self.event_dispatcher.dispatch(
-            # PasswordResetRequested event (to be defined) will be handled by application event handler to send email
-            # We'll define a simple event for this purpose.
-            object()  # Placeholder: define PasswordResetRequested event
-        )
 
     def reset_password(self, cmd: ResetPasswordCommand) -> None:
         # Validate reset token
