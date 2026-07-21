@@ -8,14 +8,13 @@ from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
 
+from application.notifications.event_map import DOCUMENT_EVENT_TO_TEMPLATE, export_notification_context
 from django_app.documents.models import DocumentDomainEventOutbox, ExportJob
 
 
 logger = logging.getLogger(__name__)
 MAX_DOCUMENT_EVENT_ATTEMPTS = 5
-EVENT_TO_TEMPLATE = {
-    "ExportCompleted": "export_completed",
-}
+EVENT_TO_TEMPLATE = DOCUMENT_EVENT_TO_TEMPLATE
 
 
 @shared_task(bind=True, name="tasks.document_domain_events.publish_document_domain_event_task", max_retries=0)
@@ -113,12 +112,12 @@ def _notification_for_event(event: DocumentDomainEventOutbox, template: str) -> 
     if job is None or not job.requested_by.email or not job.file_url:
         return None
 
-    context = {
-        "event_name": job.event.name,
-        "export_type": job.get_export_type_display(),
-        "file_url": job.file_url,
-        "cta_url": job.file_url,
-    }
+    context = export_notification_context(
+        event_name=job.event.name,
+        export_type=job.get_export_type_display(),
+        file_url=job.file_url,
+        cta_url=job.file_url,
+    )
     return {
         "to": job.requested_by.email,
         "template": template,

@@ -10,15 +10,13 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from application.notifications.event_map import PAYMENT_EVENT_TO_TEMPLATE, payment_notification_context
 from django_app.payments.models import Payment, PaymentDomainEventOutbox
 
 
 logger = logging.getLogger(__name__)
 MAX_PAYMENT_EVENT_ATTEMPTS = 5
-EVENT_TO_TEMPLATE = {
-    "PaymentCompleted": "payment_completed",
-    "PaymentExpired": "payment_expired",
-}
+EVENT_TO_TEMPLATE = PAYMENT_EVENT_TO_TEMPLATE
 PAYMENT_DECIMALS = {
     "RWF": 0,
 }
@@ -119,13 +117,13 @@ def _notification_for_event(event: PaymentDomainEventOutbox, template: str) -> d
     if payment is None or not payment.user.email:
         return None
 
-    context = {
-        "payment_reference": payment.reference,
-        "amount": _format_amount(payment.amount_minor, payment.currency),
-        "currency": payment.currency,
-        "status": payment.status,
-        "cta_url": _payment_url(payment.reference),
-    }
+    context = payment_notification_context(
+        payment_reference=payment.reference,
+        amount=_format_amount(payment.amount_minor, payment.currency),
+        currency=payment.currency,
+        status=payment.status,
+        cta_url=_payment_url(payment.reference),
+    )
     return {
         "to": payment.user.email,
         "template": template,

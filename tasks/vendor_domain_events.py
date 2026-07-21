@@ -9,20 +9,13 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from application.notifications.event_map import VENDOR_EVENT_TO_TEMPLATE, vendor_notification_context
 from django_app.vendors.models import Inquiry, VendorDomainEventOutbox, VendorProfile
 
 
 logger = logging.getLogger(__name__)
 MAX_VENDOR_EVENT_ATTEMPTS = 5
-EVENT_TO_TEMPLATE = {
-    "VendorSubmittedForReview": "vendor_submitted_for_review",
-    "VendorApproved": "vendor_approved",
-    "VendorRejected": "vendor_rejected",
-    "VendorSuspended": "vendor_suspended",
-    "VendorReinstated": "vendor_reinstated",
-    "VendorProfileUpdated": "vendor_profile_updated",
-    "InquiryReceived": "inquiry_received",
-}
+EVENT_TO_TEMPLATE = VENDOR_EVENT_TO_TEMPLATE
 
 
 @shared_task(bind=True, name="tasks.vendor_domain_events.publish_vendor_domain_event_task", max_retries=0)
@@ -118,19 +111,21 @@ def _notification_for_event(event: VendorDomainEventOutbox, template: str) -> di
     if vendor is None:
         return None
 
-    context = {
-        "business_name": vendor.business_name,
-        "cta_url": _vendor_dashboard_url(),
-    }
-    if payload.get("reason"):
-        context["reason"] = payload["reason"]
+    context = vendor_notification_context(
+        business_name=vendor.business_name,
+        cta_url=_vendor_dashboard_url(),
+        reason=payload.get("reason"),
+    )
 
     if event.event_type == "InquiryReceived":
         inquiry_id = payload.get("inquiry_id")
         inquiry = Inquiry.objects.filter(id=inquiry_id).only("id", "client_name", "vendor_id").first()
         if inquiry is not None:
-            context["client_name"] = inquiry.client_name
-            context["cta_url"] = _vendor_inquiry_url(inquiry.id)
+            context = vendor_notification_context(
+                business_name=vendor.business_name,
+                cta_url=_vendor_inquiry_url(inquiry.id),
+                client_name=inquiry.client_name,
+            )
 
     return {
         "to": vendor.contact_email,
