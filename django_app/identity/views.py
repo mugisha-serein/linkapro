@@ -76,7 +76,7 @@ from .throttles import (
     record_mfa_failure,
 )
 from django_app.identity.models import PasswordResetToken, User
-from infrastructure.adapters.django_event_dispatcher import user_password_changed
+from infrastructure.adapters.django_identity_event_outbox import DjangoIdentityEventOutboxDispatcher
 from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_value_hash
 
 logger = logging.getLogger(__name__)
@@ -732,12 +732,7 @@ class ResetPasswordView(APIView):
                 occurred_at=timezone.now(),
                 reason="credential_recovery",
             )
-            transaction.on_commit(
-                lambda event=password_changed_event: user_password_changed.send(
-                    sender=self.__class__,
-                    event=event,
-                )
-            )
+            DjangoIdentityEventOutboxDispatcher().dispatch(password_changed_event)
             token_record.status = PasswordResetToken.Status.USED
             token_record.used_at = timezone.now()
             token_record.used_ip_hash = password_reset_value_hash(_client_ip(request))
