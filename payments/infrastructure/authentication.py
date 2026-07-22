@@ -7,7 +7,7 @@ from django_app.identity.session_revocation import (
 )
 from django_app.identity.session_tracking import SESSION_ID_CLAIM, identity_session_is_active
 from infrastructure.adapters.jwt_token_service import accepted_identity_token_env
-from payments.infrastructure.redis_blacklist import RedisTokenBlacklist
+from infrastructure.adapters.redis_token_blacklist import RedisTokenBlacklist
 
 
 class HardenedJWTAuthentication(JWTAuthentication):

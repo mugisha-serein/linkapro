@@ -31,24 +31,24 @@ def mock_token_service():
 
 
 @pytest.fixture
+def mock_session_store():
+    store = Mock()
+    store.create_identity_session.return_value = "session-id"
+    return store
+
+
+@pytest.fixture
 def mock_event_dispatcher():
     return Mock()
 
 
-@pytest.fixture(autouse=True)
-def mock_identity_session(monkeypatch):
-    monkeypatch.setattr(
-        "application.identity.auth_policy.create_identity_session",
-        lambda *, user_id, token_family: "session-id",
-    )
-
-
 @pytest.fixture
-def use_case(mock_user_repo, mock_oauth_repo, mock_token_service, mock_event_dispatcher):
+def use_case(mock_user_repo, mock_oauth_repo, mock_token_service, mock_session_store, mock_event_dispatcher):
     return GoogleLoginUseCase(
         user_repo=mock_user_repo,
         oauth_repo=mock_oauth_repo,
         token_service=mock_token_service,
+        session_store=mock_session_store,
         event_dispatcher=mock_event_dispatcher,
     )
 

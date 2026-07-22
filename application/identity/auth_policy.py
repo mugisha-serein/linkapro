@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Optional
 
 from application.identity.dtos import SessionBootstrapDTO
-from django_app.identity.session_tracking import SESSION_ID_CLAIM, create_identity_session
+from application.identity.ports import ISessionStore, SESSION_ID_CLAIM
 
 
 class AuthenticationStatus(str, Enum):
@@ -28,8 +28,9 @@ class AuthenticationDecision:
 
 
 class IdentityAuthenticationPolicy:
-    def __init__(self, token_service):
+    def __init__(self, token_service, session_store: ISessionStore):
         self.token_service = token_service
+        self.session_store = session_store
 
     def evaluate_password_login(self, user, plain_password, password_hasher) -> AuthenticationDecision:
         if not user:
@@ -73,7 +74,7 @@ class IdentityAuthenticationPolicy:
 
     def _issue_authenticated_tokens(self, user) -> AuthenticationDecision:
         token_family = str(uuid.uuid4())
-        session_id = create_identity_session(user_id=str(user.id), token_family=token_family)
+        session_id = self.session_store.create_identity_session(user_id=str(user.id), token_family=token_family)
         bootstrap_user = SessionBootstrapDTO.from_user(user).to_dict()
         bootstrap_user[SESSION_ID_CLAIM] = session_id
         access_token = self.token_service.create_access_token(

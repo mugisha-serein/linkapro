@@ -21,12 +21,13 @@ class GoogleLoginResult:
 
 
 class GoogleLoginUseCase:
-    def __init__(self, user_repo, oauth_repo, token_service, event_dispatcher):
+    def __init__(self, user_repo, oauth_repo, token_service, session_store, event_dispatcher):
         self.user_repo = user_repo
         self.oauth_repo = oauth_repo
         self.token_service = token_service
+        self.session_store = session_store
         self.event_dispatcher = event_dispatcher
-        self.auth_policy = IdentityAuthenticationPolicy(token_service)
+        self.auth_policy = IdentityAuthenticationPolicy(token_service, session_store)
 
     def execute(
         self,

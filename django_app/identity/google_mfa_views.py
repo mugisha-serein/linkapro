@@ -14,6 +14,7 @@ from application.identity.oauth_state import (
 from django_app.identity.cookies import clear_auth_cookies, set_refresh_cookie
 from django_app.identity.mfa_cookies import clear_mfa_temp_cookie, set_mfa_temp_cookie
 from django_app.identity.services import get_auth_session_facade, get_google_oauth_adapter
+from django_app.identity.throttles import GoogleOAuthIPThrottle
 from django_app.identity.views import _frontend_url, _no_store_redirect, _redirect_error
 
 
@@ -21,8 +22,15 @@ def _result_refresh_token(result) -> str | None:
     return getattr(result, "refresh_token", None) or getattr(result, "refresh", None)
 
 
+def _allow_google_oauth_request(request, view) -> bool:
+    return GoogleOAuthIPThrottle().allow_request(request, view)
+
+
 class GoogleLoginView(View):
     def get(self, request):
+        if not _allow_google_oauth_request(request, self):
+            return _redirect_error("oauth_rate_limited")
+
         from application.identity.oauth_state import ALLOWED_OAUTH_SIGNUP_ROLES
 
         signup_role = (request.GET.get("role") or "").strip().lower()
@@ -42,6 +50,9 @@ class GoogleLoginView(View):
 
 class GoogleCallbackView(View):
     def get(self, request):
+        if not _allow_google_oauth_request(request, self):
+            return _redirect_error("oauth_rate_limited")
+
         oauth_error = request.GET.get("error")
         if oauth_error:
             response = _redirect_error(oauth_error)

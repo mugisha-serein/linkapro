@@ -1,6 +1,7 @@
 import pytest
 
 from application.identity.use_cases.google_login import GoogleLoginUseCase
+from infrastructure.adapters.django_identity_session_store import DjangoIdentitySessionStore
 from infrastructure.adapters.jwt_token_service import JWTTokenService
 from infrastructure.repos.django_oauth_token_repository import DjangoOAuthTokenRepository
 from infrastructure.repos.django_user_repository import DjangoUserRepository
@@ -24,6 +25,7 @@ def test_new_google_email_creates_user_and_returns_session_tokens():
         user_repo=DjangoUserRepository(),
         oauth_repo=DjangoOAuthTokenRepository(),
         token_service=JWTTokenService(),
+        session_store=DjangoIdentitySessionStore(),
         event_dispatcher=dispatcher,
     )
 
