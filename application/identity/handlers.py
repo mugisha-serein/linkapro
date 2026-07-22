@@ -146,7 +146,7 @@ class IdentityCommandHandlers:
                 raise ValueError("Email already registered. Please log in with password or link account.")
             else:
                 # Create new user
-                user = User(
+                user = User.register_new(
                     id=uuid.uuid4(),
                     email=cmd.email,
                     password_hash=None,  # No password for OAuth users
