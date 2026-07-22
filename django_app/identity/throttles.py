@@ -279,6 +279,16 @@ class TwoFactorTempTokenThrottle(AuthEndpointThrottle):
         return {"temp_token_hash": rate_limit_hash(_temp_token(request))}
 
 
+class GoogleOAuthIPThrottle(AuthEndpointThrottle):
+    scope = "google_oauth_ip"
+
+    def get_cache_key(self, request, view):
+        return self._cache_key(rate_limit_hash(get_client_ip(request)))
+
+    def get_safe_metadata(self, request) -> dict:
+        return {"client_ip_hash": rate_limit_hash(get_client_ip(request))}
+
+
 def is_login_locked_out(request, email: str | None = None) -> bool:
     email_hash = rate_limit_hash(_normalize_email_value(email) or _normalized_email(request))
     ip_hash = rate_limit_hash(get_client_ip(request))

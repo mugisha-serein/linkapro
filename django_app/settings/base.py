@@ -203,6 +203,7 @@ REST_FRAMEWORK = {
         "register_email_domain": os.environ.get("REGISTER_EMAIL_DOMAIN_RATE", "20/hour"),
         "two_factor_ip": os.environ.get("TWO_FACTOR_IP_RATE", "10/min"),
         "two_factor_temp_token": os.environ.get("TWO_FACTOR_TEMP_TOKEN_RATE", "5/min"),
+        "google_oauth_ip": os.environ.get("GOOGLE_OAUTH_IP_RATE", "20/min"),
         "public_vendor_inquiry": os.environ.get("PUBLIC_VENDOR_INQUIRY_RATE", "5/hour"),
     },
 }

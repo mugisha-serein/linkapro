@@ -1,7 +1,11 @@
+from copy import deepcopy
 from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+from django.conf import settings as django_settings
+from django.core.cache import cache
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -43,6 +47,15 @@ class _AuthSessionFacadeStub:
         return self._result
 
 
+def _oauth_throttle_config(rate: str) -> dict:
+    config = deepcopy(django_settings.REST_FRAMEWORK)
+    config["DEFAULT_THROTTLE_RATES"] = {
+        **config.get("DEFAULT_THROTTLE_RATES", {}),
+        "google_oauth_ip": rate,
+    }
+    return config
+
+
 @pytest.mark.django_db
 class TestGoogleOAuthViews:
     @pytest.fixture(autouse=True)
@@ -69,6 +82,35 @@ class TestGoogleOAuthViews:
         assert response.status_code == 302
         assert "reason=invalid_role" in response.url
 
+    def test_google_login_is_ip_throttled(self, monkeypatch, settings):
+        from django_app.identity import google_mfa_views
+
+        cache.clear()
+        settings.DEBUG = True
+        settings.FRONTEND_URL = "http://localhost:3000"
+        monkeypatch.setattr(
+            google_mfa_views,
+            "get_google_oauth_adapter",
+            lambda: _AdapterStub(auth_url="https://accounts.google.com/fake-auth"),
+        )
+
+        with override_settings(REST_FRAMEWORK=_oauth_throttle_config("1/min")):
+            first_response = self.client.get(
+                reverse("google-login"),
+                {"role": "planner"},
+                REMOTE_ADDR="198.51.100.10",
+            )
+            second_response = self.client.get(
+                reverse("google-login"),
+                {"role": "planner"},
+                REMOTE_ADDR="198.51.100.10",
+            )
+
+        assert first_response.status_code == 302
+        assert first_response.url == "https://accounts.google.com/fake-auth"
+        assert second_response.status_code == 302
+        assert second_response.url == "http://localhost:3000/auth/error?reason=oauth_rate_limited"
+
     def test_google_callback_missing_code_redirects_error(self, settings):
         settings.DEBUG = True
         settings.FRONTEND_URL = "http://localhost:3000"
@@ -78,6 +120,20 @@ class TestGoogleOAuthViews:
         assert response["Cache-Control"] == "no-store"
         assert response["Pragma"] == "no-cache"
         assert response.cookies["refresh_token"].value == ""
+
+    def test_google_callback_is_ip_throttled(self, settings):
+        cache.clear()
+        settings.DEBUG = True
+        settings.FRONTEND_URL = "http://localhost:3000"
+
+        with override_settings(REST_FRAMEWORK=_oauth_throttle_config("1/min")):
+            first_response = self.client.get(reverse("google-callback"), REMOTE_ADDR="198.51.100.11")
+            second_response = self.client.get(reverse("google-callback"), REMOTE_ADDR="198.51.100.11")
+
+        assert first_response.status_code == 302
+        assert first_response.url == "http://localhost:3000/auth/error?reason=missing_code"
+        assert second_response.status_code == 302
+        assert second_response.url == "http://localhost:3000/auth/error?reason=oauth_rate_limited"
 
     def test_google_callback_redirects_to_2fa_when_required(self, monkeypatch, settings):
         from django_app.identity import google_mfa_views
