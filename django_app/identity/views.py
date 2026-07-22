@@ -6,7 +6,6 @@ from django.db import transaction
 from django.shortcuts import redirect
 from django.utils import timezone
 from django.utils.decorators import method_decorator
-from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -19,14 +18,6 @@ from application.identity.commands import (
     VerifyTwoFactorSetupCommand,
 )
 from application.identity.auth_policy import AuthenticationStatus
-from application.identity.oauth_state import (
-    ALLOWED_OAUTH_SIGNUP_ROLES,
-    OAUTH_STATE_COOKIE_NAME,
-    clear_oauth_state_cookie,
-    consume_oauth_state,
-    issue_oauth_state,
-    set_oauth_state_cookie,
-)
 from application.identity.queries import GetUserByIdQuery
 from domain.identity.events import UserPasswordChanged as DomainUserPasswordChanged
 from django_app.common.api_responses import api_error, api_success
@@ -44,7 +35,6 @@ from .serializers import (
 from .services import (
     get_command_handlers,
     get_query_handlers,
-    get_google_oauth_adapter,
     get_auth_session_facade,
 )
 from .cookies import clear_auth_cookies, set_refresh_cookie
@@ -761,76 +751,3 @@ class ResetPasswordView(APIView):
             status=status.HTTP_200_OK,
             extra={"status": "password_reset"},
         )
-
-
-class GoogleLoginView(View):
-    def get(self, request):
-        signup_role = (request.GET.get("role") or "").strip().lower()
-        if signup_role not in ALLOWED_OAUTH_SIGNUP_ROLES:
-            return _redirect_error("invalid_role")
-
-        adapter = get_google_oauth_adapter()
-        try:
-            challenge = issue_oauth_state(signup_role)
-            auth_url = adapter.build_auth_url(state=challenge.state)
-        except Exception:
-            return _redirect_error("oauth_not_configured")
-        response = redirect(auth_url)
-        set_oauth_state_cookie(response, challenge)
-        return response
-
-
-class GoogleCallbackView(View):
-    def get(self, request):
-        oauth_error = request.GET.get("error")
-        if oauth_error:
-            response = _redirect_error(oauth_error)
-            clear_oauth_state_cookie(response)
-            clear_auth_cookies(response)
-            return response
-
-        code = request.GET.get("code")
-        if not code:
-            response = _redirect_error("missing_code")
-            clear_oauth_state_cookie(response)
-            clear_auth_cookies(response)
-            return response
-        frontend_url = _frontend_url()
-
-        state_result = consume_oauth_state(
-            request.GET.get("state"),
-            request.COOKIES.get(OAUTH_STATE_COOKIE_NAME),
-        )
-        if not state_result:
-            response = _redirect_error("oauth_failed")
-            clear_oauth_state_cookie(response)
-            clear_auth_cookies(response)
-            return response
-
-        adapter = get_google_oauth_adapter()
-        try:
-            token_data = adapter.exchange_code(code)
-            user_data = adapter.get_user_info(token_data["access_token"])
-            result = get_auth_session_facade().oauth_login(
-                user_data,
-                token_data,
-                signup_role=state_result.role,
-            )
-        except Exception:
-            response = _redirect_error("oauth_failed")
-            clear_oauth_state_cookie(response)
-            clear_auth_cookies(response)
-            return response
-
-        if result.requires_2fa:
-            params = urlencode({"temp_token": result.temp_token or ""})
-            response = _no_store_redirect(f"{frontend_url}/auth/2fa?{params}")
-            clear_oauth_state_cookie(response)
-            clear_auth_cookies(response)
-            return response
-
-        response = _no_store_redirect(f"{frontend_url}/auth/success")
-        clear_oauth_state_cookie(response)
-        if result.refresh:
-            set_refresh_cookie(response, result.refresh)
-        return response
