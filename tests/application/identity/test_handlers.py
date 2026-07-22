@@ -5,13 +5,12 @@ from datetime import datetime, timedelta, UTC
 from unittest.mock import Mock, ANY
 
 from domain.identity.entities import User, UserRole, OAuthToken
-from domain.identity.events import UserDeactivated, UserPasswordChanged, UserTwoFactorEnabled
+from domain.identity.events import UserDeactivated, UserTwoFactorEnabled
 from domain.identity.value_objects import Email, PasswordHash, PlainPassword, OAuthProvider
 from application.identity.commands import (
     RegisterUserCommand,
     LoginUserCommand,
     OAuthLoginCommand,
-    ChangePasswordCommand,
     UpdateProfileCommand,
     DeactivateUserCommand,
     VerifyTwoFactorSetupCommand,
@@ -287,57 +286,6 @@ class TestOAuthLogin:
         mock_oauth_repo.save.assert_called_once()
         assert oauth_token.access_token.reveal_for_provider_sync() == "new_access"
         assert result.status is AuthenticationStatus.AUTHENTICATED
-
-
-class TestChangePassword:
-    def test_successful_change(self, handlers, mock_user_repo, mock_password_hasher, mock_event_dispatcher):
-        user = User(
-            id=uuid.uuid4(),
-            email=Email("user@example.com"),
-            password_hash=PasswordHash("old_hash"),
-            first_name="A",
-            last_name="B",
-            role=UserRole.PLANNER,
-        )
-        mock_user_repo.get_by_id.return_value = user
-        mock_password_hasher.verify.return_value = True
-
-        cmd = ChangePasswordCommand(
-            user_id=user.id,
-            old_plain_password=PlainPassword("OldPass1!"),
-            new_plain_password=PlainPassword("NewPass1!"),
-        )
-
-        handlers.change_password(cmd)
-
-        mock_password_hasher.verify.assert_called_once()
-        mock_password_hasher.hash.assert_called_once()
-        mock_user_repo.save.assert_called_once()
-        event = mock_event_dispatcher.dispatch.call_args.args[0]
-        assert isinstance(event, UserPasswordChanged)
-        assert event.user_id == user.id
-        assert event.auth_token_version == user.auth_token_version
-
-    def test_incorrect_old_password_raises(self, handlers, mock_user_repo, mock_password_hasher):
-        user = User(
-            id=uuid.uuid4(),
-            email=Email("user@example.com"),
-            password_hash=PasswordHash("hash"),
-            first_name="A",
-            last_name="B",
-            role=UserRole.PLANNER,
-        )
-        mock_user_repo.get_by_id.return_value = user
-        mock_password_hasher.verify.return_value = False
-
-        cmd = ChangePasswordCommand(
-            user_id=user.id,
-            old_plain_password=PlainPassword("WrongPass1!"),
-            new_plain_password=PlainPassword("NewPass1!"),
-        )
-
-        with pytest.raises(ValueError, match="incorrect"):
-            handlers.change_password(cmd)
 
 
 class TestUpdateProfile:

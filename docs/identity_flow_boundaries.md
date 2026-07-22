@@ -23,7 +23,6 @@ Django views acting as adapters:
 - Self-registration and registration role validation.
 - Password login decisioning and authenticated session token issuance.
 - OAuth login/linking once the provider identity has been validated.
-- Authenticated password change.
 - Email verification state changes.
 - Profile name updates.
 - User deactivation/reactivation.
@@ -42,6 +41,9 @@ migration plan is written first:
 
 - Forgot-password and reset-password HTTP flow, including throttles, token
   records, token consumption, delivery audit records, and reset email dispatch.
+- Authenticated password mutation flows until a dedicated migration moves them
+  into `application/identity/` and removes the Django-native path in the same
+  change.
 - Password setup wrappers that clear cookies and coordinate active web sessions.
 - Session tracking, refresh-token family storage, cookie issuance/clearing, CSRF
   checks, and session revocation.
