@@ -5,6 +5,7 @@ from datetime import datetime, UTC
 
 from domain.identity.entities import UserRole
 from domain.identity.events import (
+    PasswordResetRequested,
     UserActivated,
     UserDeactivated,
     UserLoggedIn,
@@ -37,6 +38,7 @@ class TestIdentityEvents:
             UserRegistered,
             UserLoggedIn,
             UserPasswordChanged,
+            PasswordResetRequested,
             UserVerified,
             UserActivated,
             UserOAuthLinked,
@@ -79,3 +81,22 @@ class TestIdentityEvents:
         assert isinstance(event.auth_token_version, int)
         assert "secret" not in repr(event).lower()
         assert "raw-token" not in repr(event)
+
+    def test_password_reset_requested_is_metadata_only(self):
+        event = PasswordResetRequested(
+            user_id=uuid.uuid4(),
+            email=Email("reset@example.com"),
+            delivery_id=uuid.uuid4(),
+            occurred_at=datetime(2025, 1, 1, tzinfo=UTC),
+        )
+
+        assert isinstance(event.event_id, uuid.UUID)
+        assert event.email == Email("reset@example.com")
+        event_field_names = {field.name for field in fields(PasswordResetRequested)}
+        assert event_field_names == {
+            "user_id",
+            "email",
+            "delivery_id",
+            "occurred_at",
+            "event_id",
+        }
