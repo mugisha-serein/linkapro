@@ -85,6 +85,45 @@ class TestUserEntity:
                 auth_token_version=-1,
             )
 
+    @pytest.mark.parametrize(
+        ("field_name", "value"),
+        [
+            ("role", UserRole.VENDOR),
+            ("is_active", False),
+            ("password_hash", PasswordHash("new_hash")),
+            ("auth_token_version", 2),
+            ("two_factor_enabled", True),
+        ],
+    )
+    def test_direct_sensitive_field_writes_are_blocked(self, field_name, value):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+        )
+
+        with pytest.raises(AttributeError, match="User mutator"):
+            setattr(user, field_name, value)
+
+    def test_non_sensitive_fields_remain_directly_mutable(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+        )
+
+        user.first_name = "Jane"
+        user.last_login = datetime(2025, 1, 1, tzinfo=UTC)
+
+        assert user.first_name == "Jane"
+        assert user.last_login == datetime(2025, 1, 1, tzinfo=UTC)
+
     @pytest.mark.parametrize("field_name", ["created_at", "updated_at", "last_login"])
     def test_direct_user_construction_rejects_naive_datetimes(self, field_name):
         kwargs = {
