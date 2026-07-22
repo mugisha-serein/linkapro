@@ -9,6 +9,7 @@ from domain.identity.events import (
     UserActivated,
     UserDeactivated,
     UserPasswordChanged,
+    UserRoleChanged,
     UserTwoFactorDisabled,
     UserTwoFactorEnabled,
     UserVerified,
@@ -197,6 +198,64 @@ class TestUserEntity:
         events = user.pull_events()
         assert len(events) == 1
         assert isinstance(events[0], UserDeactivated)
+
+    def test_change_role_updates_role_rotates_version_and_records_event(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            auth_token_version=4,
+        )
+
+        user.change_role(UserRole.VENDOR)
+
+        assert user.role is UserRole.VENDOR
+        assert user.auth_token_version == 5
+        events = user.pull_events()
+        assert len(events) == 1
+        assert isinstance(events[0], UserRoleChanged)
+        assert events[0].user_id == user.id
+        assert events[0].previous_role is UserRole.PLANNER
+        assert events[0].new_role is UserRole.VENDOR
+        assert events[0].auth_token_version == user.auth_token_version
+
+    def test_change_role_noops_when_unchanged(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            auth_token_version=4,
+        )
+
+        user.change_role("planner")
+
+        assert user.role is UserRole.PLANNER
+        assert user.auth_token_version == 4
+        assert user.pull_events() == []
+
+    def test_change_role_rejects_invalid_role(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            auth_token_version=4,
+        )
+
+        with pytest.raises(ValueError):
+            user.change_role("owner")
+
+        assert user.role is UserRole.PLANNER
+        assert user.auth_token_version == 4
+        assert user.pull_events() == []
 
     def test_disable_two_factor_rotates_token_version(self):
         user = User(

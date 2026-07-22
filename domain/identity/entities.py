@@ -207,6 +207,26 @@ class User:
             )
         )
 
+    def change_role(self, new_role: UserRole) -> None:
+        from .events import UserRoleChanged
+
+        new_role = UserRole(new_role)
+        if new_role is self.role:
+            return
+
+        previous_role = self.role
+        self.role = new_role
+        self.rotate_auth_token_version()
+        self._record_event(
+            UserRoleChanged(
+                user_id=self.id,
+                previous_role=previous_role,
+                new_role=new_role,
+                occurred_at=self.updated_at,
+                auth_token_version=self.auth_token_version,
+            )
+        )
+
     def update_profile(
         self,
         *,
