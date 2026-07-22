@@ -832,8 +832,18 @@ class TestIdentityViews:
         DEFAULT_FROM_EMAIL="no-reply@example.test",
         FRONTEND_URL="https://app.example.test",
     )
-    def test_password_reset_email_task_sends_email_for_active_user(self):
+    def test_password_reset_email_task_sends_email_for_active_user(self, monkeypatch):
         mail.outbox = []
+        sent = []
+
+        class FakeResendEmailSender:
+            def send(self, *, to, template, context):
+                sent.append({"to": to, "template": template, "context": context})
+
+        monkeypatch.setattr(
+            "django_app.identity.password_reset_email.ResendEmailSender",
+            FakeResendEmailSender,
+        )
         user = DjangoUser.objects.create_user(
             email="task-reset@example.com",
             password="StrongPass1",
@@ -851,14 +861,17 @@ class TestIdentityViews:
         assert delivery.status == PasswordResetEmailDelivery.Status.SENT
         assert delivery.attempts == 1
         assert delivery.sent_at is not None
-        assert len(mail.outbox) == 1
-        message = mail.outbox[0]
-        assert message.subject == "Reset your LinkaPro password"
-        assert message.from_email == "no-reply@example.test"
-        assert message.to == ["task-reset@example.com"]
-        assert "LinkaPro password reset request" in message.body
-        assert f"https://app.example.test/auth/reset-password?token={token}" in message.body
-        assert "This link expires in 1 hour." in message.body
+        assert mail.outbox == []
+        assert sent == [
+            {
+                "to": "task-reset@example.com",
+                "template": "password_reset",
+                "context": {
+                    "reset_url": f"https://app.example.test/auth/reset-password?token={token}",
+                    "expiration": "1 hour",
+                },
+            }
+        ]
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
@@ -899,10 +912,14 @@ class TestIdentityViews:
         delivery = _create_delivery(user)
         token = JWTTokenService().create_password_reset_token(str(user.id))
 
-        def fail_send_mail(*args, **kwargs):
-            raise RuntimeError("provider unavailable")
+        class FailingResendEmailSender:
+            def send(self, *, to, template, context):
+                raise RuntimeError("provider unavailable")
 
-        monkeypatch.setattr("django_app.identity.password_reset_email.send_mail", fail_send_mail)
+        monkeypatch.setattr(
+            "django_app.identity.password_reset_email.ResendEmailSender",
+            FailingResendEmailSender,
+        )
         caplog.set_level(logging.ERROR, logger="django_app.identity.password_reset_email")
 
         with pytest.raises(RuntimeError):
@@ -922,8 +939,18 @@ class TestIdentityViews:
         DEFAULT_FROM_EMAIL="no-reply@example.test",
         FRONTEND_URL="https://app.example.test",
     )
-    def test_password_reset_email_task_does_not_log_token(self, caplog):
+    def test_password_reset_email_task_does_not_log_token(self, caplog, monkeypatch):
         mail.outbox = []
+        sent = []
+
+        class FakeResendEmailSender:
+            def send(self, *, to, template, context):
+                sent.append({"to": to, "template": template, "context": context})
+
+        monkeypatch.setattr(
+            "django_app.identity.password_reset_email.ResendEmailSender",
+            FakeResendEmailSender,
+        )
         user = DjangoUser.objects.create_user(
             email="task-nolog@example.com",
             password="StrongPass1",
@@ -937,6 +964,7 @@ class TestIdentityViews:
         result = send_password_reset_email_task.apply(args=[str(user.id), token]).get()
 
         assert result is True
+        assert sent
         assert token not in caplog.text
         assert "/auth/reset-password?token=" not in caplog.text
 

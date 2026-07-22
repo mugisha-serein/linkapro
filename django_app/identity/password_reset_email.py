@@ -4,11 +4,11 @@ import hmac
 from datetime import timedelta
 
 from django.conf import settings
-from django.core.mail import send_mail
 from django.utils import timezone
 
 from django_app.identity.models import PasswordResetEmailDelivery, User
 from infrastructure.adapters.jwt_token_service import JWTTokenService
+from infrastructure.adapters.notifications.resend_email_sender import ResendEmailSender
 
 logger = logging.getLogger(__name__)
 
@@ -145,13 +145,13 @@ def send_password_reset_email(
     )
     try:
         reset_url = build_password_reset_url(token)
-        send_mail(
-            subject="Reset your LinkaPro password",
-            message=build_password_reset_text(reset_url),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-            html_message=build_password_reset_html(reset_url),
+        ResendEmailSender().send(
+            to=user.email,
+            template="password_reset",
+            context={
+                "reset_url": reset_url,
+                "expiration": _format_timeout(settings.PASSWORD_RESET_TIMEOUT),
+            },
         )
     except Exception as exc:
         if delivery:
@@ -193,31 +193,6 @@ def send_password_reset_email(
 def build_password_reset_url(token: str) -> str:
     frontend_url = _frontend_url()
     return f"{frontend_url}/auth/reset-password?token={token}"
-
-
-def build_password_reset_text(reset_url: str) -> str:
-    expiration = _format_timeout(settings.PASSWORD_RESET_TIMEOUT)
-    return "\n".join(
-        [
-            "LinkaPro password reset request",
-            "",
-            "Use this link to reset your password:",
-            reset_url,
-            "",
-            f"This link expires in {expiration}.",
-            "If you did not request a password reset, you can safely ignore this email.",
-        ]
-    )
-
-
-def build_password_reset_html(reset_url: str) -> str:
-    expiration = _format_timeout(settings.PASSWORD_RESET_TIMEOUT)
-    return (
-        "<p>LinkaPro password reset request</p>"
-        f'<p><a href="{reset_url}">Reset your password</a></p>'
-        f"<p>This link expires in {expiration}.</p>"
-        "<p>If you did not request a password reset, you can safely ignore this email.</p>"
-    )
 
 
 def _frontend_url() -> str:

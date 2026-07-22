@@ -50,6 +50,15 @@ class UserPasswordChanged:
 
 
 @dataclass(frozen=True)
+class PasswordResetRequested:
+    user_id: uuid.UUID
+    email: Email
+    delivery_id: uuid.UUID
+    occurred_at: datetime
+    event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+
+
+@dataclass(frozen=True)
 class UserVerified:
     user_id: uuid.UUID
     occurred_at: datetime

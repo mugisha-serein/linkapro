@@ -17,6 +17,9 @@ PAYMENT_EVENT_TO_TEMPLATE = {
 DOCUMENT_EVENT_TO_TEMPLATE = {
     "ExportCompleted": "export_completed",
 }
+IDENTITY_EVENT_TO_TEMPLATE = {
+    "UserPasswordChanged": "password_changed_confirmation",
+}
 
 
 def vendor_notification_context(
@@ -35,6 +38,13 @@ def vendor_notification_context(
     if client_name:
         context["client_name"] = client_name
     return context
+
+
+def identity_notification_context(*, email: str, cta_url: str) -> dict:
+    return {
+        "email": email,
+        "cta_url": cta_url,
+    }
 
 
 def payment_notification_context(

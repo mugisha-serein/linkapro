@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import logging
 import uuid
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from django_app.identity.models import IdentityDomainEventOutbox
+from application.notifications.event_map import IDENTITY_EVENT_TO_TEMPLATE, identity_notification_context
+from django_app.identity.models import IdentityDomainEventOutbox, User
 from django_app.identity.session_revocation import revoke_user_sessions
 
 
+logger = logging.getLogger(__name__)
 MAX_IDENTITY_EVENT_ATTEMPTS = 5
+EVENT_TO_TEMPLATE = IDENTITY_EVENT_TO_TEMPLATE
 
 
 @shared_task(bind=True, name="tasks.identity_domain_events.publish_identity_domain_event_task", max_retries=0)
@@ -72,10 +77,54 @@ def publish_identity_domain_event(event_id: str | uuid.UUID) -> bool:
             event.last_error = None
             event.next_attempt_at = None
             event.save(update_fields=["status", "published_at", "last_error", "next_attempt_at", "updated_at"])
+        try:
+            _enqueue_email_notification(event)
+        except Exception:
+            logger.exception(
+                "identity_notification_enqueue_failed",
+                extra={"event_id": str(event.id), "event_type": event.event_type},
+            )
         return True
     except Exception as exc:
         _mark_failed_or_pending(event_id, exc)
         raise
+
+
+def _enqueue_email_notification(event: IdentityDomainEventOutbox) -> None:
+    template = EVENT_TO_TEMPLATE.get(event.event_type)
+    if not template:
+        return
+
+    notification = _notification_for_event(event, template)
+    if notification is None:
+        return
+
+    from tasks.notifications import send_email_task
+
+    send_email_task.delay(**notification)
+
+
+def _notification_for_event(event: IdentityDomainEventOutbox, template: str) -> dict | None:
+    user = User.objects.filter(id=event.aggregate_id).only("id", "email").first()
+    if user is None or not user.email:
+        return None
+
+    return {
+        "to": user.email,
+        "template": template,
+        "context": identity_notification_context(
+            email=user.email,
+            cta_url=_account_security_url(),
+        ),
+    }
+
+
+def _frontend_url() -> str:
+    return (getattr(settings, "FRONTEND_URL", "") or "").strip().rstrip("/")
+
+
+def _account_security_url() -> str:
+    return f"{_frontend_url()}/account/security"
 
 
 def _mark_failed_or_pending(event_id: str | uuid.UUID, exc: Exception) -> None:
