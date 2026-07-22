@@ -1,5 +1,5 @@
 from django_app.common.redis_config import get_redis_client
-from payments.application.ports import ITokenBlacklist
+from application.identity.ports import ITokenBlacklist
 
 
 class RedisTokenBlacklist(ITokenBlacklist):

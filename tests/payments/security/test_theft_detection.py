@@ -1,7 +1,7 @@
 import uuid
 import pytest
 from unittest.mock import MagicMock
-from payments.application.token_handlers import TokenCommandHandlers
+from application.identity.token_handlers import TokenCommandHandlers
 
 pytestmark = pytest.mark.django_db
 

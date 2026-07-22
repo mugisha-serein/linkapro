@@ -8,8 +8,8 @@ from infrastructure.adapters.django_identity_session_store import DjangoIdentity
 from application.identity.handlers import IdentityCommandHandlers, IdentityQueryHandlers
 from application.identity.use_cases.google_login import GoogleLoginUseCase
 from application.identity.session_facade import IdentitySessionFacade
-from payments.application.token_handlers import TokenCommandHandlers
-from payments.infrastructure.redis_blacklist import RedisTokenBlacklist
+from application.identity.token_handlers import TokenCommandHandlers
+from infrastructure.adapters.redis_token_blacklist import RedisTokenBlacklist
 
 def get_command_handlers():
     return IdentityCommandHandlers(

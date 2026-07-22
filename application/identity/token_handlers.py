@@ -15,7 +15,7 @@ from django_app.identity.session_tracking import (
     revoke_identity_session,
     touch_identity_session,
 )
-from payments.application.ports import ITokenBlacklist
+from application.identity.ports import ITokenBlacklist
 from payments.domain.step_up_policy import StepUpPolicy, StepUpPolicyResult
 from infrastructure.adapters.jwt_token_service import accepted_identity_token_env, identity_token_env
 

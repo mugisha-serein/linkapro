@@ -176,16 +176,6 @@ class IApiKeyRepository(ABC):
         """Update last_used_at timestamp."""
         pass
     
-class ITokenBlacklist(ABC):
-    @abstractmethod
-    def is_blacklisted(self, jti: str) -> bool: ...
-    @abstractmethod
-    def blacklist(self, jti: str, ttl: int) -> None: ...
-    @abstractmethod
-    def is_family_blacklisted(self, family_id: str) -> bool: ...
-    @abstractmethod
-    def blacklist_family(self, family_id: str) -> None: ...
-    
 class IWebhookDecryptor(ABC):
     @abstractmethod
     def decrypt(self, base64_payload: str) -> DecryptionResult:
