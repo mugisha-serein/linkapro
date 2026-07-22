@@ -6,10 +6,11 @@ from django.utils import timezone
 
 from django_app.documents.models import DocumentDomainEventOutbox, ExportJob
 from django_app.events.models import Event
-from django_app.identity.models import User
+from django_app.identity.models import IdentityDomainEventOutbox, User
 from django_app.payments.models import Payment, PaymentDomainEventOutbox
 from django_app.vendors.models import Inquiry, VendorDomainEventOutbox, VendorProfile
 from tasks.document_domain_events import publish_document_domain_event
+from tasks.identity_domain_events import publish_identity_domain_event
 from tasks.payment_domain_events import publish_payment_domain_event
 from tasks.vendor_domain_events import publish_vendor_domain_event
 
@@ -30,6 +31,7 @@ pytestmark = pytest.mark.django_db
         ("payment", "PaymentCompleted", "payment_completed"),
         ("payment", "PaymentExpired", "payment_expired"),
         ("document", "ExportCompleted", "export_completed"),
+        ("identity", "UserPasswordChanged", "password_changed_confirmation"),
     ],
 )
 def test_send_email_task_is_enqueued_for_each_mapped_event_type(
@@ -49,10 +51,14 @@ def test_send_email_task_is_enqueued_for_each_mapped_event_type(
             event = _payment_event(event_type)
             assert publish_payment_domain_event(event.id) is True
             expected_to = "payer@example.com"
-        else:
+        elif domain == "document":
             event = _document_event(event_type)
             assert publish_document_domain_event(event.id) is True
             expected_to = "planner@example.com"
+        else:
+            event = _identity_event(event_type)
+            assert publish_identity_domain_event(event.id) is True
+            expected_to = "identity@example.com"
 
         delay.assert_called_once()
         payload = delay.call_args.kwargs
@@ -162,6 +168,24 @@ def _document_event(event_type: str) -> DocumentDomainEventOutbox:
     )
 
 
+def _identity_event(event_type: str) -> IdentityDomainEventOutbox:
+    user = User.objects.create_user(
+        email="identity@example.com",
+        password="pass",
+        first_name="Identity",
+        last_name="User",
+        role="planner",
+    )
+    return IdentityDomainEventOutbox.objects.create(
+        event_id=uuid.uuid4(),
+        aggregate_id=user.id,
+        aggregate_version=0,
+        event_type=event_type,
+        occurred_at=timezone.now(),
+        payload={"user_id": str(user.id)},
+    )
+
+
 def _assert_context_shape(event_type: str, context: dict) -> None:
     if event_type == "InquiryReceived":
         assert set(context) == {"business_name", "client_name", "cta_url"}
@@ -174,6 +198,9 @@ def _assert_context_shape(event_type: str, context: dict) -> None:
         assert set(context) == {"payment_reference", "amount", "currency", "status", "cta_url"}
         assert context["amount"] == "15000"
         assert context["currency"] == "RWF"
+    elif event_type.startswith("User"):
+        assert set(context) == {"email", "cta_url"}
+        assert context["email"] == "identity@example.com"
     else:
         assert set(context) == {"event_name", "export_type", "file_url", "cta_url"}
         assert context["event_name"] == "Wedding"
