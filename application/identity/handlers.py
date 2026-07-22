@@ -57,14 +57,16 @@ class IdentityCommandHandlers:
         oauth_repo: IOAuthTokenRepository,
         password_hasher,  # Infrastructure adapter injected
         token_service,    # Infrastructure adapter for JWT
+        session_store,
         event_dispatcher, # Infrastructure event bus
     ):
         self.user_repo = user_repo
         self.oauth_repo = oauth_repo
         self.password_hasher = password_hasher
         self.token_service = token_service
+        self.session_store = session_store
         self.event_dispatcher = event_dispatcher
-        self.auth_policy = IdentityAuthenticationPolicy(token_service)
+        self.auth_policy = IdentityAuthenticationPolicy(token_service, session_store)
 
     def _dispatch_recorded_events(self, user: User) -> None:
         for event in user.pull_events():

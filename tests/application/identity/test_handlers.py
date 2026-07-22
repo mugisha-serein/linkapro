@@ -44,25 +44,32 @@ def mock_token_service():
     return service
 
 @pytest.fixture
+def mock_session_store():
+    store = Mock()
+    store.create_identity_session.return_value = "session-id"
+    return store
+
+
+@pytest.fixture
 def mock_event_dispatcher():
     return Mock()
 
 
-@pytest.fixture(autouse=True)
-def mock_identity_session(monkeypatch):
-    monkeypatch.setattr(
-        "application.identity.auth_policy.create_identity_session",
-        lambda *, user_id, token_family: "session-id",
-    )
-
-
 @pytest.fixture
-def handlers(mock_user_repo, mock_oauth_repo, mock_password_hasher, mock_token_service, mock_event_dispatcher):
+def handlers(
+    mock_user_repo,
+    mock_oauth_repo,
+    mock_password_hasher,
+    mock_token_service,
+    mock_session_store,
+    mock_event_dispatcher,
+):
     return IdentityCommandHandlers(
         user_repo=mock_user_repo,
         oauth_repo=mock_oauth_repo,
         password_hasher=mock_password_hasher,
         token_service=mock_token_service,
+        session_store=mock_session_store,
         event_dispatcher=mock_event_dispatcher,
     )
 

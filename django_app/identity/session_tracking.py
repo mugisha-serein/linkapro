@@ -3,8 +3,9 @@ from __future__ import annotations
 from django.db import IntegrityError
 from django.utils import timezone
 
+from application.identity.ports import SESSION_ID_CLAIM
+
 DEFAULT_DEVICE_LABEL = "Unknown device"
-SESSION_ID_CLAIM = "session_id"
 
 
 def create_identity_session(
