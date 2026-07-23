@@ -58,6 +58,9 @@ TOKEN_ENV = os.environ.get("TOKEN_ENV", "production").strip()
 if not TOKEN_ENV:
     raise ImproperlyConfigured("TOKEN_ENV must be set for production identity tokens.")
 
+if not PASSWORD_RESET_HASH_KEY:
+    raise ImproperlyConfigured("PASSWORD_RESET_HASH_KEY must be set")
+
 _missing_vault_settings = [
     name
     for name in ("VAULT_ADDR", "VAULT_ROLE_ID", "VAULT_SECRET_ID", "VAULT_TRANSIT_KEY_NAME")

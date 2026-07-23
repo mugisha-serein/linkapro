@@ -461,6 +461,7 @@ Required worker/beat environment variables:
 DJANGO_SETTINGS_MODULE=django_app.settings.production
 DJANGO_SECRET_KEY=<production-secret>
 TOKEN_ENV=production
+PASSWORD_RESET_HASH_KEY=<strong-dedicated-hmac-key>
 DATABASE_URL=<production-database-url>
 DATABASE_SSL=true
 REDIS_URL=<redis-or-rediss-url>
@@ -578,6 +579,7 @@ Required Render environment variables for Django web, Celery Worker, and Celery 
 
 ```env
 TOKEN_ENV=production
+PASSWORD_RESET_HASH_KEY=<strong-dedicated-hmac-key>
 SENDGRID_API_KEY=<sendgrid-api-key>
 DEFAULT_FROM_EMAIL=no-reply@linkapro.rw
 FRONTEND_URL=https://www.linkapro.rw

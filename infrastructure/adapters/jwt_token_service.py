@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone as django_timezone
 from rest_framework_simplejwt.tokens import (
     AccessToken as SimpleAccessToken,
@@ -295,7 +296,10 @@ def _timestamp_to_datetime(timestamp_value) -> Optional[datetime]:
 
 
 def password_reset_value_hash(value: str) -> str:
-    key = str(getattr(settings, "PASSWORD_RESET_HASH_KEY", "") or settings.SECRET_KEY).encode("utf-8")
+    hash_key = str(getattr(settings, "PASSWORD_RESET_HASH_KEY", "") or "").strip()
+    if not hash_key:
+        raise ImproperlyConfigured("PASSWORD_RESET_HASH_KEY must be set")
+    key = hash_key.encode("utf-8")
     return hmac.new(key, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
 

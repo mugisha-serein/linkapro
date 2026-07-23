@@ -237,6 +237,7 @@ JWE_PRIVATE_KEY = os.environ.get("JWE_PRIVATE_KEY", "")
 
 PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
 EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
+PASSWORD_RESET_HASH_KEY = os.environ.get("PASSWORD_RESET_HASH_KEY", "").strip()
 
 
 def _default_token_env() -> str:
