@@ -253,7 +253,7 @@ TOKEN_ENV = os.environ.get(
     os.environ.get("APP_ENV", os.environ.get("DJANGO_ENV", _default_token_env())),
 )
 ACCEPT_LEGACY_PAYMENT_ENV_TOKENS = (
-    os.environ.get("ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", "true").lower() == "true"
+    os.environ.get("ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", "false").lower() == "true"
 )
 
 # Celery

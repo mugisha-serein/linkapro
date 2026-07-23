@@ -270,7 +270,7 @@ def accepted_identity_token_env(token_env: str | None, context: str) -> Optional
         return expected_env
 
     legacy_env = getattr(settings, "PAYMENT_ENV", None)
-    allow_legacy_payment_env = bool(getattr(settings, "ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", True))
+    allow_legacy_payment_env = bool(getattr(settings, "ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", False))
     if allow_legacy_payment_env and legacy_env and token_env == legacy_env:
         logger.warning(
             "legacy_payment_env_token_accepted_for_identity",
