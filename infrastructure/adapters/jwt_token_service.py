@@ -239,6 +239,7 @@ class JWTTokenService:
         payload = {
             "user_id": user_id,
             "purpose": "2fa",
+            "jti": str(uuid.uuid4()),
             "env": self._token_env(),
             "exp": now + timedelta(minutes=3),
             "iat": now,

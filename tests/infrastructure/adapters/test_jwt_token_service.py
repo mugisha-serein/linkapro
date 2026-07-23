@@ -124,6 +124,7 @@ def test_email_verification_and_temp_tokens_use_token_env():
     temp_payload = jwt.decode(temp_token, settings.SECRET_KEY, algorithms=["HS256"])
     assert email_payload["env"] == "identity-prod"
     assert temp_payload["env"] == "identity-prod"
+    assert temp_payload["jti"]
     assert service.verify_email_verification_token(email_token) == "user-123"
     assert service.verify_temp_token(temp_token)["user_id"] == "user-123"
 
