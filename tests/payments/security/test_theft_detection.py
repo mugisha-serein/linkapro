@@ -22,7 +22,7 @@ class TestTheftDetection:
         mock = MagicMock()
         mock.is_token_revoked_for_user.return_value = False
         mock.token_version_matches_active_user.return_value = True
-        mock.active_user_bootstrap_claims.side_effect = (
+        mock.get_bootstrap_claims.side_effect = (
             lambda user_id, session_id=None: {
                 "id": str(user_id),
                 "email": "user@example.com",

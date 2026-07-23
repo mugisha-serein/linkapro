@@ -29,7 +29,7 @@ class ISessionStore(Protocol):
     def token_version_matches_active_user(self, user_id, token_version) -> bool:
         ...
 
-    def active_user_bootstrap_claims(self, user_id, session_id: str | None = None) -> dict | None:
+    def get_bootstrap_claims(self, user_id, session_id: str | None = None) -> dict | None:
         ...
 
     def revoke_identity_session(

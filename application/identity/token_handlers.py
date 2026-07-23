@@ -88,7 +88,7 @@ class TokenCommandHandlers:
         # Blacklist the used refresh token
         self.blacklist.blacklist(jti, ttl=self._remaining_ttl(token))
 
-        bootstrap_claims = self.session_store.active_user_bootstrap_claims(user_id, session_id)
+        bootstrap_claims = self.session_store.get_bootstrap_claims(user_id, session_id)
         if not bootstrap_claims:
             raise ValueError("User is no longer active")
 
