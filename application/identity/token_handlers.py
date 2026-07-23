@@ -11,7 +11,6 @@ from application.identity.ports import (
     ISessionStore,
     SESSION_ID_CLAIM,
 )
-from payments.domain.step_up_policy import StepUpPolicy, StepUpPolicyResult
 from infrastructure.adapters.jwt_token_service import accepted_identity_token_env, identity_token_env
 
 

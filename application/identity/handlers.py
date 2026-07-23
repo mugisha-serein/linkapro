@@ -52,7 +52,7 @@ from .errors import (
     UserNotFoundError,
 )
 from .mappers import to_user_dto
-from .queries import GetUserByIdQuery, GetUserByEmailQuery
+from .queries import GetUserByIdQuery
 
 
 TOTP_REPLAY_TTL_SECONDS = 90
@@ -384,12 +384,6 @@ class IdentityQueryHandlers:
 
     def get_user_by_id(self, query: GetUserByIdQuery) -> Optional[UserDTO]:
         user = self.user_repo.get_by_id(query.user_id)
-        if not user:
-            return None
-        return to_user_dto(user)
-
-    def get_user_by_email(self, query: GetUserByEmailQuery) -> Optional[UserDTO]:
-        user = self.user_repo.get_by_email(query.email)
         if not user:
             return None
         return to_user_dto(user)
