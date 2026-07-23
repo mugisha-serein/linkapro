@@ -7,6 +7,9 @@ avoids a second password path that could drift from the canonical security
 controls.
 """
 
+import hashlib
+import time
+
 from django.core.cache import cache
 
 import pyotp
@@ -59,6 +62,21 @@ def _totp_used_cache_key(user_id, token: str) -> str:
     return f"totp_used_{user_id}_{token}"
 
 
+def _temp_token_blacklist_key(payload: dict, temp_token: str) -> str:
+    jti = payload.get("jti")
+    if jti:
+        return str(jti)
+    token_hash = hashlib.sha256(temp_token.encode("utf-8")).hexdigest()
+    return f"temp:{token_hash}"
+
+
+def _temp_token_blacklist_ttl(payload: dict) -> int:
+    exp = payload.get("exp")
+    if exp is None:
+        return 180
+    return max(int(float(exp) - time.time()), 1)
+
+
 class IdentityCommandHandlers:
     """Orchestrates identity write operations."""
 
@@ -69,6 +87,7 @@ class IdentityCommandHandlers:
         password_hasher,  # Infrastructure adapter injected
         token_service,    # Infrastructure adapter for JWT
         session_store,
+        token_blacklist,
         event_dispatcher, # Infrastructure event bus
     ):
         self.user_repo = user_repo
@@ -76,6 +95,7 @@ class IdentityCommandHandlers:
         self.password_hasher = password_hasher
         self.token_service = token_service
         self.session_store = session_store
+        self.token_blacklist = token_blacklist
         self.event_dispatcher = event_dispatcher
         self.auth_policy = IdentityAuthenticationPolicy(token_service, session_store)
 
@@ -312,6 +332,11 @@ class IdentityCommandHandlers:
             return AuthenticationDecision(
                 status=AuthenticationStatus.INVALID_TEMP_TOKEN
             )
+        temp_token_key = _temp_token_blacklist_key(payload, cmd.temp_token)
+        if self.token_blacklist.is_blacklisted(temp_token_key):
+            return AuthenticationDecision(
+                status=AuthenticationStatus.INVALID_TEMP_TOKEN
+            )
 
         user_id = uuid.UUID(payload["user_id"])
         user = self.user_repo.get_by_id(user_id)
@@ -346,7 +371,9 @@ class IdentityCommandHandlers:
             UserLoggedIn(user_id=user.id, occurred_at=utc_now())
         )
 
-        return self.auth_policy.issue_authenticated_login(user)
+        decision = self.auth_policy.issue_authenticated_login(user)
+        self.token_blacklist.blacklist(temp_token_key, ttl=_temp_token_blacklist_ttl(payload))
+        return decision
 
 
 class IdentityQueryHandlers:

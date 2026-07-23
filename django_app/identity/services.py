@@ -18,6 +18,7 @@ def get_command_handlers():
         password_hasher=DjangoPasswordHasher(),
         token_service=JWTTokenService(),
         session_store=DjangoIdentitySessionStore(),
+        token_blacklist=RedisTokenBlacklist(),
         event_dispatcher=DjangoIdentityEventOutboxDispatcher(),
     )
 
