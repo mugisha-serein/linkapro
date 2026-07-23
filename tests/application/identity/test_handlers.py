@@ -6,10 +6,11 @@ from unittest.mock import Mock, ANY
 
 from domain.identity.entities import User, UserRole, OAuthToken
 from domain.identity.events import UserDeactivated, UserTwoFactorEnabled
-from domain.identity.value_objects import Email, PasswordHash, PlainPassword, OAuthProvider
+from domain.identity.value_objects import Email, PasswordHash, PlainPassword, OAuthProvider, TOTPSecret
 from application.identity.commands import (
     RegisterUserCommand,
     LoginUserCommand,
+    LoginTwoFactorCommand,
     OAuthLoginCommand,
     UpdateProfileCommand,
     DeactivateUserCommand,
@@ -387,18 +388,48 @@ class TestTwoFactorSetup:
         secret = pyotp.random_base32()
         token = pyotp.TOTP(secret).now()
         mock_user_repo.get_by_id.return_value = user
-        monkeypatch.setattr("application.identity.handlers.cache.get", lambda key: secret)
+        monkeypatch.setattr(
+            "application.identity.handlers.cache.get",
+            lambda key: secret if key == f"totp_setup_{user.id}" else None,
+        )
+        cache_set = Mock()
+        monkeypatch.setattr("application.identity.handlers.cache.set", cache_set)
         monkeypatch.setattr("application.identity.handlers.cache.delete", Mock())
 
         handlers.verify_two_factor_setup(VerifyTwoFactorSetupCommand(user_id=user.id, token=token))
 
         assert user.two_factor_enabled is True
+        cache_set.assert_called_once_with(f"totp_used_{user.id}_{token}", "1", timeout=90)
         mock_user_repo.set_totp_secret.assert_called_once()
         mock_user_repo.save.assert_called_once_with(user)
         event = mock_event_dispatcher.dispatch.call_args.args[0]
         assert isinstance(event, UserTwoFactorEnabled)
         assert event.user_id == user.id
         assert event.auth_token_version == user.auth_token_version
+
+    def test_verify_setup_rejects_replayed_totp_token(self, handlers, mock_user_repo, monkeypatch):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("mfa@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="MFA",
+            last_name="User",
+            role=UserRole.PLANNER,
+        )
+        secret = pyotp.random_base32()
+        token = pyotp.TOTP(secret).now()
+        mock_user_repo.get_by_id.return_value = user
+        monkeypatch.setattr(
+            "application.identity.handlers.cache.get",
+            lambda key: secret if key == f"totp_setup_{user.id}" else "1",
+        )
+        cache_set = Mock()
+        monkeypatch.setattr("application.identity.handlers.cache.set", cache_set)
+
+        with pytest.raises(InvalidTwoFactorCodeError, match="Invalid TOTP token"):
+            handlers.verify_two_factor_setup(VerifyTwoFactorSetupCommand(user_id=user.id, token=token))
+
+        cache_set.assert_not_called()
 
     def test_verify_setup_invalid_token_raises_typed_error(self, handlers, mock_user_repo, monkeypatch):
         user = User(
@@ -415,3 +446,27 @@ class TestTwoFactorSetup:
 
         with pytest.raises(InvalidTwoFactorCodeError, match="Invalid TOTP token"):
             handlers.verify_two_factor_setup(VerifyTwoFactorSetupCommand(user_id=user.id, token="000000"))
+
+    def test_login_two_factor_rejects_replayed_totp_token(self, handlers, mock_user_repo, mock_token_service, monkeypatch):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("mfa-login@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="MFA",
+            last_name="Login",
+            role=UserRole.PLANNER,
+        )
+        secret = pyotp.random_base32()
+        token = pyotp.TOTP(secret).now()
+        mock_token_service.verify_temp_token.return_value = {"user_id": str(user.id)}
+        mock_user_repo.get_by_id.return_value = user
+        mock_user_repo.get_totp_secret.return_value = TOTPSecret(secret)
+        monkeypatch.setattr("application.identity.handlers.cache.get", lambda key: "1")
+        cache_set = Mock()
+        monkeypatch.setattr("application.identity.handlers.cache.set", cache_set)
+
+        result = handlers.login_two_factor(LoginTwoFactorCommand(temp_token="temp", token=token))
+
+        assert result.status is AuthenticationStatus.INVALID_MFA_CODE
+        cache_set.assert_not_called()
+        mock_user_repo.save.assert_not_called()

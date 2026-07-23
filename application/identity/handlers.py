@@ -52,6 +52,11 @@ from .mappers import to_user_dto
 from .queries import GetUserByIdQuery, GetUserByEmailQuery
 
 
+TOTP_REPLAY_TTL_SECONDS = 90
+
+
+def _totp_used_cache_key(user_id, token: str) -> str:
+    return f"totp_used_{user_id}_{token}"
 
 
 class IdentityCommandHandlers:
@@ -288,6 +293,10 @@ class IdentityCommandHandlers:
         totp = pyotp.TOTP(secret)
         if not totp.verify(cmd.token):
             raise InvalidTwoFactorCodeError("Invalid TOTP token")
+        used_key = _totp_used_cache_key(user.id, cmd.token)
+        if cache.get(used_key):
+            raise InvalidTwoFactorCodeError("Invalid TOTP token")
+        cache.set(used_key, "1", timeout=TOTP_REPLAY_TTL_SECONDS)
 
         # Store the secret permanently and enable 2FA
         self.user_repo.set_totp_secret(user.id, TOTPSecret(secret))
@@ -323,6 +332,12 @@ class IdentityCommandHandlers:
             return AuthenticationDecision(
                 status=AuthenticationStatus.INVALID_MFA_CODE
             )
+        used_key = _totp_used_cache_key(user.id, cmd.token)
+        if cache.get(used_key):
+            return AuthenticationDecision(
+                status=AuthenticationStatus.INVALID_MFA_CODE
+            )
+        cache.set(used_key, "1", timeout=TOTP_REPLAY_TTL_SECONDS)
 
         user.record_login()
         self.user_repo.save(user)
