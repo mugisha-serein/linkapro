@@ -42,6 +42,12 @@ from .commands import (
     VerifyTwoFactorSetupCommand,
 )
 from .dtos import TwoFactorSetupDTO, UserDTO
+from .errors import (
+    DuplicateUserError,
+    InvalidCredentialsError,
+    InvalidTwoFactorCodeError,
+    UserNotFoundError,
+)
 from .mappers import to_user_dto
 from .queries import GetUserByIdQuery, GetUserByEmailQuery
 
@@ -76,7 +82,7 @@ class IdentityCommandHandlers:
         # Check if email already exists
         existing = self.user_repo.get_by_email(cmd.email)
         if existing:
-            raise ValueError("User with this email already exists")
+            raise DuplicateUserError("User with this email already exists")
 
         # Hash password
         hashed = self.password_hasher.hash(cmd.plain_password)
@@ -135,7 +141,7 @@ class IdentityCommandHandlers:
             # Existing OAuth user: retrieve user and update token
             user = self.user_repo.get_by_id(oauth_token.user_id)
             if not user:
-                raise ValueError("User not found")
+                raise UserNotFoundError("User not found")
         else:
             # New OAuth user: check if email exists
             user = self.user_repo.get_by_email(cmd.email)
@@ -143,7 +149,7 @@ class IdentityCommandHandlers:
                 # Existing email: link OAuth to existing user (if allowed)
                 # For simplicity, we'll raise error if user exists but no OAuth link
                 # In real scenario, you might want to link automatically or prompt user.
-                raise ValueError("Email already registered. Please log in with password or link account.")
+                raise DuplicateUserError("Email already registered. Please log in with password or link account.")
             else:
                 # Create new user
                 user = User.register_new(
@@ -212,12 +218,12 @@ class IdentityCommandHandlers:
     def verify_email(self, cmd: VerifyEmailCommand) -> None:
         user_id_str = self.token_service.verify_email_verification_token(cmd.verification_token)
         if not user_id_str:
-            raise ValueError("Invalid or expired verification token")
+            raise InvalidCredentialsError("Invalid or expired verification token")
 
         user_id = uuid.UUID(user_id_str)
         user = self.user_repo.get_by_id(user_id)
         if not user:
-            raise ValueError("User not found")
+            raise UserNotFoundError("User not found")
 
         user.mark_verified()
         self.user_repo.save(user)
@@ -226,7 +232,7 @@ class IdentityCommandHandlers:
     def update_profile(self, cmd: UpdateProfileCommand) -> UserDTO:
         user = self.user_repo.get_by_id(cmd.user_id)
         if not user:
-            raise ValueError("User not found")
+            raise UserNotFoundError("User not found")
 
         user.update_profile(first_name=cmd.first_name, last_name=cmd.last_name)
 
@@ -236,7 +242,7 @@ class IdentityCommandHandlers:
     def deactivate_user(self, cmd: DeactivateUserCommand) -> None:
         user = self.user_repo.get_by_id(cmd.user_id)
         if not user:
-            raise ValueError("User not found")
+            raise UserNotFoundError("User not found")
 
         user.deactivate()
         self.user_repo.save(user)
@@ -245,7 +251,7 @@ class IdentityCommandHandlers:
     def enable_two_factor(self, cmd: EnableTwoFactorCommand) -> TwoFactorSetupDTO:
         user = self.user_repo.get_by_id(cmd.user_id)
         if not user:
-            raise ValueError("User not found")
+            raise UserNotFoundError("User not found")
 
         # Generate new TOTP secret
         secret = pyotp.random_base32()
@@ -273,15 +279,15 @@ class IdentityCommandHandlers:
     def verify_two_factor_setup(self, cmd: VerifyTwoFactorSetupCommand) -> None:
         user = self.user_repo.get_by_id(cmd.user_id)
         if not user:
-            raise ValueError("User not found")
+            raise UserNotFoundError("User not found")
 
         secret = cache.get(f"totp_setup_{user.id}")
         if not secret:
-            raise ValueError("TOTP setup expired or not initiated")
+            raise InvalidTwoFactorCodeError("TOTP setup expired or not initiated")
 
         totp = pyotp.TOTP(secret)
         if not totp.verify(cmd.token):
-            raise ValueError("Invalid TOTP token")
+            raise InvalidTwoFactorCodeError("Invalid TOTP token")
 
         # Store the secret permanently and enable 2FA
         self.user_repo.set_totp_secret(user.id, TOTPSecret(secret))

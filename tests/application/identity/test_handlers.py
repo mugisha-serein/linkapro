@@ -15,6 +15,11 @@ from application.identity.commands import (
     DeactivateUserCommand,
     VerifyTwoFactorSetupCommand,
 )
+from application.identity.errors import (
+    DuplicateUserError,
+    InvalidTwoFactorCodeError,
+    UserNotFoundError,
+)
 from application.identity.handlers import IdentityCommandHandlers
 from application.identity.dtos import UserDTO
 from application.identity.auth_policy import AuthenticationDecision, AuthenticationStatus
@@ -133,7 +138,7 @@ class TestRegisterUser:
             role="planner",
         )
 
-        with pytest.raises(ValueError, match="already exists"):
+        with pytest.raises(DuplicateUserError, match="already exists"):
             handlers.register_user(cmd)
 
 
@@ -296,6 +301,12 @@ class TestOAuthLogin:
 
 
 class TestUpdateProfile:
+    def test_missing_user_raises_typed_error(self, handlers, mock_user_repo):
+        mock_user_repo.get_by_id.return_value = None
+
+        with pytest.raises(UserNotFoundError, match="User not found"):
+            handlers.update_profile(UpdateProfileCommand(user_id=uuid.uuid4(), first_name="New"))
+
     def test_update_fields(self, handlers, mock_user_repo):
         user = User(
             id=uuid.uuid4(),
@@ -388,3 +399,19 @@ class TestTwoFactorSetup:
         assert isinstance(event, UserTwoFactorEnabled)
         assert event.user_id == user.id
         assert event.auth_token_version == user.auth_token_version
+
+    def test_verify_setup_invalid_token_raises_typed_error(self, handlers, mock_user_repo, monkeypatch):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("mfa@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="MFA",
+            last_name="User",
+            role=UserRole.PLANNER,
+        )
+        secret = pyotp.random_base32()
+        mock_user_repo.get_by_id.return_value = user
+        monkeypatch.setattr("application.identity.handlers.cache.get", lambda key: secret)
+
+        with pytest.raises(InvalidTwoFactorCodeError, match="Invalid TOTP token"):
+            handlers.verify_two_factor_setup(VerifyTwoFactorSetupCommand(user_id=user.id, token="000000"))
