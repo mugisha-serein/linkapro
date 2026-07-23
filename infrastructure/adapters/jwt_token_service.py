@@ -145,10 +145,6 @@ class JWTTokenService:
         )
         return token
 
-    def verify_password_reset_token(self, token_str: str) -> Optional[str]:
-        payload = self.decode_password_reset_token_payload(token_str)
-        return payload.get("user_id") if payload else None
-
     def decode_password_reset_token_payload(self, token_str: str) -> Optional[dict]:
         try:
             payload = jwt.decode(
