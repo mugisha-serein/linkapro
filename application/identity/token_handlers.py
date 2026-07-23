@@ -1,28 +1,24 @@
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from typing import Tuple
 
 from django.conf import settings
 from django.core.cache import cache
 
-from django_app.identity.session_revocation import (
+from application.identity.ports import (
     AUTH_TOKEN_VERSION_CLAIM,
-    is_token_revoked_for_user,
-    token_version_matches_active_user,
-)
-from django_app.identity.session_tracking import (
+    ITokenBlacklist,
+    ISessionStore,
     SESSION_ID_CLAIM,
-    revoke_identity_session,
-    touch_identity_session,
 )
-from application.identity.ports import ITokenBlacklist
 from payments.domain.step_up_policy import StepUpPolicy, StepUpPolicyResult
 from infrastructure.adapters.jwt_token_service import accepted_identity_token_env, identity_token_env
 
 
 class TokenCommandHandlers:
-    def __init__(self, blacklist: ITokenBlacklist):
+    def __init__(self, blacklist: ITokenBlacklist, session_store: ISessionStore):
         self.blacklist = blacklist
+        self.session_store = session_store
 
     def _token_env(self) -> str:
         return identity_token_env()
@@ -57,27 +53,45 @@ class TokenCommandHandlers:
         if self.blacklist.is_blacklisted(jti):
             # Token reuse = possible theft → blacklist whole family
             self.blacklist.blacklist_family(family)
-            revoke_identity_session(session_id=session_id, token_family=family, reason="refresh_reuse_detected")
+            self.session_store.revoke_identity_session(
+                session_id=session_id,
+                token_family=family,
+                reason="refresh_reuse_detected",
+            )
             raise ValueError("Token has been revoked")
         if self.blacklist.is_family_blacklisted(family):
             self.blacklist.blacklist(jti, ttl=self._remaining_ttl(token))
-            revoke_identity_session(session_id=session_id, token_family=family, reason="token_family_revoked")
+            self.session_store.revoke_identity_session(
+                session_id=session_id,
+                token_family=family,
+                reason="token_family_revoked",
+            )
             raise ValueError("Token family has been revoked")
-        if is_token_revoked_for_user(user_id, issued_at):
+        if self.session_store.is_token_revoked_for_user(user_id, issued_at):
             self.blacklist.blacklist_family(family)
-            revoke_identity_session(session_id=session_id, token_family=family, reason="user_sessions_revoked")
+            self.session_store.revoke_identity_session(
+                session_id=session_id,
+                token_family=family,
+                reason="user_sessions_revoked",
+            )
             raise ValueError("Token has been revoked")
-        if not token_version_matches_active_user(user_id, token_version):
+        if not self.session_store.token_version_matches_active_user(user_id, token_version):
             self.blacklist.blacklist_family(family)
-            revoke_identity_session(session_id=session_id, token_family=family, reason="session_version_mismatch")
+            self.session_store.revoke_identity_session(
+                session_id=session_id,
+                token_family=family,
+                reason="session_version_mismatch",
+            )
             raise ValueError("Token session is no longer valid")
 
-        touch_identity_session(session_id, family)
+        self.session_store.touch_identity_session(session_id, family)
 
         # Blacklist the used refresh token
         self.blacklist.blacklist(jti, ttl=self._remaining_ttl(token))
 
-        bootstrap_claims = self._fresh_bootstrap_claims(user_id, session_id)
+        bootstrap_claims = self.session_store.active_user_bootstrap_claims(user_id, session_id)
+        if not bootstrap_claims:
+            raise ValueError("User is no longer active")
 
         # Generate new tokens with same security claims (but fresh user bootstrap claims and new jti)
         new_refresh = RefreshToken()
@@ -129,7 +143,11 @@ class TokenCommandHandlers:
         ttl = self._remaining_ttl(token)
         self.blacklist.blacklist(jti, ttl=ttl)
         self.blacklist.blacklist_family(family)
-        revoke_identity_session(session_id=session_id, token_family=family, reason="user_signed_out")
+        self.session_store.revoke_identity_session(
+            session_id=session_id,
+            token_family=family,
+            reason="user_signed_out",
+        )
 
     def issue_step_up_token(self, user_id: str, original_token: dict) -> str:
         """Issue a short‑lived (5 min) access token with step_up=True."""
@@ -161,39 +179,6 @@ class TokenCommandHandlers:
         expires_at = datetime.fromtimestamp(int(token["exp"]), tz=timezone.utc)
         ttl = int((expires_at - datetime.now(timezone.utc)).total_seconds())
         return max(ttl, 1)
-
-    @staticmethod
-    def _fresh_bootstrap_claims(user_id, session_id: str | None = None) -> dict:
-        from django_app.identity.models import User
-
-        user = User.objects.filter(id=user_id, is_active=True).first()
-        if not user:
-            raise ValueError("User is no longer active")
-
-        has_password = bool(user.password)
-        display_name = f"{user.first_name} {user.last_name}".strip() or user.email
-        claims = {
-            "id": str(user.id),
-            "email": user.email,
-            "role": user.role,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "display_name": display_name,
-            "avatar": None,
-            "created_at": user.created_at.isoformat() if user.created_at else None,
-            "last_login": user.last_login.isoformat() if user.last_login else None,
-            "is_active": user.is_active,
-            "is_verified": user.is_verified,
-            "has_password": has_password,
-            "requires_password_setup": not has_password,
-            "two_factor_enabled": user.two_factor_enabled,
-            AUTH_TOKEN_VERSION_CLAIM: user.auth_token_version,
-            "is_authenticated": True,
-            "onboarding_complete": bool(user.is_verified and has_password),
-        }
-        if session_id:
-            claims[SESSION_ID_CLAIM] = str(session_id)
-        return claims
 
     @staticmethod
     def _bootstrap_claims(token) -> dict:
