@@ -87,8 +87,9 @@ class OAuthToken(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="oauth_tokens")
     provider = models.CharField(max_length=20, choices=Provider.choices)
     provider_user_id = models.CharField(max_length=255)
-    access_token = models.TextField()
-    refresh_token = models.TextField(blank=True, null=True)
+    encrypted_access_token = models.JSONField()
+    encrypted_refresh_token = models.JSONField(blank=True, null=True)
+    dek_encrypted = models.BinaryField(null=True, blank=True)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(default=timezone.now)
 

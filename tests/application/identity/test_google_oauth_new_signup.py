@@ -5,10 +5,18 @@ from infrastructure.adapters.django_identity_session_store import DjangoIdentity
 from infrastructure.adapters.jwt_token_service import JWTTokenService
 from infrastructure.repos.django_oauth_token_repository import DjangoOAuthTokenRepository
 from infrastructure.repos.django_user_repository import DjangoUserRepository
-from django_app.identity.models import User as DjangoUser
+from django_app.identity.models import OAuthToken as DjangoOAuthToken, User as DjangoUser
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+class _KeyProvider:
+    def wrap_dek(self, dek: bytes) -> bytes:
+        return dek
+
+    def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
+        return encrypted_dek
 
 
 class _Dispatcher:
@@ -23,7 +31,7 @@ def test_new_google_email_creates_user_and_returns_session_tokens():
     dispatcher = _Dispatcher()
     use_case = GoogleLoginUseCase(
         user_repo=DjangoUserRepository(),
-        oauth_repo=DjangoOAuthTokenRepository(),
+        oauth_repo=DjangoOAuthTokenRepository(key_provider=_KeyProvider()),
         token_service=JWTTokenService(),
         session_store=DjangoIdentitySessionStore(),
         event_dispatcher=dispatcher,
@@ -44,6 +52,7 @@ def test_new_google_email_creates_user_and_returns_session_tokens():
     )
 
     created_user = DjangoUser.objects.get(email="google-new@example.com")
+    saved_oauth_token = DjangoOAuthToken.objects.get(user=created_user, provider="google")
 
     assert result.requires_2fa is False
     assert result.access
@@ -51,3 +60,5 @@ def test_new_google_email_creates_user_and_returns_session_tokens():
     assert result.bootstrap_user["email"] == "google-new@example.com"
     assert created_user.role == "planner"
     assert created_user.is_verified is True
+    assert saved_oauth_token.encrypted_access_token["ciphertext"] != "google-access-token"
+    assert saved_oauth_token.encrypted_refresh_token["ciphertext"] != "google-refresh-token"
