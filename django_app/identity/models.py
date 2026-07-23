@@ -34,7 +34,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     first_name = models.CharField(max_length=150)
     last_name = models.CharField(max_length=150)
     role = models.CharField(max_length=20, choices=Role.choices)
-    totp_secret = models.CharField(max_length=32, blank=True, null=True)
+    totp_secret = models.JSONField(blank=True, null=True)
     two_factor_enabled = models.BooleanField(default=False)
     auth_token_version = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)

@@ -21,6 +21,10 @@ def _production_env(**overrides):
             "SENDGRID_API_KEY": "sendgrid-key",
             "DEFAULT_FROM_EMAIL": "no-reply@linkapro.rw",
             "FRONTEND_URL": "https://www.linkapro.rw",
+            "VAULT_ADDR": "http://vault:8200",
+            "VAULT_ROLE_ID": "role-id",
+            "VAULT_SECRET_ID": "secret-id",
+            "VAULT_TRANSIT_KEY_NAME": "linkapro-payments-kek",
         }
     )
     for key, value in overrides.items():
@@ -108,6 +112,16 @@ def test_production_settings_pass_with_required_email_env():
 
     assert result.returncode == 0, result.stderr
     assert "ok" in result.stdout
+
+
+def test_production_settings_raise_if_vault_addr_missing():
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(VAULT_ADDR=None),
+    )
+
+    assert result.returncode != 0
+    assert "VAULT_ADDR must be set for production field encryption." in result.stderr
 
 
 def test_production_settings_default_token_env_is_production():

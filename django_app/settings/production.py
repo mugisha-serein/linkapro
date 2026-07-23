@@ -58,6 +58,16 @@ TOKEN_ENV = os.environ.get("TOKEN_ENV", "production").strip()
 if not TOKEN_ENV:
     raise ImproperlyConfigured("TOKEN_ENV must be set for production identity tokens.")
 
+_missing_vault_settings = [
+    name
+    for name in ("VAULT_ADDR", "VAULT_ROLE_ID", "VAULT_SECRET_ID", "VAULT_TRANSIT_KEY_NAME")
+    if not str(globals().get(name, "") or "").strip()
+]
+if _missing_vault_settings:
+    raise ImproperlyConfigured(
+        f"{', '.join(_missing_vault_settings)} must be set for production field encryption."
+    )
+
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.sendgrid.net")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))

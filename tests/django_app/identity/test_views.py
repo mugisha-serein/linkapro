@@ -10,7 +10,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from domain.identity.entities import User, UserRole
-from domain.identity.value_objects import Email, PasswordHash, PlainPassword
+from domain.identity.value_objects import Email, PasswordHash, PlainPassword, TOTPSecret
 from infrastructure.repos.django_user_repository import DjangoUserRepository
 from infrastructure.adapters.password_hasher import DjangoPasswordHasher
 from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_token_hash
@@ -41,6 +41,14 @@ PASSWORD_RESET_TOKEN_INVALID_RESPONSE = {
     "message": "This reset link has expired or is invalid.",
     "field_errors": {"token": ["Invalid or expired reset token."]},
 }
+
+
+class _KeyProvider:
+    def wrap_dek(self, dek: bytes) -> bytes:
+        return dek
+
+    def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
+        return encrypted_dek
 
 
 def _auth_throttle_rates(**overrides):
@@ -90,9 +98,13 @@ class TestIdentityViews:
             def blacklist_family(self, family_id):
                 self.blacklisted_families.add(family_id)
 
+        def django_user_repository_factory():
+            return DjangoUserRepository(key_provider=_KeyProvider())
+
         monkeypatch.setattr("django_app.identity.services.RedisTokenBlacklist", InMemoryTokenBlacklist)
+        monkeypatch.setattr("django_app.identity.services.DjangoUserRepository", django_user_repository_factory)
         cache.clear()
-        self.repo = DjangoUserRepository()
+        self.repo = DjangoUserRepository(key_provider=_KeyProvider())
         self.hasher = DjangoPasswordHasher()
         self.client = APIClient()
 
@@ -366,9 +378,7 @@ class TestIdentityViews:
             last_name="Required",
             role="planner",
         )
-        user.totp_secret = "JBSWY3DPEHPK3PXP"
-        user.two_factor_enabled = True
-        user.save(update_fields=["totp_secret", "two_factor_enabled"])
+        self.repo.set_totp_secret(user.id, TOTPSecret("JBSWY3DPEHPK3PXP"))
 
         response = self.client.post(
             reverse("login"),
@@ -389,9 +399,8 @@ class TestIdentityViews:
             first_name="Mfa",
             last_name="Invalid",
             role="planner",
-            totp_secret="JBSWY3DPEHPK3PXP",
-            two_factor_enabled=True,
         )
+        self.repo.set_totp_secret(user.id, TOTPSecret("JBSWY3DPEHPK3PXP"))
         temp_token = JWTTokenService().create_temp_token(str(user.id))
 
         response = self.client.post(

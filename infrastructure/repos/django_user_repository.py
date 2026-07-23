@@ -1,4 +1,5 @@
 import uuid
+import secrets
 from typing import Optional
 from django.contrib.auth.hashers import is_password_usable
 from django.core.exceptions import ObjectDoesNotExist
@@ -7,9 +8,17 @@ from domain.identity.entities import User as DomainUser, UserRole as DomainRole
 from domain.identity.value_objects import Email, PasswordHash, TOTPSecret
 from domain.identity.interfaces import IUserRepository
 from django_app.identity.models import User as DjangoUser
+from payments.application.ports import IKeyProvider
+from payments.domain.value_objects import EncryptedField
+from payments.helpers.encryption import encrypted_field_from_json, encrypted_field_to_json
+from payments.infrastructure.crypto import decrypt_field, encrypt_field
+from payments.infrastructure.vault_key_provider import VaultKeyProvider
 
 
 class DjangoUserRepository(IUserRepository):
+    def __init__(self, key_provider: Optional[IKeyProvider] = None):
+        self.key_provider = key_provider or VaultKeyProvider()
+
     def get_by_id(self, user_id: uuid.UUID) -> Optional[DomainUser]:
         try:
             user = DjangoUser.objects.get(id=user_id)
@@ -70,8 +79,10 @@ class DjangoUserRepository(IUserRepository):
         )
     
     def set_totp_secret(self, user_id: uuid.UUID, secret: TOTPSecret) -> None:
+        dek = secrets.token_bytes(32)
+        wrapped_dek = self.key_provider.wrap_dek(dek)
         DjangoUser.objects.filter(id=user_id).update(
-            totp_secret=secret.reveal_for_totp_verification(),
+            totp_secret=self._encrypt_secret(secret, dek, wrapped_dek),
             two_factor_enabled=True,
         )
 
@@ -79,7 +90,7 @@ class DjangoUserRepository(IUserRepository):
         try:
             user = DjangoUser.objects.get(id=user_id)
             if user.two_factor_enabled and user.totp_secret:
-                return TOTPSecret(user.totp_secret)
+                return TOTPSecret(self._decrypt_secret(user.totp_secret))
             return None
         except DjangoUser.DoesNotExist:
             return None
@@ -89,3 +100,18 @@ class DjangoUserRepository(IUserRepository):
             totp_secret=None,
             two_factor_enabled=False,
         )
+
+    def _encrypt_secret(self, secret: TOTPSecret, dek: bytes, wrapped_dek: bytes) -> dict:
+        encrypted = encrypt_field(secret.reveal_for_totp_verification().encode("utf-8"), dek)
+        encrypted_with_dek = EncryptedField(
+            ciphertext=encrypted.ciphertext,
+            iv=encrypted.iv,
+            tag=encrypted.tag,
+            dek_encrypted=wrapped_dek,
+        )
+        return encrypted_field_to_json(encrypted_with_dek)
+
+    def _decrypt_secret(self, encrypted_secret: dict) -> str:
+        encrypted = encrypted_field_from_json(encrypted_secret)
+        dek = self.key_provider.unwrap_dek(encrypted.dek_encrypted)
+        return decrypt_field(encrypted, dek).decode("utf-8")
