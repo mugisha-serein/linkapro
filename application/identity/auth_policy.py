@@ -48,17 +48,6 @@ class IdentityAuthenticationPolicy:
             return AuthenticationDecision(AuthenticationStatus.INACTIVE, user=user)
         return self._finalize_login(user)
 
-    def evaluate_two_factor_login(self, user, temp_token: str, token: str, totp_secret: Optional[str]) -> AuthenticationDecision:
-        if not user:
-            return AuthenticationDecision(AuthenticationStatus.INVALID_TEMP_TOKEN)
-        if not user.is_active:
-            return AuthenticationDecision(AuthenticationStatus.INACTIVE, user=user)
-        if not temp_token or not token:
-            return AuthenticationDecision(AuthenticationStatus.INVALID_TEMP_TOKEN)
-        if not totp_secret:
-            return AuthenticationDecision(AuthenticationStatus.INVALID_TEMP_TOKEN, user=user)
-        return self.issue_authenticated_login(user)
-
     def issue_authenticated_login(self, user) -> AuthenticationDecision:
         return self._issue_authenticated_tokens(user)
 
