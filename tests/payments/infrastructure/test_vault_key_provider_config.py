@@ -88,6 +88,23 @@ def test_vault_key_provider_sends_token_header_only_for_authenticated_requests(m
 
     assert "X-Vault-Token" not in calls[0]["headers"]
     assert calls[1]["headers"]["X-Vault-Token"] == "vault-token"
+    assert calls[1]["url"].endswith("/v1/transit/encrypt/linkapro-payments-kek")
+    assert calls[1]["json"]["plaintext"] == base64.b64encode(b"0" * 32).decode("ascii")
+
+
+@pytest.mark.parametrize("bad_dek", [b"short", b"0" * 31, b"0" * 33, "not-bytes"])
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+)
+def test_vault_key_provider_requires_exactly_32_byte_dek(monkeypatch, bad_dek):
+    provider = VaultKeyProvider()
+    monkeypatch.setattr(provider.session, "request", lambda *args, **kwargs: pytest.fail("Vault should not be called"))
+
+    with pytest.raises(KeyProviderError):
+        provider.wrap_dek(bad_dek)
 
 
 @pytest.mark.parametrize(
@@ -165,6 +182,30 @@ def test_vault_key_provider_maps_invalid_response_shapes(monkeypatch, response, 
 
     assert expected_message in str(raised.value)
     assert "raw json body" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "ciphertext",
+    ["not-a-vault-ciphertext", "vault:bad", "vault:", "vault:v1:\N{SNOWMAN}"],
+)
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+)
+def test_vault_key_provider_validates_encrypt_ciphertext_format(monkeypatch, ciphertext):
+    provider = VaultKeyProvider()
+
+    def request(method, url, headers=None, json=None, timeout=None):
+        if url.endswith("/auth/approle/login"):
+            return _Response(payload={"auth": {"client_token": "vault-token", "lease_duration": 300}})
+        return _Response(payload={"data": {"ciphertext": ciphertext}})
+
+    monkeypatch.setattr(provider.session, "request", request)
+
+    with pytest.raises(KeyProviderError, match="ciphertext"):
+        provider.wrap_dek(b"0" * 32)
 
 
 @override_settings(
@@ -311,6 +352,26 @@ def test_vault_key_provider_maps_invalid_base64(monkeypatch):
     VAULT_SECRET_ID="secret-id",
     VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
 )
+def test_vault_key_provider_requires_decrypted_dek_length(monkeypatch):
+    provider = VaultKeyProvider()
+    provider._token = "vault-token"
+    provider._token_expires_at = time.monotonic() + 300
+    monkeypatch.setattr(
+        provider.session,
+        "request",
+        lambda *args, **kwargs: _Response(payload={"data": {"plaintext": base64.b64encode(b"short").decode("ascii")}}),
+    )
+
+    with pytest.raises(KeyProviderError, match="exactly 32 bytes"):
+        provider.unwrap_dek(b"vault:v1:ciphertext")
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+)
 def test_vault_key_provider_rejects_malformed_ciphertext_before_request(monkeypatch):
     provider = VaultKeyProvider()
     provider._token = "vault-token"
@@ -320,3 +381,19 @@ def test_vault_key_provider_rejects_malformed_ciphertext_before_request(monkeypa
 
     with pytest.raises(KeyProviderError, match="malformed"):
         provider.unwrap_dek(b"not-a-vault-ciphertext")
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+)
+def test_vault_key_provider_requires_ciphertext_bytes(monkeypatch):
+    provider = VaultKeyProvider()
+    provider._token = "vault-token"
+    provider._token_expires_at = time.monotonic() + 300
+    monkeypatch.setattr(provider.session, "request", lambda *args, **kwargs: pytest.fail("Vault should not be called"))
+
+    with pytest.raises(KeyProviderError, match="bytes"):
+        provider.unwrap_dek("vault:v1:ciphertext")

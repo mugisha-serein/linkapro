@@ -2,6 +2,7 @@ import base64
 import binascii
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -15,6 +16,7 @@ from payments.application.ports import IKeyProvider
 from payments.application.exceptions import InfrastructureUnavailableError, KeyProviderError
 
 logger = logging.getLogger(__name__)
+VAULT_CIPHERTEXT_RE = re.compile(r"^vault:v\d+:.+$")
 
 
 def _config_value(name: str, default: str = "") -> str:
@@ -41,6 +43,30 @@ def _response_mentions_sealed(data: object) -> bool:
     if not isinstance(errors, list):
         return False
     return any("sealed" in str(error).lower() for error in errors)
+
+
+def _require_bytes(value: object, name: str) -> bytes:
+    if not isinstance(value, bytes):
+        raise KeyProviderError(f"{name} must be bytes")
+    return value
+
+
+def _require_dek(value: object) -> bytes:
+    dek = _require_bytes(value, "DEK")
+    if len(dek) != 32:
+        raise KeyProviderError("DEK must be exactly 32 bytes")
+    return dek
+
+
+def _decode_vault_ciphertext(value: object) -> str:
+    encrypted_dek = _require_bytes(value, "Vault ciphertext")
+    try:
+        ciphertext = encrypted_dek.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise KeyProviderError("Vault ciphertext is not valid ASCII") from exc
+    if not VAULT_CIPHERTEXT_RE.fullmatch(ciphertext):
+        raise KeyProviderError("Vault ciphertext is malformed")
+    return ciphertext
 
 
 class VaultKeyProvider(IKeyProvider):
@@ -191,6 +217,7 @@ class VaultKeyProvider(IKeyProvider):
     )
     def wrap_dek(self, dek: bytes) -> bytes:
         """Encrypt DEK using Vault transit."""
+        dek = _require_dek(dek)
         plaintext_b64 = base64.b64encode(dek).decode('ascii')
         path = f"transit/encrypt/{self.transit_key}"
         payload = {"plaintext": plaintext_b64}
@@ -199,7 +226,12 @@ class VaultKeyProvider(IKeyProvider):
         ciphertext = response_data.get("ciphertext") if isinstance(response_data, dict) else None
         if not ciphertext:
             raise KeyProviderError("Vault encrypt response is missing required fields")
-        return ciphertext.encode('ascii')
+        try:
+            encoded_ciphertext = str(ciphertext).encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise KeyProviderError("Vault encrypt response ciphertext is not valid ASCII") from exc
+        _decode_vault_ciphertext(encoded_ciphertext)
+        return encoded_ciphertext
 
     @retry(
         stop=stop_after_attempt(3),
@@ -209,12 +241,7 @@ class VaultKeyProvider(IKeyProvider):
     )
     def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
         """Decrypt DEK using Vault transit."""
-        try:
-            ciphertext = encrypted_dek.decode('ascii')
-        except UnicodeDecodeError as exc:
-            raise KeyProviderError("Vault ciphertext is not valid ASCII") from exc
-        if not ciphertext.startswith("vault:"):
-            raise KeyProviderError("Vault ciphertext is malformed")
+        ciphertext = _decode_vault_ciphertext(encrypted_dek)
         path = f"transit/decrypt/{self.transit_key}"
         payload = {"ciphertext": ciphertext}
         data = self._make_request("POST", path, payload)
@@ -223,6 +250,9 @@ class VaultKeyProvider(IKeyProvider):
         if not plaintext_b64:
             raise KeyProviderError("Vault decrypt response is missing required fields")
         try:
-            return base64.b64decode(plaintext_b64, validate=True)
+            dek = base64.b64decode(plaintext_b64, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise KeyProviderError("Vault decrypt response contained invalid base64") from exc
+        if len(dek) != 32:
+            raise KeyProviderError("Vault decrypt response DEK must be exactly 32 bytes")
+        return dek
