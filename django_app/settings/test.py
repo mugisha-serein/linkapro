@@ -52,6 +52,7 @@ VAULT_ROLE_ID_FILE = os.environ.get("VAULT_ROLE_ID_FILE", "")
 VAULT_SECRET_ID = os.environ.get("VAULT_SECRET_ID", "")
 VAULT_SECRET_ID_FILE = os.environ.get("VAULT_SECRET_ID_FILE", "")
 VAULT_TRANSIT_KEY_NAME = os.environ.get("VAULT_TRANSIT_KEY_NAME", "linkapro-payments-kek")
+VAULT_TOKEN_RENEWAL_MARGIN_SECONDS = int(os.environ.get("VAULT_TOKEN_RENEWAL_MARGIN_SECONDS", "60"))
 
 # HMAC Key
 PROVIDER_REFERENCE_HMAC_KEY = os.environ.get("PROVIDER_REFERENCE_HMAC_KEY", "change-me-in-production")

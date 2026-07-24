@@ -1,4 +1,5 @@
 import base64
+import time
 
 import pytest
 import requests
@@ -69,15 +70,16 @@ def test_vault_key_provider_prefers_file_credentials(monkeypatch, tmp_path):
     VAULT_SECRET_ID="secret-id",
     VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
     VAULT_NAMESPACE="",
+    VAULT_TOKEN_RENEWAL_MARGIN_SECONDS=60,
 )
 def test_vault_key_provider_sends_token_header_only_for_authenticated_requests(monkeypatch):
     provider = VaultKeyProvider()
     calls = []
 
     def request(method, url, headers=None, json=None, timeout=None):
-        calls.append({"method": method, "url": url, "headers": headers or {}, "json": json, "timeout": timeout})
+        calls.append({"method": method, "url": url, "headers": dict(headers or {}), "json": json, "timeout": timeout})
         if url.endswith("/auth/approle/login"):
-            return _Response(payload={"auth": {"client_token": "vault-token"}})
+            return _Response(payload={"auth": {"client_token": "vault-token", "lease_duration": 300}})
         return _Response(payload={"data": {"ciphertext": "vault:v1:ciphertext"}})
 
     monkeypatch.setattr(provider.session, "request", request)
@@ -170,10 +172,129 @@ def test_vault_key_provider_maps_invalid_response_shapes(monkeypatch, response, 
     VAULT_ROLE_ID="role-id",
     VAULT_SECRET_ID="secret-id",
     VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+    VAULT_TOKEN_RENEWAL_MARGIN_SECONDS=60,
+)
+def test_vault_key_provider_tracks_lease_and_reauthenticates_before_expiry(monkeypatch):
+    provider = VaultKeyProvider()
+    calls = []
+
+    def request(method, url, headers=None, json=None, timeout=None):
+        calls.append({"url": url, "headers": dict(headers or {})})
+        if url.endswith("/auth/approle/login"):
+            token_number = sum(call["url"].endswith("/auth/approle/login") for call in calls)
+            return _Response(payload={"auth": {"client_token": f"vault-token-{token_number}", "lease_duration": 30}})
+        return _Response(payload={"data": {"ciphertext": "vault:v1:ciphertext"}})
+
+    monkeypatch.setattr(provider.session, "request", request)
+
+    provider.wrap_dek(b"0" * 32)
+    provider.wrap_dek(b"1" * 32)
+
+    auth_calls = [call for call in calls if call["url"].endswith("/auth/approle/login")]
+    transit_calls = [call for call in calls if call["url"].endswith("/transit/encrypt/linkapro-payments-kek")]
+    assert len(auth_calls) == 2
+    assert transit_calls[0]["headers"]["X-Vault-Token"] == "vault-token-1"
+    assert transit_calls[1]["headers"]["X-Vault-Token"] == "vault-token-2"
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+    VAULT_TOKEN_RENEWAL_MARGIN_SECONDS=60,
+)
+def test_vault_key_provider_reuses_unexpired_token(monkeypatch):
+    provider = VaultKeyProvider()
+    calls = []
+
+    def request(method, url, headers=None, json=None, timeout=None):
+        calls.append({"url": url, "headers": dict(headers or {})})
+        if url.endswith("/auth/approle/login"):
+            return _Response(payload={"auth": {"client_token": "vault-token", "lease_duration": 300}})
+        return _Response(payload={"data": {"ciphertext": "vault:v1:ciphertext"}})
+
+    monkeypatch.setattr(provider.session, "request", request)
+
+    provider.wrap_dek(b"0" * 32)
+    provider.wrap_dek(b"1" * 32)
+
+    assert len([call for call in calls if call["url"].endswith("/auth/approle/login")]) == 1
+    transit_calls = [call for call in calls if call["url"].endswith("/transit/encrypt/linkapro-payments-kek")]
+    assert [call["headers"]["X-Vault-Token"] for call in transit_calls] == ["vault-token", "vault-token"]
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+    VAULT_TOKEN_RENEWAL_MARGIN_SECONDS=60,
+)
+def test_vault_key_provider_reauthenticates_once_on_auth_failure(monkeypatch, status_code):
+    provider = VaultKeyProvider()
+    calls = []
+
+    def request(method, url, headers=None, json=None, timeout=None):
+        calls.append({"url": url, "headers": dict(headers or {})})
+        if url.endswith("/auth/approle/login"):
+            token_number = sum(call["url"].endswith("/auth/approle/login") for call in calls)
+            return _Response(payload={"auth": {"client_token": f"vault-token-{token_number}", "lease_duration": 300}})
+        transit_attempt = sum(call["url"].endswith("/transit/encrypt/linkapro-payments-kek") for call in calls)
+        if transit_attempt == 1:
+            return _Response(status_code=status_code, payload={"errors": ["expired token"]})
+        return _Response(payload={"data": {"ciphertext": "vault:v1:ciphertext"}})
+
+    monkeypatch.setattr(provider.session, "request", request)
+
+    assert provider.wrap_dek(b"0" * 32) == b"vault:v1:ciphertext"
+
+    auth_calls = [call for call in calls if call["url"].endswith("/auth/approle/login")]
+    transit_calls = [call for call in calls if call["url"].endswith("/transit/encrypt/linkapro-payments-kek")]
+    assert len(auth_calls) == 2
+    assert len(transit_calls) == 2
+    assert transit_calls[0]["headers"]["X-Vault-Token"] == "vault-token-1"
+    assert transit_calls[1]["headers"]["X-Vault-Token"] == "vault-token-2"
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+    VAULT_TOKEN_RENEWAL_MARGIN_SECONDS=60,
+)
+def test_vault_key_provider_reauthenticates_only_once_on_repeated_auth_failure(monkeypatch):
+    provider = VaultKeyProvider()
+    calls = []
+
+    def request(method, url, headers=None, json=None, timeout=None):
+        calls.append({"url": url, "headers": dict(headers or {})})
+        if url.endswith("/auth/approle/login"):
+            token_number = sum(call["url"].endswith("/auth/approle/login") for call in calls)
+            return _Response(payload={"auth": {"client_token": f"vault-token-{token_number}", "lease_duration": 300}})
+        return _Response(status_code=403, payload={"errors": ["permission denied"]})
+
+    monkeypatch.setattr(provider.session, "request", request)
+
+    with pytest.raises(KeyProviderError):
+        provider.wrap_dek(b"0" * 32)
+
+    assert len([call for call in calls if call["url"].endswith("/auth/approle/login")]) == 2
+    assert len([call for call in calls if call["url"].endswith("/transit/encrypt/linkapro-payments-kek")]) == 2
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
 )
 def test_vault_key_provider_maps_invalid_base64(monkeypatch):
     provider = VaultKeyProvider()
     provider._token = "vault-token"
+    provider._token_expires_at = time.monotonic() + 300
     monkeypatch.setattr(
         provider.session,
         "request",
@@ -193,6 +314,7 @@ def test_vault_key_provider_maps_invalid_base64(monkeypatch):
 def test_vault_key_provider_rejects_malformed_ciphertext_before_request(monkeypatch):
     provider = VaultKeyProvider()
     provider._token = "vault-token"
+    provider._token_expires_at = time.monotonic() + 300
     request = lambda *args, **kwargs: _Response(payload={"data": {"plaintext": base64.b64encode(b"0" * 32).decode()}})
     monkeypatch.setattr(provider.session, "request", request)
 

@@ -2,6 +2,8 @@ import base64
 import binascii
 import logging
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Optional
 import requests
@@ -59,29 +61,61 @@ class VaultKeyProvider(IKeyProvider):
         )
         if self.namespace:
             self.session.headers["X-Vault-Namespace"] = self.namespace
+        self.token_renewal_margin_seconds = int(_config_value("VAULT_TOKEN_RENEWAL_MARGIN_SECONDS", "60"))
+        self._token_lock = threading.RLock()
         self._token: Optional[str] = None
+        self._token_expires_at: float = 0.0
 
-    def _authenticate(self) -> str:
+    def _authenticate(self) -> tuple[str, float]:
         """Authenticate with Vault using AppRole and return a token."""
         url = f"{self.vault_addr}/v1/auth/approle/login"
         payload = {"role_id": self.role_id, "secret_id": self.secret_id}
         data = self._send("POST", url, payload, authenticated=False, timeout=10)
         auth = data.get("auth") if isinstance(data, dict) else None
         token = auth.get("client_token") if isinstance(auth, dict) else None
+        lease_duration = auth.get("lease_duration") if isinstance(auth, dict) else None
         if not token:
             raise KeyProviderError("Vault authentication response is missing required fields")
-        return str(token)
+        try:
+            lease_seconds = int(lease_duration)
+        except (TypeError, ValueError) as exc:
+            raise KeyProviderError("Vault authentication response is missing required fields") from exc
+        if lease_seconds <= 0:
+            raise KeyProviderError("Vault authentication response has an invalid lease")
+        return str(token), time.monotonic() + lease_seconds
 
     def _get_token(self) -> str:
         """Get a valid token, refreshing if needed."""
-        if self._token is None:
-            self._token = self._authenticate()
-        return self._token
+        with self._token_lock:
+            if self._token is None or self._token_expires_soon():
+                self._token, self._token_expires_at = self._authenticate()
+            return self._token
+
+    def _token_expires_soon(self) -> bool:
+        return time.monotonic() >= self._token_expires_at - self.token_renewal_margin_seconds
+
+    def _clear_token(self) -> None:
+        with self._token_lock:
+            self._token = None
+            self._token_expires_at = 0.0
+
+    def _refresh_token(self) -> str:
+        with self._token_lock:
+            self._token, self._token_expires_at = self._authenticate()
+            return self._token
 
     def _make_request(self, method: str, path: str, json_data: dict) -> dict:
         token = self._get_token()
         url = f"{self.vault_addr}/v1/{path}"
-        return self._send(method, url, json_data, authenticated=True, token=token, timeout=15)
+        return self._send(
+            method,
+            url,
+            json_data,
+            authenticated=True,
+            token=token,
+            timeout=15,
+            retry_auth_once=True,
+        )
 
     def _send(
         self,
@@ -92,38 +126,52 @@ class VaultKeyProvider(IKeyProvider):
         authenticated: bool,
         token: Optional[str] = None,
         timeout: int,
+        retry_auth_once: bool = False,
     ) -> dict:
         headers = {}
         if authenticated:
             if not token:
                 raise KeyProviderError("Vault token is missing")
             headers["X-Vault-Token"] = token
+        response = self._request(method, url, headers, json_data, timeout)
+        if authenticated and retry_auth_once and response.status_code in {401, 403}:
+            self._clear_token()
+            headers["X-Vault-Token"] = self._refresh_token()
+            response = self._request(method, url, headers, json_data, timeout)
+
+        return self._handle_response(response)
+
+    def _request(self, method: str, url: str, headers: dict, json_data: dict, timeout: int) -> requests.Response:
         try:
-            response = self.session.request(method, url, headers=headers, json=json_data, timeout=timeout)
+            return self.session.request(method, url, headers=headers, json=json_data, timeout=timeout)
         except (requests.Timeout, requests.ConnectionError, requests.exceptions.SSLError) as exc:
             raise InfrastructureUnavailableError("Vault is unavailable") from exc
         except requests.RequestException as exc:
             raise InfrastructureUnavailableError("Vault request failed") from exc
 
-        return self._handle_response(response)
-
     def _handle_response(self, response: requests.Response) -> dict:
         status_code = response.status_code
-        data = self._safe_json(response)
-
-        if _response_mentions_sealed(data):
-            raise InfrastructureUnavailableError("Vault is unavailable because it is sealed")
-        if status_code in {401, 403}:
-            raise KeyProviderError("Vault authentication or authorization failed")
-        if status_code == 404:
-            raise KeyProviderError("Vault path or key was not found")
-        if status_code == 429:
-            raise InfrastructureUnavailableError("Vault rate limit exceeded")
-        if 500 <= status_code:
-            raise InfrastructureUnavailableError("Vault service error")
         if status_code >= 400:
+            try:
+                error_data = self._safe_json(response)
+            except KeyProviderError:
+                error_data = {}
+
+            if _response_mentions_sealed(error_data):
+                raise InfrastructureUnavailableError("Vault is unavailable because it is sealed")
+            if status_code in {401, 403}:
+                raise KeyProviderError("Vault authentication or authorization failed")
+            if status_code == 404:
+                raise KeyProviderError("Vault path or key was not found")
+            if status_code == 429:
+                raise InfrastructureUnavailableError("Vault rate limit exceeded")
+            if 500 <= status_code:
+                raise InfrastructureUnavailableError("Vault service error")
             raise KeyProviderError("Vault request was rejected")
 
+        data = self._safe_json(response)
+        if _response_mentions_sealed(data):
+            raise InfrastructureUnavailableError("Vault is unavailable because it is sealed")
         return data
 
     def _safe_json(self, response: requests.Response) -> dict:

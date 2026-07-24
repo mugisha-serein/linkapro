@@ -64,6 +64,7 @@ services:
       VAULT_ROLE_ID: ${VAULT_ROLE_ID}
       VAULT_SECRET_ID: ${VAULT_SECRET_ID}
       VAULT_TRANSIT_KEY_NAME: ${VAULT_TRANSIT_KEY_NAME}
+      VAULT_TOKEN_RENEWAL_MARGIN_SECONDS: ${VAULT_TOKEN_RENEWAL_MARGIN_SECONDS}
     depends_on:
       db:
         condition: service_healthy
@@ -104,6 +105,7 @@ services:
       VAULT_ROLE_ID: ${VAULT_ROLE_ID}
       VAULT_SECRET_ID: ${VAULT_SECRET_ID}
       VAULT_TRANSIT_KEY_NAME: ${VAULT_TRANSIT_KEY_NAME}
+      VAULT_TOKEN_RENEWAL_MARGIN_SECONDS: ${VAULT_TOKEN_RENEWAL_MARGIN_SECONDS}
     depends_on:
       db:
         condition: service_healthy
@@ -138,6 +140,7 @@ services:
       VAULT_ROLE_ID: ${VAULT_ROLE_ID}
       VAULT_SECRET_ID: ${VAULT_SECRET_ID}
       VAULT_TRANSIT_KEY_NAME: ${VAULT_TRANSIT_KEY_NAME}
+      VAULT_TOKEN_RENEWAL_MARGIN_SECONDS: ${VAULT_TOKEN_RENEWAL_MARGIN_SECONDS}
     depends_on:
       db:
         condition: service_healthy
