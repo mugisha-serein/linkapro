@@ -48,7 +48,9 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/15")
 # HashiCorp Vault
 VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://localhost:8200")
 VAULT_ROLE_ID = os.environ.get("VAULT_ROLE_ID", "")
+VAULT_ROLE_ID_FILE = os.environ.get("VAULT_ROLE_ID_FILE", "")
 VAULT_SECRET_ID = os.environ.get("VAULT_SECRET_ID", "")
+VAULT_SECRET_ID_FILE = os.environ.get("VAULT_SECRET_ID_FILE", "")
 VAULT_TRANSIT_KEY_NAME = os.environ.get("VAULT_TRANSIT_KEY_NAME", "linkapro-payments-kek")
 
 # HMAC Key

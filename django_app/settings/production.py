@@ -61,11 +61,20 @@ if not TOKEN_ENV:
 if not PASSWORD_RESET_HASH_KEY:
     raise ImproperlyConfigured("PASSWORD_RESET_HASH_KEY must be set")
 
-_missing_vault_settings = [
-    name
-    for name in ("VAULT_ADDR", "VAULT_ROLE_ID", "VAULT_SECRET_ID", "VAULT_TRANSIT_KEY_NAME")
-    if not str(globals().get(name, "") or "").strip()
-]
+_missing_vault_settings = []
+for name in ("VAULT_ADDR", "VAULT_TRANSIT_KEY_NAME"):
+    if not str(globals().get(name, "") or "").strip():
+        _missing_vault_settings.append(name)
+if not (
+    str(globals().get("VAULT_ROLE_ID_FILE", "") or "").strip()
+    or str(globals().get("VAULT_ROLE_ID", "") or "").strip()
+):
+    _missing_vault_settings.append("VAULT_ROLE_ID")
+if not (
+    str(globals().get("VAULT_SECRET_ID_FILE", "") or "").strip()
+    or str(globals().get("VAULT_SECRET_ID", "") or "").strip()
+):
+    _missing_vault_settings.append("VAULT_SECRET_ID")
 if _missing_vault_settings:
     raise ImproperlyConfigured(
         f"{', '.join(_missing_vault_settings)} must be set for production field encryption."

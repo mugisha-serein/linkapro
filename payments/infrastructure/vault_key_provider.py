@@ -1,8 +1,11 @@
 import base64
 import logging
+import os
+from pathlib import Path
 from typing import Optional
 import requests
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from payments.application.ports import IKeyProvider
@@ -11,14 +14,31 @@ from payments.application.exceptions import InfrastructureUnavailableError, KeyP
 logger = logging.getLogger(__name__)
 
 
+def _config_value(name: str, default: str = "") -> str:
+    value = getattr(settings, name, None)
+    if value is None or str(value).strip() == "":
+        value = os.environ.get(name, default)
+    return str(value or "").strip()
+
+
+def _file_config_value(name: str) -> str:
+    path = _config_value(f"{name}_FILE")
+    if not path:
+        return _config_value(name)
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ImproperlyConfigured(f"{name}_FILE could not be read") from exc
+
+
 class VaultKeyProvider(IKeyProvider):
     """HashiCorp Vault Transit engine key provider."""
 
     def __init__(self):
-        self.vault_addr = settings.VAULT_ADDR.rstrip('/')
-        self.role_id = settings.VAULT_ROLE_ID
-        self.secret_id = settings.VAULT_SECRET_ID
-        self.transit_key = settings.VAULT_TRANSIT_KEY_NAME
+        self.vault_addr = _config_value("VAULT_ADDR").rstrip('/')
+        self.role_id = _file_config_value("VAULT_ROLE_ID")
+        self.secret_id = _file_config_value("VAULT_SECRET_ID")
+        self.transit_key = _config_value("VAULT_TRANSIT_KEY_NAME", "linkapro-payments-kek")
         self._token: Optional[str] = None
 
     def _authenticate(self) -> str:

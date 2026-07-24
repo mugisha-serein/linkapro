@@ -125,6 +125,21 @@ def test_production_settings_raise_if_vault_addr_missing():
     assert "VAULT_ADDR must be set for production field encryption." in result.stderr
 
 
+def test_production_settings_accept_vault_credential_file_env():
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(
+            VAULT_ROLE_ID=None,
+            VAULT_SECRET_ID=None,
+            VAULT_ROLE_ID_FILE="/run/secrets/vault_role_id",
+            VAULT_SECRET_ID_FILE="/run/secrets/vault_secret_id",
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
 def test_production_settings_raise_if_password_reset_hash_key_missing():
     result = _import_settings(
         "django_app.settings.production",
