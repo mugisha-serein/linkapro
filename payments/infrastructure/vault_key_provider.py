@@ -1,4 +1,5 @@
 import base64
+import binascii
 import logging
 import os
 from pathlib import Path
@@ -31,6 +32,15 @@ def _file_config_value(name: str) -> str:
         raise ImproperlyConfigured(f"{name}_FILE could not be read") from exc
 
 
+def _response_mentions_sealed(data: object) -> bool:
+    if not isinstance(data, dict):
+        return False
+    errors = data.get("errors")
+    if not isinstance(errors, list):
+        return False
+    return any("sealed" in str(error).lower() for error in errors)
+
+
 class VaultKeyProvider(IKeyProvider):
     """HashiCorp Vault Transit engine key provider."""
 
@@ -39,20 +49,28 @@ class VaultKeyProvider(IKeyProvider):
         self.role_id = _file_config_value("VAULT_ROLE_ID")
         self.secret_id = _file_config_value("VAULT_SECRET_ID")
         self.transit_key = _config_value("VAULT_TRANSIT_KEY_NAME", "linkapro-payments-kek")
+        self.namespace = _config_value("VAULT_NAMESPACE")
+        self.session = requests.Session()
+        self.session.headers.update(
+            {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
+        )
+        if self.namespace:
+            self.session.headers["X-Vault-Namespace"] = self.namespace
         self._token: Optional[str] = None
 
     def _authenticate(self) -> str:
         """Authenticate with Vault using AppRole and return a token."""
         url = f"{self.vault_addr}/v1/auth/approle/login"
         payload = {"role_id": self.role_id, "secret_id": self.secret_id}
-        try:
-            response = requests.post(url, json=payload, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            return data["auth"]["client_token"]
-        except (requests.RequestException, KeyError) as e:
-            logger.error("Vault authentication failed: %s", e)
-            raise InfrastructureUnavailableError("Vault authentication failed") from e
+        data = self._send("POST", url, payload, authenticated=False, timeout=10)
+        auth = data.get("auth") if isinstance(data, dict) else None
+        token = auth.get("client_token") if isinstance(auth, dict) else None
+        if not token:
+            raise KeyProviderError("Vault authentication response is missing required fields")
+        return str(token)
 
     def _get_token(self) -> str:
         """Get a valid token, refreshing if needed."""
@@ -63,23 +81,59 @@ class VaultKeyProvider(IKeyProvider):
     def _make_request(self, method: str, path: str, json_data: dict) -> dict:
         token = self._get_token()
         url = f"{self.vault_addr}/v1/{path}"
-        headers = {"X-Vault-Token": token}
+        return self._send(method, url, json_data, authenticated=True, token=token, timeout=15)
+
+    def _send(
+        self,
+        method: str,
+        url: str,
+        json_data: dict,
+        *,
+        authenticated: bool,
+        token: Optional[str] = None,
+        timeout: int,
+    ) -> dict:
+        headers = {}
+        if authenticated:
+            if not token:
+                raise KeyProviderError("Vault token is missing")
+            headers["X-Vault-Token"] = token
         try:
-            response = requests.request(method, url, headers=headers, json=json_data, timeout=15)
-            response.raise_for_status()
-            return response.json()
-        except requests.HTTPError as e:
-            if response.status_code == 403:
-                # Token may be expired; clear and retry once
-                self._token = None
-                token = self._get_token()
-                headers["X-Vault-Token"] = token
-                response = requests.request(method, url, headers=headers, json=json_data, timeout=15)
-                response.raise_for_status()
-                return response.json()
-            raise
-        except requests.RequestException as e:
-            raise InfrastructureUnavailableError(f"Vault request failed: {e}") from e
+            response = self.session.request(method, url, headers=headers, json=json_data, timeout=timeout)
+        except (requests.Timeout, requests.ConnectionError, requests.exceptions.SSLError) as exc:
+            raise InfrastructureUnavailableError("Vault is unavailable") from exc
+        except requests.RequestException as exc:
+            raise InfrastructureUnavailableError("Vault request failed") from exc
+
+        return self._handle_response(response)
+
+    def _handle_response(self, response: requests.Response) -> dict:
+        status_code = response.status_code
+        data = self._safe_json(response)
+
+        if _response_mentions_sealed(data):
+            raise InfrastructureUnavailableError("Vault is unavailable because it is sealed")
+        if status_code in {401, 403}:
+            raise KeyProviderError("Vault authentication or authorization failed")
+        if status_code == 404:
+            raise KeyProviderError("Vault path or key was not found")
+        if status_code == 429:
+            raise InfrastructureUnavailableError("Vault rate limit exceeded")
+        if 500 <= status_code:
+            raise InfrastructureUnavailableError("Vault service error")
+        if status_code >= 400:
+            raise KeyProviderError("Vault request was rejected")
+
+        return data
+
+    def _safe_json(self, response: requests.Response) -> dict:
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise KeyProviderError("Vault response was not valid JSON") from exc
+        if not isinstance(data, dict):
+            raise KeyProviderError("Vault response JSON was not an object")
+        return data
 
     @retry(
         stop=stop_after_attempt(3),
@@ -93,7 +147,10 @@ class VaultKeyProvider(IKeyProvider):
         path = f"transit/encrypt/{self.transit_key}"
         payload = {"plaintext": plaintext_b64}
         data = self._make_request("POST", path, payload)
-        ciphertext = data["data"]["ciphertext"]
+        response_data = data.get("data") if isinstance(data, dict) else None
+        ciphertext = response_data.get("ciphertext") if isinstance(response_data, dict) else None
+        if not ciphertext:
+            raise KeyProviderError("Vault encrypt response is missing required fields")
         return ciphertext.encode('ascii')
 
     @retry(
@@ -104,9 +161,20 @@ class VaultKeyProvider(IKeyProvider):
     )
     def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
         """Decrypt DEK using Vault transit."""
-        ciphertext = encrypted_dek.decode('ascii')
+        try:
+            ciphertext = encrypted_dek.decode('ascii')
+        except UnicodeDecodeError as exc:
+            raise KeyProviderError("Vault ciphertext is not valid ASCII") from exc
+        if not ciphertext.startswith("vault:"):
+            raise KeyProviderError("Vault ciphertext is malformed")
         path = f"transit/decrypt/{self.transit_key}"
         payload = {"ciphertext": ciphertext}
         data = self._make_request("POST", path, payload)
-        plaintext_b64 = data["data"]["plaintext"]
-        return base64.b64decode(plaintext_b64)
+        response_data = data.get("data") if isinstance(data, dict) else None
+        plaintext_b64 = response_data.get("plaintext") if isinstance(response_data, dict) else None
+        if not plaintext_b64:
+            raise KeyProviderError("Vault decrypt response is missing required fields")
+        try:
+            return base64.b64decode(plaintext_b64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise KeyProviderError("Vault decrypt response contained invalid base64") from exc
