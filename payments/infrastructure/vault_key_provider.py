@@ -87,6 +87,8 @@ class VaultKeyProvider(IKeyProvider):
         )
         if self.namespace:
             self.session.headers["X-Vault-Namespace"] = self.namespace
+        self.auth_timeout_seconds = int(_config_value("VAULT_AUTH_TIMEOUT_SECONDS", "10"))
+        self.request_timeout_seconds = int(_config_value("VAULT_REQUEST_TIMEOUT_SECONDS", "15"))
         self.token_renewal_margin_seconds = int(_config_value("VAULT_TOKEN_RENEWAL_MARGIN_SECONDS", "60"))
         self._token_lock = threading.RLock()
         self._token: Optional[str] = None
@@ -96,7 +98,7 @@ class VaultKeyProvider(IKeyProvider):
         """Authenticate with Vault using AppRole and return a token."""
         url = f"{self.vault_addr}/v1/auth/approle/login"
         payload = {"role_id": self.role_id, "secret_id": self.secret_id}
-        data = self._send("POST", url, payload, authenticated=False, timeout=10)
+        data = self._send("POST", url, payload, authenticated=False, timeout=self.auth_timeout_seconds)
         auth = data.get("auth") if isinstance(data, dict) else None
         token = auth.get("client_token") if isinstance(auth, dict) else None
         lease_duration = auth.get("lease_duration") if isinstance(auth, dict) else None
@@ -139,7 +141,7 @@ class VaultKeyProvider(IKeyProvider):
             json_data,
             authenticated=True,
             token=token,
-            timeout=15,
+            timeout=self.request_timeout_seconds,
             retry_auth_once=True,
         )
 

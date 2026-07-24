@@ -22,7 +22,7 @@ def _production_env(**overrides):
             "DEFAULT_FROM_EMAIL": "no-reply@linkapro.rw",
             "FRONTEND_URL": "https://www.linkapro.rw",
             "PASSWORD_RESET_HASH_KEY": "password-reset-hash-key",
-            "VAULT_ADDR": "http://vault:8200",
+            "VAULT_ADDR": "https://vault:8200",
             "VAULT_ROLE_ID": "role-id",
             "VAULT_SECRET_ID": "secret-id",
             "VAULT_TRANSIT_KEY_NAME": "linkapro-payments-kek",
@@ -125,19 +125,91 @@ def test_production_settings_raise_if_vault_addr_missing():
     assert "VAULT_ADDR must be set for production field encryption." in result.stderr
 
 
-def test_production_settings_accept_vault_credential_file_env():
+def test_production_settings_raise_if_vault_addr_is_not_https():
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(VAULT_ADDR="http://vault:8200"),
+    )
+
+    assert result.returncode != 0
+    assert "VAULT_ADDR must be a valid HTTPS URL for production field encryption." in result.stderr
+
+
+def test_production_settings_raise_if_vault_addr_is_invalid():
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(VAULT_ADDR="not-a-url"),
+    )
+
+    assert result.returncode != 0
+    assert "VAULT_ADDR must be a valid HTTPS URL for production field encryption." in result.stderr
+
+
+def test_production_settings_accept_vault_credential_file_env(tmp_path):
+    role_file = tmp_path / "vault_role_id"
+    secret_file = tmp_path / "vault_secret_id"
+    role_file.write_text(" role-id-from-file \n", encoding="utf-8")
+    secret_file.write_text(" secret-id-from-file \n", encoding="utf-8")
+
     result = _import_settings(
         "django_app.settings.production",
         _production_env(
             VAULT_ROLE_ID=None,
             VAULT_SECRET_ID=None,
-            VAULT_ROLE_ID_FILE="/run/secrets/vault_role_id",
-            VAULT_SECRET_ID_FILE="/run/secrets/vault_secret_id",
+            VAULT_ROLE_ID_FILE=str(role_file),
+            VAULT_SECRET_ID_FILE=str(secret_file),
         ),
     )
 
     assert result.returncode == 0, result.stderr
     assert "ok" in result.stdout
+
+
+def test_production_settings_reject_blank_vault_credential_file(tmp_path):
+    role_file = tmp_path / "vault_role_id"
+    role_file.write_text(" \n", encoding="utf-8")
+
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(
+            VAULT_ROLE_ID=None,
+            VAULT_ROLE_ID_FILE=str(role_file),
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "VAULT_ROLE_ID_FILE must not be blank for production field encryption." in result.stderr
+
+
+def test_production_settings_reject_non_positive_vault_timeouts():
+    for name in ("VAULT_AUTH_TIMEOUT_SECONDS", "VAULT_REQUEST_TIMEOUT_SECONDS"):
+        result = _import_settings(
+            "django_app.settings.production",
+            _production_env(**{name: "0"}),
+        )
+
+        assert result.returncode != 0
+        assert f"{name} must be a positive integer" in result.stderr
+
+
+def test_production_settings_reject_non_integer_vault_timeout():
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(VAULT_REQUEST_TIMEOUT_SECONDS="abc"),
+    )
+
+    assert result.returncode != 0
+    assert "VAULT_REQUEST_TIMEOUT_SECONDS must be a positive integer" in result.stderr
+
+
+def test_production_settings_reject_negative_vault_renewal_margin():
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(VAULT_TOKEN_RENEWAL_MARGIN_SECONDS="-1"),
+    )
+
+    assert result.returncode != 0
+    assert "VAULT_TOKEN_RENEWAL_MARGIN_SECONDS must be a non-negative integer" in result.stderr
 
 
 def test_production_settings_raise_if_password_reset_hash_key_missing():

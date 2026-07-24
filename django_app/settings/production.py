@@ -61,24 +61,40 @@ if not TOKEN_ENV:
 if not PASSWORD_RESET_HASH_KEY:
     raise ImproperlyConfigured("PASSWORD_RESET_HASH_KEY must be set")
 
-_missing_vault_settings = []
-for name in ("VAULT_ADDR", "VAULT_TRANSIT_KEY_NAME"):
-    if not str(globals().get(name, "") or "").strip():
-        _missing_vault_settings.append(name)
-if not (
-    str(globals().get("VAULT_ROLE_ID_FILE", "") or "").strip()
-    or str(globals().get("VAULT_ROLE_ID", "") or "").strip()
-):
-    _missing_vault_settings.append("VAULT_ROLE_ID")
-if not (
-    str(globals().get("VAULT_SECRET_ID_FILE", "") or "").strip()
-    or str(globals().get("VAULT_SECRET_ID", "") or "").strip()
-):
-    _missing_vault_settings.append("VAULT_SECRET_ID")
-if _missing_vault_settings:
+def _vault_setting(name: str) -> str:
+    return str(globals().get(name, "") or "").strip()
+
+
+def _vault_file_setting(name: str) -> str:
+    file_name = f"{name}_FILE"
+    path = _vault_setting(file_name)
+    if not path:
+        return _vault_setting(name)
+    try:
+        value = Path(path).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ImproperlyConfigured(f"{file_name} could not be read for production field encryption.") from exc
+    if not value:
+        raise ImproperlyConfigured(f"{file_name} must not be blank for production field encryption.")
+    return value
+
+
+_vault_addr = _vault_setting("VAULT_ADDR")
+if not _vault_addr:
     raise ImproperlyConfigured(
-        f"{', '.join(_missing_vault_settings)} must be set for production field encryption."
+        "VAULT_ADDR must be set for production field encryption."
     )
+_vault_url = urlparse(_vault_addr)
+if _vault_url.scheme not in {"https"} or not _vault_url.netloc:
+    raise ImproperlyConfigured("VAULT_ADDR must be a valid HTTPS URL for production field encryption.")
+if _vault_url.params or _vault_url.query or _vault_url.fragment:
+    raise ImproperlyConfigured("VAULT_ADDR must not include params, query, or fragment.")
+if not _vault_setting("VAULT_TRANSIT_KEY_NAME"):
+    raise ImproperlyConfigured("VAULT_TRANSIT_KEY_NAME must be set for production field encryption.")
+if not _vault_file_setting("VAULT_ROLE_ID"):
+    raise ImproperlyConfigured("VAULT_ROLE_ID or VAULT_ROLE_ID_FILE must be set for production field encryption.")
+if not _vault_file_setting("VAULT_SECRET_ID"):
+    raise ImproperlyConfigured("VAULT_SECRET_ID or VAULT_SECRET_ID_FILE must be set for production field encryption.")
 
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.sendgrid.net")

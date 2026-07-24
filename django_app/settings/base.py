@@ -17,6 +17,28 @@ def _csv_env(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in raw_value.split(",") if item.strip()]
 
 
+def _positive_int_env(name: str, default: str) -> int:
+    raw_value = os.environ.get(name, default)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ImproperlyConfigured(f"{name} must be a positive integer") from exc
+    if value <= 0:
+        raise ImproperlyConfigured(f"{name} must be a positive integer")
+    return value
+
+
+def _non_negative_int_env(name: str, default: str) -> int:
+    raw_value = os.environ.get(name, default)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ImproperlyConfigured(f"{name} must be a non-negative integer") from exc
+    if value < 0:
+        raise ImproperlyConfigured(f"{name} must be a non-negative integer")
+    return value
+
+
 DEBUG = os.environ.get("DJANGO_DEBUG", "False").lower() == "true"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
@@ -356,7 +378,9 @@ VAULT_ROLE_ID_FILE = os.environ.get("VAULT_ROLE_ID_FILE", "")
 VAULT_SECRET_ID = os.environ.get("VAULT_SECRET_ID", "")
 VAULT_SECRET_ID_FILE = os.environ.get("VAULT_SECRET_ID_FILE", "")
 VAULT_TRANSIT_KEY_NAME = os.environ.get("VAULT_TRANSIT_KEY_NAME", "linkapro-payments-kek")
-VAULT_TOKEN_RENEWAL_MARGIN_SECONDS = int(os.environ.get("VAULT_TOKEN_RENEWAL_MARGIN_SECONDS", "60"))
+VAULT_AUTH_TIMEOUT_SECONDS = _positive_int_env("VAULT_AUTH_TIMEOUT_SECONDS", "10")
+VAULT_REQUEST_TIMEOUT_SECONDS = _positive_int_env("VAULT_REQUEST_TIMEOUT_SECONDS", "15")
+VAULT_TOKEN_RENEWAL_MARGIN_SECONDS = _non_negative_int_env("VAULT_TOKEN_RENEWAL_MARGIN_SECONDS", "60")
 
 # HMAC Key
 PROVIDER_REFERENCE_HMAC_KEY = os.environ.get("PROVIDER_REFERENCE_HMAC_KEY")

@@ -27,6 +27,9 @@ class _Response:
     VAULT_SECRET_ID=" secret-from-settings ",
     VAULT_TRANSIT_KEY_NAME=" linkapro-payments-kek ",
     VAULT_NAMESPACE=" admin/linkapro ",
+    VAULT_AUTH_TIMEOUT_SECONDS=7,
+    VAULT_REQUEST_TIMEOUT_SECONDS=11,
+    VAULT_TOKEN_RENEWAL_MARGIN_SECONDS=3,
 )
 def test_vault_key_provider_strips_direct_config_values(monkeypatch):
     monkeypatch.delenv("VAULT_ROLE_ID_FILE", raising=False)
@@ -42,6 +45,9 @@ def test_vault_key_provider_strips_direct_config_values(monkeypatch):
     assert provider.session.headers["Accept"] == "application/json"
     assert provider.session.headers["Content-Type"] == "application/json"
     assert provider.session.headers["X-Vault-Namespace"] == "admin/linkapro"
+    assert provider.auth_timeout_seconds == 7
+    assert provider.request_timeout_seconds == 11
+    assert provider.token_renewal_margin_seconds == 3
 
 
 @override_settings(
