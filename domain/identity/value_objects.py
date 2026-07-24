@@ -132,6 +132,8 @@ class Email:
     def __post_init__(self) -> None:
         normalized = self.value.strip().lower()
         object.__setattr__(self, "value", normalized)
+        if len(normalized) > 254:
+            raise InvalidEmailError("Email is too long")
         if not self._is_valid(normalized):
             raise InvalidEmailError("Invalid email")
 

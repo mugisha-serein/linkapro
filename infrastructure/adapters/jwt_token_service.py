@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone as django_timezone
 from rest_framework_simplejwt.tokens import (
     AccessToken as SimpleAccessToken,
@@ -145,10 +146,6 @@ class JWTTokenService:
         )
         return token
 
-    def verify_password_reset_token(self, token_str: str) -> Optional[str]:
-        payload = self.decode_password_reset_token_payload(token_str)
-        return payload.get("user_id") if payload else None
-
     def decode_password_reset_token_payload(self, token_str: str) -> Optional[dict]:
         try:
             payload = jwt.decode(
@@ -242,6 +239,7 @@ class JWTTokenService:
         payload = {
             "user_id": user_id,
             "purpose": "2fa",
+            "jti": str(uuid.uuid4()),
             "env": self._token_env(),
             "exp": now + timedelta(minutes=3),
             "iat": now,
@@ -274,7 +272,7 @@ def accepted_identity_token_env(token_env: str | None, context: str) -> Optional
         return expected_env
 
     legacy_env = getattr(settings, "PAYMENT_ENV", None)
-    allow_legacy_payment_env = bool(getattr(settings, "ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", True))
+    allow_legacy_payment_env = bool(getattr(settings, "ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", False))
     if allow_legacy_payment_env and legacy_env and token_env == legacy_env:
         logger.warning(
             "legacy_payment_env_token_accepted_for_identity",
@@ -299,7 +297,10 @@ def _timestamp_to_datetime(timestamp_value) -> Optional[datetime]:
 
 
 def password_reset_value_hash(value: str) -> str:
-    key = str(getattr(settings, "PASSWORD_RESET_HASH_KEY", "") or settings.SECRET_KEY).encode("utf-8")
+    hash_key = str(getattr(settings, "PASSWORD_RESET_HASH_KEY", "") or "").strip()
+    if not hash_key:
+        raise ImproperlyConfigured("PASSWORD_RESET_HASH_KEY must be set")
+    key = hash_key.encode("utf-8")
     return hmac.new(key, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
 

@@ -237,6 +237,7 @@ JWE_PRIVATE_KEY = os.environ.get("JWE_PRIVATE_KEY", "")
 
 PASSWORD_RESET_TIMEOUT = timedelta(hours=1)
 EMAIL_VERIFICATION_TIMEOUT = timedelta(days=3)
+PASSWORD_RESET_HASH_KEY = os.environ.get("PASSWORD_RESET_HASH_KEY", "").strip()
 
 
 def _default_token_env() -> str:
@@ -253,7 +254,7 @@ TOKEN_ENV = os.environ.get(
     os.environ.get("APP_ENV", os.environ.get("DJANGO_ENV", _default_token_env())),
 )
 ACCEPT_LEGACY_PAYMENT_ENV_TOKENS = (
-    os.environ.get("ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", "true").lower() == "true"
+    os.environ.get("ACCEPT_LEGACY_PAYMENT_ENV_TOKENS", "false").lower() == "true"
 )
 
 # Celery

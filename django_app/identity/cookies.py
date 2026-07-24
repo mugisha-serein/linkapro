@@ -18,28 +18,28 @@ def extract_refresh_token(request) -> str | None:
     return str(token).strip() if token else None
 
 
-def _refresh_cookie_domain() -> str | None:
-    cookie_domain = str(getattr(settings, "REFRESH_TOKEN_COOKIE_DOMAIN", "") or "").strip()
+def _cookie_domain(setting_prefix: str) -> str | None:
+    cookie_domain = str(getattr(settings, f"{setting_prefix}_DOMAIN", "") or "").strip()
     return cookie_domain or None
 
 
-def _refresh_cookie_samesite() -> str:
-    configured = str(getattr(settings, "REFRESH_TOKEN_COOKIE_SAMESITE", "") or "").strip()
+def _cookie_samesite(setting_prefix: str) -> str:
+    configured = str(getattr(settings, f"{setting_prefix}_SAMESITE", "") or "").strip()
     if configured:
         normalized = configured.capitalize()
         if normalized not in {"Lax", "Strict", "None"}:
-            raise ImproperlyConfigured("REFRESH_TOKEN_COOKIE_SAMESITE must be one of Lax, Strict, or None")
+            raise ImproperlyConfigured(f"{setting_prefix}_SAMESITE must be one of Lax, Strict, or None")
         return normalized
     return "None" if not settings.DEBUG else "Lax"
 
 
-def _refresh_cookie_secure() -> bool:
-    configured = getattr(settings, "REFRESH_TOKEN_COOKIE_SECURE", None)
+def _cookie_secure(setting_prefix: str) -> bool:
+    configured = getattr(settings, f"{setting_prefix}_SECURE", None)
     secure = not settings.DEBUG if configured is None else bool(configured)
     if not settings.DEBUG and not secure:
-        raise ImproperlyConfigured("REFRESH_TOKEN_COOKIE_SECURE must be enabled in production")
-    if _refresh_cookie_samesite() == "None" and not secure:
-        raise ImproperlyConfigured("SameSite=None refresh cookies require Secure=True")
+        raise ImproperlyConfigured(f"{setting_prefix}_SECURE must be enabled in production")
+    if _cookie_samesite(setting_prefix) == "None" and not secure:
+        raise ImproperlyConfigured(f"SameSite=None {setting_prefix} cookies require Secure=True")
     return secure
 
 
@@ -53,17 +53,17 @@ def set_refresh_cookie(response, refresh_token: str) -> None:
         refresh_token,
         max_age=_refresh_cookie_max_age(),
         httponly=True,
-        secure=_refresh_cookie_secure(),
-        samesite=_refresh_cookie_samesite(),
+        secure=_cookie_secure("REFRESH_TOKEN_COOKIE"),
+        samesite=_cookie_samesite("REFRESH_TOKEN_COOKIE"),
         path="/",
-        domain=_refresh_cookie_domain(),
+        domain=_cookie_domain("REFRESH_TOKEN_COOKIE"),
     )
 
 
 def clear_auth_cookies(response) -> None:
-    cookie_domain = _refresh_cookie_domain()
-    cookie_secure = _refresh_cookie_secure()
-    cookie_samesite = _refresh_cookie_samesite()
+    cookie_domain = _cookie_domain("REFRESH_TOKEN_COOKIE")
+    cookie_secure = _cookie_secure("REFRESH_TOKEN_COOKIE")
+    cookie_samesite = _cookie_samesite("REFRESH_TOKEN_COOKIE")
 
     for cookie_name in (*LEGACY_REFRESH_COOKIE_NAMES, get_refresh_cookie_name()):
         response.set_cookie(

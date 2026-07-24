@@ -35,6 +35,12 @@ class TestEmail:
             Email(raw_email)
         assert raw_email not in str(exc_info.value)
 
+    def test_email_longer_than_254_characters_is_rejected(self):
+        too_long = f"{'a' * 245}@example.com"
+
+        with pytest.raises(InvalidEmailError, match="Email is too long"):
+            Email(too_long)
+
     @pytest.mark.parametrize(
         "invalid",
         ["plain", "missing@tld", "@missing-user.com", "spaces in@email.com", ""],

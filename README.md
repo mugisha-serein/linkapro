@@ -461,6 +461,7 @@ Required worker/beat environment variables:
 DJANGO_SETTINGS_MODULE=django_app.settings.production
 DJANGO_SECRET_KEY=<production-secret>
 TOKEN_ENV=production
+PASSWORD_RESET_HASH_KEY=<strong-dedicated-hmac-key>
 DATABASE_URL=<production-database-url>
 DATABASE_SSL=true
 REDIS_URL=<redis-or-rediss-url>
@@ -578,6 +579,7 @@ Required Render environment variables for Django web, Celery Worker, and Celery 
 
 ```env
 TOKEN_ENV=production
+PASSWORD_RESET_HASH_KEY=<strong-dedicated-hmac-key>
 SENDGRID_API_KEY=<sendgrid-api-key>
 DEFAULT_FROM_EMAIL=no-reply@linkapro.rw
 FRONTEND_URL=https://www.linkapro.rw
@@ -599,13 +601,13 @@ RATE_LIMIT_HASH_KEY=<strong-dedicated-hmac-key>
 
 `PAYMENT_ENV` controls payment provider mode only, for example `PAYMENT_ENV=test` or `PAYMENT_ENV=live`. Changing `PAYMENT_ENV` must not invalidate identity tokens or password reset links.
 
-During the transition away from legacy identity tokens that used `PAYMENT_ENV`, the backend can accept them with:
+During the transition away from legacy identity tokens that used `PAYMENT_ENV`, the backend rejects them by default. Temporarily opt in only for environments that still need the compatibility window:
 
 ```env
 ACCEPT_LEGACY_PAYMENT_ENV_TOKENS=true
 ```
 
-Set this to `false` after existing short-lived reset/email/2FA/session tokens have expired.
+Leave this unset or set it to `false` after existing short-lived reset/email/2FA/session tokens have expired.
 
 Production settings provide these SendGrid SMTP defaults:
 

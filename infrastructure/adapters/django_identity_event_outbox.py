@@ -7,6 +7,7 @@ import uuid
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import IntegrityError, transaction
 
+from domain.identity.value_objects import SecurityReason
 from django_app.identity.models import IdentityDomainEventOutbox
 
 
@@ -46,7 +47,24 @@ class DjangoIdentityEventOutboxDispatcher:
     @staticmethod
     def _event_payload(event) -> dict:
         payload = asdict(event) if is_dataclass(event) else dict(vars(event))
-        return json.loads(json.dumps(payload, cls=DjangoJSONEncoder, default=str))
+        payload.pop("auth_token_version", None)
+        serialized = json.loads(json.dumps(payload, cls=DjangoJSONEncoder, default=str))
+        DjangoIdentityEventOutboxDispatcher._validate_payload_keys(serialized)
+        return serialized
+
+    @staticmethod
+    def _validate_payload_keys(payload) -> None:
+        if isinstance(payload, list):
+            for item in payload:
+                DjangoIdentityEventOutboxDispatcher._validate_payload_keys(item)
+            return
+        if not isinstance(payload, dict):
+            return
+        for key, value in payload.items():
+            lowered = str(key).lower()
+            if any(fragment in lowered for fragment in SecurityReason._FORBIDDEN_FRAGMENTS):
+                raise ValueError(f"Identity event payload key is not allowed: {key}")
+            DjangoIdentityEventOutboxDispatcher._validate_payload_keys(value)
 
     @staticmethod
     def _aggregate_version(event) -> int:

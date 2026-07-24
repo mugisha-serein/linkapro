@@ -18,6 +18,7 @@ def get_command_handlers():
         password_hasher=DjangoPasswordHasher(),
         token_service=JWTTokenService(),
         session_store=DjangoIdentitySessionStore(),
+        token_blacklist=RedisTokenBlacklist(),
         event_dispatcher=DjangoIdentityEventOutboxDispatcher(),
     )
 
@@ -42,7 +43,10 @@ def get_google_login_use_case() -> GoogleLoginUseCase:
 
 
 def get_token_handlers() -> TokenCommandHandlers:
-    return TokenCommandHandlers(blacklist=RedisTokenBlacklist())
+    return TokenCommandHandlers(
+        blacklist=RedisTokenBlacklist(),
+        session_store=DjangoIdentitySessionStore(),
+    )
 
 
 def get_auth_session_facade() -> IdentitySessionFacade:

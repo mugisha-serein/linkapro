@@ -3,14 +3,46 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 import pyotp
 
+from domain.identity.value_objects import TOTPSecret
 from django_app.identity.models import User
+from infrastructure.repos.django_user_repository import DjangoUserRepository
 
 pytestmark = pytest.mark.django_db
 
 
+class _KeyProvider:
+    def wrap_dek(self, dek: bytes) -> bytes:
+        return dek
+
+    def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
+        return encrypted_dek
+
+
 class TestTwoFactor:
     @pytest.fixture(autouse=True)
-    def setup(self):
+    def setup(self, monkeypatch):
+        class InMemoryTokenBlacklist:
+            blacklisted = set()
+            blacklisted_families = set()
+
+            def is_blacklisted(self, jti):
+                return jti in self.blacklisted
+
+            def blacklist(self, jti, ttl):
+                self.blacklisted.add(jti)
+
+            def is_family_blacklisted(self, family_id):
+                return family_id in self.blacklisted_families
+
+            def blacklist_family(self, family_id):
+                self.blacklisted_families.add(family_id)
+
+        def django_user_repository_factory():
+            return DjangoUserRepository(key_provider=_KeyProvider())
+
+        monkeypatch.setattr("django_app.identity.services.DjangoUserRepository", django_user_repository_factory)
+        monkeypatch.setattr("django_app.identity.services.RedisTokenBlacklist", InMemoryTokenBlacklist)
+        self.repo = DjangoUserRepository(key_provider=_KeyProvider())
         self.client = APIClient()
 
     def test_enable_2fa_returns_secret_and_qr(self):
@@ -72,10 +104,7 @@ class TestTwoFactor:
             last_name="User",
             role="planner",
         )
-        user.totp_secret = secret
-        user.two_factor_enabled = True
-        user.password_hash = None  # ensure we use Django's password (set_password not used here? Actually create_user hashes the password, so good)
-        user.save()
+        self.repo.set_totp_secret(user.id, TOTPSecret(secret))
 
         # Step 1: normal login should return temp token
         login_url = reverse("login")

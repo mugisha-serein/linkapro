@@ -13,7 +13,6 @@ from rest_framework.views import APIView
 
 from application.identity.commands import (
     EnableTwoFactorCommand,
-    LoginTwoFactorCommand,
     UpdateProfileCommand,
     VerifyTwoFactorSetupCommand,
 )
@@ -28,7 +27,6 @@ from .serializers import (
     RegisterSerializer,
     ResetPasswordSerializer,
     SetupPasswordSerializer,
-    TwoFactorLoginSerializer,
     TwoFactorSetupVerifySerializer,
     UpdateProfileSerializer,
 )
@@ -53,17 +51,11 @@ from .throttles import (
     RegistrationRateLimited,
     ResetPasswordIPThrottle,
     ResetPasswordTokenThrottle,
-    TwoFactorIPThrottle,
-    TwoFactorRateLimited,
-    TwoFactorTempTokenThrottle,
     clear_login_failures,
-    clear_mfa_failures,
     get_client_ip,
     is_login_locked_out,
-    is_mfa_locked_out,
     rate_limit_hash,
     record_login_failure,
-    record_mfa_failure,
 )
 from django_app.identity.models import PasswordResetToken, User
 from infrastructure.adapters.django_identity_event_outbox import DjangoIdentityEventOutboxDispatcher
@@ -346,59 +338,6 @@ class LoginView(APIView):
                 "token_type": "Bearer",
                 "user": auth_result.bootstrap_user or _bootstrap_user_payload(user),
             },
-            request=request,
-        )
-        set_refresh_cookie(response, auth_result.refresh_token)
-        return response
-
-
-class LoginTwoFactorView(APIView):
-    permission_classes = [AllowAny]
-    throttle_classes = [TwoFactorIPThrottle, TwoFactorTempTokenThrottle]
-
-    def throttled(self, request, wait):
-        raise TwoFactorRateLimited(wait=wait, request=request)
-
-    def post(self, request):
-        serializer = TwoFactorLoginSerializer(data=request.data)
-        if not serializer.is_valid():
-            return api_error(
-                code="mfa_validation_failed",
-                message="Please fix the highlighted fields.",
-                field_errors=serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST,
-                request=request,
-            )
-        temp_token = serializer.validated_data["temp_token"]
-        if is_mfa_locked_out(request, temp_token):
-            return _rate_limited_response(
-                code="mfa_rate_limited",
-                message="Too many verification attempts. Please try again later.",
-                request=request,
-            )
-        cmd = LoginTwoFactorCommand(
-            temp_token=temp_token,
-            token=serializer.validated_data["token"],
-        )
-        session = get_auth_session_facade()
-        auth_result = session.login_two_factor(cmd)
-        if auth_result.status is not AuthenticationStatus.AUTHENTICATED:
-            record_mfa_failure(request, temp_token, auth_status=auth_result.status)
-            response = _auth_error_response(auth_result.status, request=request)
-            clear_auth_cookies(response)
-            return response
-
-        user = auth_result.user
-        clear_mfa_failures(request, temp_token, user_id=getattr(user, "id", None))
-        response = api_success(
-            code="mfa_login_completed",
-            message="Signed in successfully.",
-            data={
-                "access": auth_result.access_token,
-                "token_type": "Bearer",
-                "user": auth_result.bootstrap_user or _bootstrap_user_payload(user),
-            },
-            status=status.HTTP_200_OK,
             request=request,
         )
         set_refresh_cookie(response, auth_result.refresh_token)

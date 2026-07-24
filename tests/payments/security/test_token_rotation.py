@@ -24,8 +24,32 @@ class TestTokenRotation:
         return mock
 
     @pytest.fixture
-    def handler(self, blacklist):
-        return TokenCommandHandlers(blacklist)
+    def session_store(self):
+        mock = MagicMock()
+        mock.is_token_revoked_for_user.return_value = False
+        mock.token_version_matches_active_user.return_value = True
+        mock.get_bootstrap_claims.side_effect = (
+            lambda user_id, session_id=None: {
+                "id": str(user_id),
+                "email": "user@example.com",
+                "role": "planner",
+                "first_name": "Test",
+                "last_name": "User",
+                "is_active": True,
+                "is_verified": True,
+                "has_password": True,
+                "requires_password_setup": False,
+                "two_factor_enabled": False,
+                "auth_token_version": 0,
+                "is_authenticated": True,
+                **({"session_id": str(session_id)} if session_id else {}),
+            }
+        )
+        return mock
+
+    @pytest.fixture
+    def handler(self, blacklist, session_store):
+        return TokenCommandHandlers(blacklist, session_store=session_store)
 
     def _create_refresh_token_str(self, user_id=None, jti=None, family=None, step_up=False, scope="", env="test"):
         from rest_framework_simplejwt.tokens import RefreshToken

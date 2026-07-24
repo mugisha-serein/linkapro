@@ -85,6 +85,23 @@ class UserActivated:
 
 
 @dataclass(frozen=True)
+class UserRoleChanged:
+    user_id: uuid.UUID
+    previous_role: UserRole
+    new_role: UserRole
+    occurred_at: datetime
+    event_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    actor_user_id: Optional[uuid.UUID] = None
+    reason: Optional[SecurityReason | str] = None
+    auth_token_version: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "previous_role", UserRole(self.previous_role))
+        object.__setattr__(self, "new_role", UserRole(self.new_role))
+        object.__setattr__(self, "reason", _normalize_reason(self.reason))
+
+
+@dataclass(frozen=True)
 class UserTwoFactorEnabled:
     user_id: uuid.UUID
     occurred_at: datetime

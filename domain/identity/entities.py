@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import ClassVar, Optional
 
 from domain.shared.utils import utc_now
 from .value_objects import (
@@ -45,6 +45,16 @@ class AccountStatus(str, Enum):
 
 @dataclass
 class User:
+    _PROTECTED_MUTATION_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "role",
+            "is_active",
+            "password_hash",
+            "auth_token_version",
+            "two_factor_enabled",
+        }
+    )
+
     id: uuid.UUID
     email: Email
     password_hash: Optional[PasswordHash]
@@ -60,17 +70,30 @@ class User:
     last_login: Optional[datetime] = None
     _events: list[object] = field(default_factory=list, init=False, repr=False)
 
+    def __setattr__(self, name: str, value) -> None:
+        if (
+            name in self._PROTECTED_MUTATION_FIELDS
+            and "_events" in self.__dict__
+            and not self.__dict__.get("_hydrating", False)
+        ):
+            raise AttributeError(f"{name} must be changed through a User mutator")
+        super().__setattr__(name, value)
+
     def __post_init__(self) -> None:
-        self.role = UserRole(self.role)
-        name = PersonName(self.first_name, self.last_name)
-        self.first_name = name.first_name
-        self.last_name = name.last_name
-        if self.auth_token_version < 0:
-            raise ValueError("Auth token version cannot be negative")
-        self._validate_timezone_aware(self.created_at, "created_at")
-        self._validate_timezone_aware(self.updated_at, "updated_at")
-        if self.last_login is not None:
-            self._validate_timezone_aware(self.last_login, "last_login")
+        object.__setattr__(self, "_hydrating", True)
+        try:
+            self.role = UserRole(self.role)
+            name = PersonName(self.first_name, self.last_name)
+            self.first_name = name.first_name
+            self.last_name = name.last_name
+            if self.auth_token_version < 0:
+                raise ValueError("Auth token version cannot be negative")
+            self._validate_timezone_aware(self.created_at, "created_at")
+            self._validate_timezone_aware(self.updated_at, "updated_at")
+            if self.last_login is not None:
+                self._validate_timezone_aware(self.last_login, "last_login")
+        finally:
+            object.__setattr__(self, "_hydrating", False)
 
     @staticmethod
     def _validate_timezone_aware(value: datetime, field_name: str) -> None:
@@ -145,14 +168,14 @@ class User:
         return events
 
     def rotate_auth_token_version(self) -> None:
-        self.auth_token_version += 1
+        object.__setattr__(self, "auth_token_version", self.auth_token_version + 1)
         self.updated_at = utc_now()
 
     def change_password(self, new_password_hash: PasswordHash) -> None:
         """Update password hash and record change."""
         from .events import UserPasswordChanged
 
-        self.password_hash = new_password_hash
+        object.__setattr__(self, "password_hash", new_password_hash)
         self.rotate_auth_token_version()
         self._record_event(
             UserPasswordChanged(
@@ -182,7 +205,7 @@ class User:
 
         if not self.is_active:
             return
-        self.is_active = False
+        object.__setattr__(self, "is_active", False)
         self.rotate_auth_token_version()
         self._record_event(
             UserDeactivated(
@@ -197,11 +220,31 @@ class User:
 
         if self.is_active:
             return
-        self.is_active = True
+        object.__setattr__(self, "is_active", True)
         self.updated_at = utc_now()
         self._record_event(
             UserActivated(
                 user_id=self.id,
+                occurred_at=self.updated_at,
+                auth_token_version=self.auth_token_version,
+            )
+        )
+
+    def change_role(self, new_role: UserRole) -> None:
+        from .events import UserRoleChanged
+
+        new_role = UserRole(new_role)
+        if new_role is self.role:
+            return
+
+        previous_role = self.role
+        object.__setattr__(self, "role", new_role)
+        self.rotate_auth_token_version()
+        self._record_event(
+            UserRoleChanged(
+                user_id=self.id,
+                previous_role=previous_role,
+                new_role=new_role,
                 occurred_at=self.updated_at,
                 auth_token_version=self.auth_token_version,
             )
@@ -227,7 +270,7 @@ class User:
 
         if self.two_factor_enabled:
             return
-        self.two_factor_enabled = True
+        object.__setattr__(self, "two_factor_enabled", True)
         self.rotate_auth_token_version()
         self._record_event(
             UserTwoFactorEnabled(
@@ -242,7 +285,7 @@ class User:
 
         if not self.two_factor_enabled:
             return
-        self.two_factor_enabled = False
+        object.__setattr__(self, "two_factor_enabled", False)
         self.rotate_auth_token_version()
         self._record_event(
             UserTwoFactorDisabled(

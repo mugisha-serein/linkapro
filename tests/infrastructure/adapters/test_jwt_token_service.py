@@ -13,14 +13,14 @@ def test_password_reset_token_roundtrip():
     service = JWTTokenService()
     user_id = str(uuid.uuid4())
     token = service.create_password_reset_token(user_id)
-    assert service.verify_password_reset_token(token) == user_id
+    assert service.decode_password_reset_token_payload(token)["user_id"] == user_id
     payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
     assert payload["env"] == settings.TOKEN_ENV
     assert payload["jti"]
 
 def test_invalid_token_returns_none():
     service = JWTTokenService()
-    assert service.verify_password_reset_token("garbage") is None
+    assert service.decode_password_reset_token_payload("garbage") is None
 
 pytestmark = pytest.mark.django_db
 
@@ -32,7 +32,7 @@ pytestmark = pytest.mark.django_db
 def test_wrong_token_type_returns_none():
     service = JWTTokenService()
     token = service.create_access_token("user-123", "planner")
-    assert service.verify_password_reset_token(token) is None
+    assert service.decode_password_reset_token_payload(token) is None
 
 
 def test_access_token_includes_environment_claim():
@@ -100,7 +100,7 @@ def test_payment_env_change_does_not_invalidate_password_reset_token(settings):
 
     settings.PAYMENT_ENV = "payment-test"
 
-    assert service.verify_password_reset_token(token) == "user-123"
+    assert service.decode_password_reset_token_payload(token)["user_id"] == "user-123"
 
 
 @override_settings(TOKEN_ENV="identity-prod")
@@ -110,7 +110,7 @@ def test_token_env_change_invalidates_password_reset_token(settings):
 
     settings.TOKEN_ENV = "identity-staging"
 
-    assert service.verify_password_reset_token(token) is None
+    assert service.decode_password_reset_token_payload(token) is None
 
 
 @override_settings(TOKEN_ENV="identity-prod", PAYMENT_ENV="payment-live")
@@ -124,6 +124,7 @@ def test_email_verification_and_temp_tokens_use_token_env():
     temp_payload = jwt.decode(temp_token, settings.SECRET_KEY, algorithms=["HS256"])
     assert email_payload["env"] == "identity-prod"
     assert temp_payload["env"] == "identity-prod"
+    assert temp_payload["jti"]
     assert service.verify_email_verification_token(email_token) == "user-123"
     assert service.verify_temp_token(temp_token)["user_id"] == "user-123"
 
@@ -145,8 +146,8 @@ def test_legacy_payment_env_password_reset_token_accepted(caplog):
     )
     caplog.set_level("WARNING", logger="infrastructure.adapters.jwt_token_service")
 
-    assert JWTTokenService().verify_password_reset_token(token) == "user-123"
-    assert "legacy_identity_token_env_accepted" in caplog.text
+    assert JWTTokenService().decode_password_reset_token_payload(token)["user_id"] == "user-123"
+    assert "legacy_payment_env_token_accepted_for_identity" in caplog.text
 
 
 @override_settings(TOKEN_ENV="identity-prod", PAYMENT_ENV="legacy-test", ACCEPT_LEGACY_PAYMENT_ENV_TOKENS=False)
@@ -164,7 +165,7 @@ def test_legacy_payment_env_password_reset_token_rejected_when_disabled():
         algorithm="HS256",
     )
 
-    assert JWTTokenService().verify_password_reset_token(token) is None
+    assert JWTTokenService().decode_password_reset_token_payload(token) is None
 
 
 @override_settings(TOKEN_ENV="")
