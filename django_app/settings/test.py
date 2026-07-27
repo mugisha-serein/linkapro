@@ -1,4 +1,5 @@
 from .base import *
+from .base import _non_negative_int_env, _positive_int_env
 
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
@@ -48,8 +49,13 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/15")
 # HashiCorp Vault
 VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://localhost:8200")
 VAULT_ROLE_ID = os.environ.get("VAULT_ROLE_ID", "")
+VAULT_ROLE_ID_FILE = os.environ.get("VAULT_ROLE_ID_FILE", "")
 VAULT_SECRET_ID = os.environ.get("VAULT_SECRET_ID", "")
+VAULT_SECRET_ID_FILE = os.environ.get("VAULT_SECRET_ID_FILE", "")
 VAULT_TRANSIT_KEY_NAME = os.environ.get("VAULT_TRANSIT_KEY_NAME", "linkapro-payments-kek")
+VAULT_AUTH_TIMEOUT_SECONDS = _positive_int_env("VAULT_AUTH_TIMEOUT_SECONDS", "10")
+VAULT_REQUEST_TIMEOUT_SECONDS = _positive_int_env("VAULT_REQUEST_TIMEOUT_SECONDS", "15")
+VAULT_TOKEN_RENEWAL_MARGIN_SECONDS = _non_negative_int_env("VAULT_TOKEN_RENEWAL_MARGIN_SECONDS", "60")
 
 # HMAC Key
 PROVIDER_REFERENCE_HMAC_KEY = os.environ.get("PROVIDER_REFERENCE_HMAC_KEY", "change-me-in-production")

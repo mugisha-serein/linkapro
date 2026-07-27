@@ -1,0 +1,17 @@
+# Render Blueprint for the single-node LinkaPro Vault service.
+# This is not highly available: it runs one Vault instance with one persistent Raft disk.
+# Vault stays sealed after service restart until it is manually unsealed; this file does not configure fake auto-unseal.
+
+services:
+  - type: pserv
+    name: linkapro-vault
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    numInstances: 1
+    dockerContext: ./deploy/vault
+    dockerfilePath: ./deploy/vault/Dockerfile
+    disk:
+      name: linkapro-vault-data
+      mountPath: /vault/data
+      sizeGB: 10

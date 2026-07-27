@@ -1,3 +1,30 @@
+x-vault-env: &vault-env
+  VAULT_ADDR: ${COMPOSE_VAULT_ADDR:-http://vault:8200}
+  VAULT_ROLE_ID: ${VAULT_ROLE_ID:-}
+  VAULT_ROLE_ID_FILE: ${VAULT_ROLE_ID_FILE:-}
+  VAULT_SECRET_ID: ${VAULT_SECRET_ID:-}
+  VAULT_SECRET_ID_FILE: ${VAULT_SECRET_ID_FILE:-}
+  VAULT_TRANSIT_KEY_NAME: ${VAULT_TRANSIT_KEY_NAME:-linkapro-payments-kek}
+  VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
+  VAULT_AUTH_TIMEOUT_SECONDS: ${VAULT_AUTH_TIMEOUT_SECONDS:-10}
+  VAULT_REQUEST_TIMEOUT_SECONDS: ${VAULT_REQUEST_TIMEOUT_SECONDS:-15}
+  VAULT_TOKEN_RENEWAL_MARGIN_SECONDS: ${VAULT_TOKEN_RENEWAL_MARGIN_SECONDS:-60}
+
+x-django-celery-env: &django-celery-env
+  DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE}
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+  DJANGO_DEBUG: ${DJANGO_DEBUG}
+  TOKEN_ENV: ${TOKEN_ENV}
+  PASSWORD_RESET_HASH_KEY: ${PASSWORD_RESET_HASH_KEY}
+  ACCEPT_LEGACY_PAYMENT_ENV_TOKENS: ${ACCEPT_LEGACY_PAYMENT_ENV_TOKENS}
+  DJANGO_DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+  REDIS_URL: ${REDIS_URL}
+  DATABASE_SSL: "false"
+  FASTAPI_INTERNAL_URL: ${FASTAPI_INTERNAL_URL}
+  FASTAPI_INTERNAL_SHARED_SECRET: ${FASTAPI_INTERNAL_SHARED_SECRET}
+  PAYMENT_ENV: ${PAYMENT_ENV}
+  <<: *vault-env
+
 services:
   db:
     image: postgres:16-alpine
@@ -30,6 +57,25 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # Local-only dev Vault. Start explicitly with:
+  # docker compose --profile vault up vault
+  # This runs Vault in dev mode with a non-production token and no durable storage;
+  # all Vault data is lost when the container is removed or restarted.
+  # Containers reach it at COMPOSE_VAULT_ADDR=http://vault:8200; host tools can use
+  # http://127.0.0.1:8200 after the profile is started.
+  vault:
+    image: hashicorp/vault:1.18.4
+    container_name: linkapro_vault_dev
+    profiles:
+      - vault
+    command: server -dev -dev-listen-address=0.0.0.0:8200
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: linkapro-local-dev-root-token
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "127.0.0.1:8200:8200"
+    restart: "no"
+
   django:
     build:
       context: .
@@ -45,25 +91,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE}
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DJANGO_DEBUG: ${DJANGO_DEBUG}
-      TOKEN_ENV: ${TOKEN_ENV}
-      PASSWORD_RESET_HASH_KEY: ${PASSWORD_RESET_HASH_KEY}
-      ACCEPT_LEGACY_PAYMENT_ENV_TOKENS: ${ACCEPT_LEGACY_PAYMENT_ENV_TOKENS}
-      DJANGO_DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
-      REDIS_URL: ${REDIS_URL}
-      DATABASE_SSL: "false"
-      FASTAPI_INTERNAL_URL: ${FASTAPI_INTERNAL_URL}
-      FASTAPI_INTERNAL_SHARED_SECRET: ${FASTAPI_INTERNAL_SHARED_SECRET}
+      <<: *django-celery-env
       FRONTEND_URL: ${FRONTEND_URL}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
-      PAYMENT_ENV: ${PAYMENT_ENV}
-      VAULT_ADDR: ${VAULT_ADDR}
-      VAULT_ROLE_ID: ${VAULT_ROLE_ID}
-      VAULT_SECRET_ID: ${VAULT_SECRET_ID}
-      VAULT_TRANSIT_KEY_NAME: ${VAULT_TRANSIT_KEY_NAME}
     depends_on:
       db:
         condition: service_healthy
@@ -88,22 +119,7 @@ services:
       - static_volume:/app/static
       - media_volume:/app/media
     environment:
-      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE}
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DJANGO_DEBUG: ${DJANGO_DEBUG}
-      TOKEN_ENV: ${TOKEN_ENV}
-      PASSWORD_RESET_HASH_KEY: ${PASSWORD_RESET_HASH_KEY}
-      ACCEPT_LEGACY_PAYMENT_ENV_TOKENS: ${ACCEPT_LEGACY_PAYMENT_ENV_TOKENS}
-      DJANGO_DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
-      REDIS_URL: ${REDIS_URL}
-      DATABASE_SSL: "false"
-      FASTAPI_INTERNAL_URL: ${FASTAPI_INTERNAL_URL}
-      FASTAPI_INTERNAL_SHARED_SECRET: ${FASTAPI_INTERNAL_SHARED_SECRET}
-      PAYMENT_ENV: ${PAYMENT_ENV}
-      VAULT_ADDR: ${VAULT_ADDR}
-      VAULT_ROLE_ID: ${VAULT_ROLE_ID}
-      VAULT_SECRET_ID: ${VAULT_SECRET_ID}
-      VAULT_TRANSIT_KEY_NAME: ${VAULT_TRANSIT_KEY_NAME}
+      <<: *django-celery-env
     depends_on:
       db:
         condition: service_healthy
@@ -122,22 +138,7 @@ services:
       - static_volume:/app/static
       - media_volume:/app/media
     environment:
-      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE}
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DJANGO_DEBUG: ${DJANGO_DEBUG}
-      TOKEN_ENV: ${TOKEN_ENV}
-      PASSWORD_RESET_HASH_KEY: ${PASSWORD_RESET_HASH_KEY}
-      ACCEPT_LEGACY_PAYMENT_ENV_TOKENS: ${ACCEPT_LEGACY_PAYMENT_ENV_TOKENS}
-      DJANGO_DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
-      REDIS_URL: ${REDIS_URL}
-      DATABASE_SSL: "false"
-      FASTAPI_INTERNAL_URL: ${FASTAPI_INTERNAL_URL}
-      FASTAPI_INTERNAL_SHARED_SECRET: ${FASTAPI_INTERNAL_SHARED_SECRET}
-      PAYMENT_ENV: ${PAYMENT_ENV}
-      VAULT_ADDR: ${VAULT_ADDR}
-      VAULT_ROLE_ID: ${VAULT_ROLE_ID}
-      VAULT_SECRET_ID: ${VAULT_SECRET_ID}
-      VAULT_TRANSIT_KEY_NAME: ${VAULT_TRANSIT_KEY_NAME}
+      <<: *django-celery-env
     depends_on:
       db:
         condition: service_healthy
