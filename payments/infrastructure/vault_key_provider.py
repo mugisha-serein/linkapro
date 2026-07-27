@@ -78,6 +78,7 @@ class VaultKeyProvider(IKeyProvider):
         self.secret_id = _file_config_value("VAULT_SECRET_ID")
         self.transit_key = _config_value("VAULT_TRANSIT_KEY_NAME", "linkapro-payments-kek")
         self.namespace = _config_value("VAULT_NAMESPACE")
+        self.ca_cert_path = _config_value("VAULT_CACERT")
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -171,7 +172,10 @@ class VaultKeyProvider(IKeyProvider):
 
     def _request(self, method: str, url: str, headers: dict, json_data: dict, timeout: int) -> requests.Response:
         try:
-            return self.session.request(method, url, headers=headers, json=json_data, timeout=timeout)
+            kwargs = {"headers": headers, "json": json_data, "timeout": timeout}
+            if self.ca_cert_path:
+                kwargs["verify"] = self.ca_cert_path
+            return self.session.request(method, url, **kwargs)
         except (requests.Timeout, requests.ConnectionError, requests.exceptions.SSLError) as exc:
             raise InfrastructureUnavailableError("Vault is unavailable") from exc
         except requests.RequestException as exc:

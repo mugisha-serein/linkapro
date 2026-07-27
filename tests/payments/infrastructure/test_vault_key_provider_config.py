@@ -3,6 +3,7 @@ import time
 
 import pytest
 import requests
+from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 
 from payments.application.exceptions import InfrastructureUnavailableError, KeyProviderError
@@ -68,6 +69,93 @@ def test_vault_key_provider_prefers_file_credentials(monkeypatch, tmp_path):
 
     assert provider.role_id == "role-from-file"
     assert provider.secret_id == "secret-from-file"
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="direct-role",
+    VAULT_SECRET_ID="direct-secret",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+)
+def test_vault_key_provider_raises_for_missing_credential_file(monkeypatch, tmp_path):
+    missing_role_file = tmp_path / "missing-role-id"
+    monkeypatch.setenv("VAULT_ROLE_ID_FILE", str(missing_role_file))
+    monkeypatch.delenv("VAULT_SECRET_ID_FILE", raising=False)
+
+    with pytest.raises(ImproperlyConfigured, match="VAULT_ROLE_ID_FILE could not be read"):
+        VaultKeyProvider()
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+    VAULT_NAMESPACE="admin/linkapro",
+    VAULT_AUTH_TIMEOUT_SECONDS=7,
+)
+def test_vault_key_provider_successfully_authenticates_with_approle(monkeypatch):
+    provider = VaultKeyProvider()
+    calls = []
+
+    def request(method, url, headers=None, json=None, timeout=None):
+        calls.append({"method": method, "url": url, "headers": dict(headers or {}), "json": json, "timeout": timeout})
+        return _Response(payload={"auth": {"client_token": "vault-token", "lease_duration": 300}})
+
+    monkeypatch.setattr(provider.session, "request", request)
+
+    assert provider._get_token() == "vault-token"
+
+    assert calls == [
+        {
+            "method": "POST",
+            "url": "https://vault.internal:8200/v1/auth/approle/login",
+            "headers": {},
+            "json": {"role_id": "role-id", "secret_id": "secret-id"},
+            "timeout": 7,
+        }
+    ]
+    assert provider.session.headers["X-Vault-Namespace"] == "admin/linkapro"
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+    VAULT_NAMESPACE="",
+)
+def test_vault_key_provider_omits_namespace_header_when_not_configured():
+    provider = VaultKeyProvider()
+
+    assert "X-Vault-Namespace" not in provider.session.headers
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+    VAULT_CACERT="/etc/ssl/linkapro-vault-ca.pem",
+)
+def test_vault_key_provider_passes_tls_ca_path_to_requests(monkeypatch):
+    provider = VaultKeyProvider()
+    calls = []
+
+    def request(method, url, headers=None, json=None, timeout=None, verify=None):
+        calls.append({"url": url, "verify": verify})
+        if url.endswith("/auth/approle/login"):
+            return _Response(payload={"auth": {"client_token": "vault-token", "lease_duration": 300}})
+        return _Response(payload={"data": {"ciphertext": "vault:v1:ciphertext"}})
+
+    monkeypatch.setattr(provider.session, "request", request)
+
+    provider.wrap_dek(b"0" * 32)
+
+    assert [call["verify"] for call in calls] == [
+        "/etc/ssl/linkapro-vault-ca.pem",
+        "/etc/ssl/linkapro-vault-ca.pem",
+    ]
 
 
 @override_settings(
