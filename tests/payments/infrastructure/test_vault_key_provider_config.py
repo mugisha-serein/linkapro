@@ -205,8 +205,10 @@ def test_vault_key_provider_requires_exactly_32_byte_dek(monkeypatch, bad_dek):
     ("exc", "expected"),
     [
         (requests.ConnectionError("connection leaked detail"), InfrastructureUnavailableError),
+        (requests.ConnectTimeout("connection timeout leaked detail"), InfrastructureUnavailableError),
+        (requests.ReadTimeout("read timeout leaked detail"), InfrastructureUnavailableError),
         (requests.Timeout("timeout leaked detail"), InfrastructureUnavailableError),
-        (requests.exceptions.SSLError("tls leaked detail"), InfrastructureUnavailableError),
+        (requests.exceptions.SSLError("tls verification leaked detail"), InfrastructureUnavailableError),
     ],
 )
 @override_settings(
@@ -223,6 +225,37 @@ def test_vault_key_provider_maps_transport_failures_without_raw_detail(monkeypat
         provider.wrap_dek(b"0" * 32)
 
     assert "leaked detail" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_message"),
+    [
+        (_Response(json_error=ValueError("raw auth json"), status_code=200), "not valid JSON"),
+        (
+            _Response(payload={"auth": {"lease_duration": 300}}, status_code=200),
+            "missing required fields",
+        ),
+        (
+            _Response(payload={"auth": {"client_token": "vault-token"}}, status_code=200),
+            "missing required fields",
+        ),
+    ],
+)
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+)
+def test_vault_key_provider_maps_invalid_auth_responses(monkeypatch, response, expected_message):
+    provider = VaultKeyProvider()
+    monkeypatch.setattr(provider.session, "request", lambda *args, **kwargs: response)
+
+    with pytest.raises(KeyProviderError) as raised:
+        provider.wrap_dek(b"0" * 32)
+
+    assert expected_message in str(raised.value)
+    assert "raw auth json" not in str(raised.value)
 
 
 @pytest.mark.parametrize(
@@ -300,6 +333,58 @@ def test_vault_key_provider_validates_encrypt_ciphertext_format(monkeypatch, cip
 
     with pytest.raises(KeyProviderError, match="ciphertext"):
         provider.wrap_dek(b"0" * 32)
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+)
+def test_vault_key_provider_successfully_wraps_32_byte_dek(monkeypatch):
+    provider = VaultKeyProvider()
+    dek = b"0" * 32
+    calls = []
+
+    def request(method, url, headers=None, json=None, timeout=None):
+        calls.append({"url": url, "json": json})
+        if url.endswith("/auth/approle/login"):
+            return _Response(payload={"auth": {"client_token": "vault-token", "lease_duration": 300}})
+        return _Response(payload={"data": {"ciphertext": "vault:v1:ciphertext"}})
+
+    monkeypatch.setattr(provider.session, "request", request)
+
+    assert provider.wrap_dek(dek) == b"vault:v1:ciphertext"
+    assert calls[1]["json"] == {"plaintext": base64.b64encode(dek).decode("ascii")}
+
+
+@override_settings(
+    VAULT_ADDR="https://vault.internal:8200",
+    VAULT_ROLE_ID="role-id",
+    VAULT_SECRET_ID="secret-id",
+    VAULT_TRANSIT_KEY_NAME="linkapro-payments-kek",
+)
+def test_vault_key_provider_successfully_unwraps_32_byte_dek(monkeypatch):
+    provider = VaultKeyProvider()
+    provider._token = "vault-token"
+    provider._token_expires_at = time.monotonic() + 300
+    dek = b"1" * 32
+    calls = []
+
+    def request(method, url, headers=None, json=None, timeout=None):
+        calls.append({"url": url, "headers": dict(headers or {}), "json": json})
+        return _Response(payload={"data": {"plaintext": base64.b64encode(dek).decode("ascii")}})
+
+    monkeypatch.setattr(provider.session, "request", request)
+
+    assert provider.unwrap_dek(b"vault:v1:ciphertext") == dek
+    assert calls == [
+        {
+            "url": "https://vault.internal:8200/v1/transit/decrypt/linkapro-payments-kek",
+            "headers": {"X-Vault-Token": "vault-token"},
+            "json": {"ciphertext": "vault:v1:ciphertext"},
+        }
+    ]
 
 
 @override_settings(
