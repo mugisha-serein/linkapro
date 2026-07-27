@@ -1,6 +1,6 @@
 import pytest
 
-from infrastructure.adapters.google_oauth_adapter import (
+from infrastructure.identity.google_oauth_adapter import (
     GoogleOAuthAdapter,
     GoogleOAuthAdapterError,
 )
@@ -53,8 +53,8 @@ class TestGoogleOAuthAdapter:
                 },
             )
 
-        monkeypatch.setattr("infrastructure.adapters.google_oauth_adapter.requests.post", fake_post)
-        monkeypatch.setattr("infrastructure.adapters.google_oauth_adapter.requests.get", fake_get)
+        monkeypatch.setattr("infrastructure.identity.google_oauth_adapter.requests.post", fake_post)
+        monkeypatch.setattr("infrastructure.identity.google_oauth_adapter.requests.get", fake_get)
 
         with pytest.raises(GoogleOAuthAdapterError, match="audience mismatch"):
             adapter.exchange_code("oauth-code")
@@ -86,8 +86,8 @@ class TestGoogleOAuthAdapter:
                 },
             )
 
-        monkeypatch.setattr("infrastructure.adapters.google_oauth_adapter.requests.post", fake_post)
-        monkeypatch.setattr("infrastructure.adapters.google_oauth_adapter.requests.get", fake_get)
+        monkeypatch.setattr("infrastructure.identity.google_oauth_adapter.requests.post", fake_post)
+        monkeypatch.setattr("infrastructure.identity.google_oauth_adapter.requests.get", fake_get)
 
         with pytest.raises(GoogleOAuthAdapterError, match="issuer mismatch"):
             adapter.exchange_code("oauth-code")
@@ -119,8 +119,8 @@ class TestGoogleOAuthAdapter:
                 },
             )
 
-        monkeypatch.setattr("infrastructure.adapters.google_oauth_adapter.requests.post", fake_post)
-        monkeypatch.setattr("infrastructure.adapters.google_oauth_adapter.requests.get", fake_get)
+        monkeypatch.setattr("infrastructure.identity.google_oauth_adapter.requests.post", fake_post)
+        monkeypatch.setattr("infrastructure.identity.google_oauth_adapter.requests.get", fake_get)
 
         data = adapter.exchange_code("oauth-code")
         assert data["access_token"] == "access"
@@ -138,7 +138,7 @@ class TestGoogleOAuthAdapter:
                 },
             )
 
-        monkeypatch.setattr("infrastructure.adapters.google_oauth_adapter.requests.get", fake_get)
+        monkeypatch.setattr("infrastructure.identity.google_oauth_adapter.requests.get", fake_get)
 
         with pytest.raises(GoogleOAuthAdapterError, match="not verified"):
             adapter.get_user_info("access")

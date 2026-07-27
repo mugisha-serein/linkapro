@@ -58,8 +58,8 @@ from .throttles import (
     record_login_failure,
 )
 from django_app.identity.models import PasswordResetToken, User
-from infrastructure.adapters.django_identity_event_outbox import DjangoIdentityEventOutboxDispatcher
-from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_value_hash
+from infrastructure.identity.django_identity_event_outbox import DjangoIdentityEventOutboxDispatcher
+from infrastructure.identity.jwt_token_service import JWTTokenService, password_reset_value_hash
 
 logger = logging.getLogger(__name__)
 

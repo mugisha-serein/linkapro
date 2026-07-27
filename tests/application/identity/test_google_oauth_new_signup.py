@@ -1,10 +1,10 @@
 import pytest
 
 from application.identity.use_cases.google_login import GoogleLoginUseCase
-from infrastructure.adapters.django_identity_session_store import DjangoIdentitySessionStore
-from infrastructure.adapters.jwt_token_service import JWTTokenService
-from infrastructure.repos.django_oauth_token_repository import DjangoOAuthTokenRepository
-from infrastructure.repos.django_user_repository import DjangoUserRepository
+from infrastructure.identity.django_identity_session_store import DjangoIdentitySessionStore
+from infrastructure.identity.jwt_token_service import JWTTokenService
+from infrastructure.identity.django_oauth_token_repository import DjangoOAuthTokenRepository
+from infrastructure.identity.django_user_repository import DjangoUserRepository
 from django_app.identity.models import OAuthToken as DjangoOAuthToken, User as DjangoUser
 
 

@@ -11,9 +11,9 @@ from rest_framework.test import APIClient
 
 from domain.identity.entities import User, UserRole
 from domain.identity.value_objects import Email, PasswordHash, PlainPassword, TOTPSecret
-from infrastructure.repos.django_user_repository import DjangoUserRepository
-from infrastructure.adapters.password_hasher import DjangoPasswordHasher
-from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_token_hash
+from infrastructure.identity.django_user_repository import DjangoUserRepository
+from infrastructure.identity.shared.security_primitives import DjangoPasswordHasher
+from infrastructure.identity.jwt_token_service import JWTTokenService, password_reset_token_hash
 from django_app.identity.models import (
     IdentityDomainEventOutbox,
     PasswordResetEmailDelivery,
@@ -1173,7 +1173,7 @@ class TestIdentityViews:
             last_name="Token",
             role="planner",
         )
-        caplog.set_level(logging.INFO, logger="infrastructure.adapters.jwt_token_service")
+        caplog.set_level(logging.INFO, logger="infrastructure.identity.jwt_token_service")
 
         token = _issue_reset_token(user)
 

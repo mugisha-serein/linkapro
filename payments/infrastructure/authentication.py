@@ -6,8 +6,8 @@ from django_app.identity.session_revocation import (
     token_version_matches_user,
 )
 from django_app.identity.session_tracking import SESSION_ID_CLAIM, identity_session_is_active
-from infrastructure.adapters.jwt_token_service import accepted_identity_token_env
-from infrastructure.adapters.redis_token_blacklist import RedisTokenBlacklist
+from infrastructure.identity.jwt_token_service import accepted_identity_token_env
+from infrastructure.identity.shared.security_primitives import RedisTokenBlacklist
 
 
 class HardenedJWTAuthentication(JWTAuthentication):

@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from infrastructure.adapters.django_identity_event_outbox import DjangoIdentityEventOutboxDispatcher
+from infrastructure.identity.django_identity_event_outbox import DjangoIdentityEventOutboxDispatcher
 
 
 @dataclass(frozen=True)
