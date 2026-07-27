@@ -51,7 +51,7 @@ from .errors import (
     InvalidTwoFactorCodeError,
     UserNotFoundError,
 )
-from .mappers import to_user_dto
+from .shared.mappers import to_user_dto
 from .queries import GetUserByIdQuery
 
 

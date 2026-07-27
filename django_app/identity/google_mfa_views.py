@@ -4,7 +4,7 @@ from django.shortcuts import redirect
 from django.views import View
 
 from application.identity.auth_policy import AuthenticationStatus
-from application.identity.oauth_state import (
+from application.identity.shared.oauth_state import (
     OAUTH_STATE_COOKIE_NAME,
     clear_oauth_state_cookie,
     consume_oauth_state,
@@ -31,7 +31,7 @@ class GoogleLoginView(View):
         if not _allow_google_oauth_request(request, self):
             return _redirect_error("oauth_rate_limited")
 
-        from application.identity.oauth_state import ALLOWED_OAUTH_SIGNUP_ROLES
+        from application.identity.shared.oauth_state import ALLOWED_OAUTH_SIGNUP_ROLES
 
         signup_role = (request.GET.get("role") or "").strip().lower()
         if signup_role not in ALLOWED_OAUTH_SIGNUP_ROLES:
