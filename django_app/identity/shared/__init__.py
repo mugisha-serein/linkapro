@@ -1,0 +1,1 @@
+"""Shared identity view helpers."""

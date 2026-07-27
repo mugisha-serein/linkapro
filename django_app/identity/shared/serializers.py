@@ -15,6 +15,7 @@ def validate_plain_password(value):
         raise serializers.ValidationError(str(e))
     return value
 
+
 class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
@@ -41,6 +42,7 @@ class RegisterSerializer(serializers.Serializer):
             role=self.validated_data["role"],
         )
 
+
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, trim_whitespace=False)
@@ -50,7 +52,8 @@ class LoginSerializer(serializers.Serializer):
             email=Email(self.validated_data["email"]),
             plain_password=self.validated_data["password"],
         )
-    
+
+
 class TwoFactorLoginSerializer(serializers.Serializer):
     temp_token = serializers.CharField()
     token = serializers.CharField(min_length=6, max_length=6)

@@ -1,5 +1,5 @@
 from domain.identity.value_objects import PlainPassword, PasswordHash
-from infrastructure.adapters.password_hasher import DjangoPasswordHasher
+from infrastructure.identity.shared.security_primitives import DjangoPasswordHasher
 
 def test_hash_and_verify():
     hasher = DjangoPasswordHasher()

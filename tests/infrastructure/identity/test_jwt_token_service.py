@@ -5,7 +5,7 @@ import jwt
 from django.test import override_settings
 from django.conf import settings
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
-from infrastructure.adapters.jwt_token_service import JWTTokenService
+from infrastructure.identity.jwt_token_service import JWTTokenService
 
 
 @override_settings(PASSWORD_RESET_TIMEOUT=timedelta(hours=1))
@@ -144,7 +144,7 @@ def test_legacy_payment_env_password_reset_token_accepted(caplog):
         settings.SECRET_KEY,
         algorithm="HS256",
     )
-    caplog.set_level("WARNING", logger="infrastructure.adapters.jwt_token_service")
+    caplog.set_level("WARNING", logger="infrastructure.identity.jwt_token_service")
 
     assert JWTTokenService().decode_password_reset_token_payload(token)["user_id"] == "user-123"
     assert "legacy_payment_env_token_accepted_for_identity" in caplog.text
@@ -170,7 +170,7 @@ def test_legacy_payment_env_password_reset_token_rejected_when_disabled():
 
 @override_settings(TOKEN_ENV="")
 def test_missing_token_env_raises_clear_error(caplog):
-    caplog.set_level("ERROR", logger="infrastructure.adapters.jwt_token_service")
+    caplog.set_level("ERROR", logger="infrastructure.identity.jwt_token_service")
 
     with pytest.raises(ValueError, match="TOKEN_ENV must be configured"):
         JWTTokenService().create_password_reset_token("user-123")

@@ -11,7 +11,7 @@ from rest_framework.exceptions import APIException
 from rest_framework.throttling import SimpleRateThrottle
 
 from django_app.common.api_responses import api_error_payload
-from django_app.identity.cookies import extract_refresh_token
+from django_app.identity.shared.cookies import extract_refresh_token
 from django_app.identity.throttles import get_client_ip, rate_limit_hash
 
 logger = logging.getLogger(__name__)

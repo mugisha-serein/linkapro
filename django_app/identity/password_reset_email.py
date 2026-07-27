@@ -7,7 +7,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from django_app.identity.models import PasswordResetEmailDelivery, User
-from infrastructure.adapters.jwt_token_service import JWTTokenService
+from infrastructure.identity.jwt_token_service import JWTTokenService
 from infrastructure.adapters.notifications.resend_email_sender import ResendEmailSender
 
 logger = logging.getLogger(__name__)

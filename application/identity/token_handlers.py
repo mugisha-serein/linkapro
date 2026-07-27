@@ -11,7 +11,7 @@ from application.identity.ports import (
     ISessionStore,
     SESSION_ID_CLAIM,
 )
-from infrastructure.adapters.jwt_token_service import accepted_identity_token_env, identity_token_env
+from infrastructure.identity.jwt_token_service import accepted_identity_token_env, identity_token_env
 
 
 class TokenCommandHandlers:

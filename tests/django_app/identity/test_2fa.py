@@ -5,7 +5,7 @@ import pyotp
 
 from domain.identity.value_objects import TOTPSecret
 from django_app.identity.models import User
-from infrastructure.repos.django_user_repository import DjangoUserRepository
+from infrastructure.identity.django_user_repository import DjangoUserRepository
 
 pytestmark = pytest.mark.django_db
 

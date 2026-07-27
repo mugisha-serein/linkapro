@@ -11,9 +11,9 @@ from rest_framework.test import APIClient
 
 from domain.identity.entities import User, UserRole
 from domain.identity.value_objects import Email, PasswordHash, PlainPassword, TOTPSecret
-from infrastructure.repos.django_user_repository import DjangoUserRepository
-from infrastructure.adapters.password_hasher import DjangoPasswordHasher
-from infrastructure.adapters.jwt_token_service import JWTTokenService, password_reset_token_hash
+from infrastructure.identity.django_user_repository import DjangoUserRepository
+from infrastructure.identity.shared.security_primitives import DjangoPasswordHasher
+from infrastructure.identity.jwt_token_service import JWTTokenService, password_reset_token_hash
 from django_app.identity.models import (
     IdentityDomainEventOutbox,
     PasswordResetEmailDelivery,
@@ -41,6 +41,7 @@ PASSWORD_RESET_TOKEN_INVALID_RESPONSE = {
     "message": "This reset link has expired or is invalid.",
     "field_errors": {"token": ["Invalid or expired reset token."]},
 }
+COOKIE_AUTH_ORIGIN = "http://localhost:3000"
 
 
 class _KeyProvider:
@@ -112,7 +113,7 @@ class TestIdentityViews:
         url = reverse("register")
         data = {
             "email": "new@example.com",
-            "password": "StrongPass1",
+            "password": "StrongPass1!",
             "first_name": "Test",
             "last_name": "User",
             "role": "planner",
@@ -127,7 +128,7 @@ class TestIdentityViews:
         assert user is not None
 
     def test_register_duplicate_email(self):
-        plain = PlainPassword("StrongPass1")
+        plain = PlainPassword("StrongPass1!")
         hashed = self.hasher.hash(plain)
         user = User(
             id=uuid.uuid4(),
@@ -142,7 +143,7 @@ class TestIdentityViews:
         url = reverse("register")
         data = {
             "email": "exists@example.com",
-            "password": "StrongPass1",
+            "password": "StrongPass1!",
             "first_name": "Test",
             "last_name": "User",
             "role": "planner",
@@ -161,7 +162,7 @@ class TestIdentityViews:
             register_url,
             {
                 "email": "fresh@example.com",
-                "password": "StrongPass1",
+                "password": "StrongPass1!",
                 "first_name": "Fresh",
                 "last_name": "User",
                 "role": "planner",
@@ -174,7 +175,7 @@ class TestIdentityViews:
             login_url,
             {
                 "email": "fresh@example.com",
-                "password": "StrongPass1",
+                "password": "StrongPass1!",
             },
             format="json",
         )
@@ -189,7 +190,7 @@ class TestIdentityViews:
         assert "refresh_token" in login_response.cookies
 
     def test_login_success(self):
-        plain = PlainPassword("StrongPass1")
+        plain = PlainPassword("StrongPass1!")
         hashed = self.hasher.hash(plain)
         user = User(
             id=uuid.uuid4(),
@@ -203,12 +204,12 @@ class TestIdentityViews:
         self.repo.save(user)
 
     def test_login_wrong_password(self):
-        plain = PlainPassword("Correct1")
+        plain = PlainPassword("Correct1!")
         hashed = self.hasher.hash(plain)
 
         # Sanity check: hasher works as expected
-        assert self.hasher.verify(PlainPassword("Correct1"), PasswordHash(hashed)) is True
-        assert self.hasher.verify(PlainPassword("WrongPass1"), PasswordHash(hashed)) is False
+        assert self.hasher.verify(PlainPassword("Correct1!"), PasswordHash(hashed)) is True
+        assert self.hasher.verify(PlainPassword("WrongPass1!"), PasswordHash(hashed)) is False
 
         user = User(
             id=uuid.uuid4(),
@@ -221,7 +222,7 @@ class TestIdentityViews:
         self.repo.save(user)
 
         url = reverse("login")
-        data = {"email": "wrong-login@example.com", "password": "WrongPass1"}
+        data = {"email": "wrong-login@example.com", "password": "WrongPass1!"}
         response = self.client.post(url, data, format="json")
         assert response.status_code == 401
         assert response.data["success"] is False
@@ -233,7 +234,7 @@ class TestIdentityViews:
         for index in range(2):
             response = self.client.post(
                 reverse("login"),
-                {"email": f"ip-throttle-{index}@example.com", "password": "WrongPass1"},
+                {"email": f"ip-throttle-{index}@example.com", "password": "WrongPass1!"},
                 format="json",
                 REMOTE_ADDR="203.0.113.10",
             )
@@ -241,7 +242,7 @@ class TestIdentityViews:
 
         response = self.client.post(
             reverse("login"),
-            {"email": "ip-throttle-final@example.com", "password": "WrongPass1"},
+            {"email": "ip-throttle-final@example.com", "password": "WrongPass1!"},
             format="json",
             REMOTE_ADDR="203.0.113.10",
         )
@@ -257,7 +258,7 @@ class TestIdentityViews:
         for index in range(2):
             response = self.client.post(
                 reverse("login"),
-                {"email": "email-throttle@example.com", "password": "WrongPass1"},
+                {"email": "email-throttle@example.com", "password": "WrongPass1!"},
                 format="json",
                 REMOTE_ADDR=f"203.0.113.{index + 20}",
             )
@@ -265,7 +266,7 @@ class TestIdentityViews:
 
         response = self.client.post(
             reverse("login"),
-            {"email": "email-throttle@example.com", "password": "WrongPass1"},
+            {"email": "email-throttle@example.com", "password": "WrongPass1!"},
             format="json",
             REMOTE_ADDR="203.0.113.30",
         )
@@ -278,7 +279,7 @@ class TestIdentityViews:
         for index in range(2):
             response = self.client.post(
                 reverse("login"),
-                {"email": "user-throttle@example.com", "password": "WrongPass1"},
+                {"email": "user-throttle@example.com", "password": "WrongPass1!"},
                 format="json",
                 REMOTE_ADDR=f"203.0.113.{index + 40}",
             )
@@ -286,7 +287,7 @@ class TestIdentityViews:
 
         response = self.client.post(
             reverse("login"),
-            {"email": "user-throttle@example.com", "password": "WrongPass1"},
+            {"email": "user-throttle@example.com", "password": "WrongPass1!"},
             format="json",
             REMOTE_ADDR="203.0.113.50",
         )
@@ -299,14 +300,14 @@ class TestIdentityViews:
         for _ in range(2):
             response = self.client.post(
                 reverse("login"),
-                {"email": "progressive@example.com", "password": "WrongPass1"},
+                {"email": "progressive@example.com", "password": "WrongPass1!"},
                 format="json",
             )
             assert response.status_code == 401
 
         response = self.client.post(
             reverse("login"),
-            {"email": "progressive@example.com", "password": "WrongPass1"},
+            {"email": "progressive@example.com", "password": "WrongPass1!"},
             format="json",
         )
 
@@ -317,14 +318,14 @@ class TestIdentityViews:
     def test_successful_login_clears_progressive_failure_counter(self):
         user = DjangoUser.objects.create_user(
             email="clear-failure@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Clear",
             last_name="Failure",
             role="planner",
         )
         self.client.post(
             reverse("login"),
-            {"email": "clear-failure@example.com", "password": "WrongPass1"},
+            {"email": "clear-failure@example.com", "password": "WrongPass1!"},
             format="json",
         )
 
@@ -333,7 +334,7 @@ class TestIdentityViews:
 
         response = self.client.post(
             reverse("login"),
-            {"email": "clear-failure@example.com", "password": "StrongPass1"},
+            {"email": "clear-failure@example.com", "password": "StrongPass1!"},
             format="json",
         )
 
@@ -350,7 +351,7 @@ class TestIdentityViews:
 
         response = self.client.post(
             reverse("login"),
-            {"email": "cache-failure@example.com", "password": "WrongPass1"},
+            {"email": "cache-failure@example.com", "password": "WrongPass1!"},
             format="json",
         )
 
@@ -373,7 +374,7 @@ class TestIdentityViews:
     def test_login_mfa_required_uses_standard_contract(self):
         user = DjangoUser.objects.create_user(
             email="mfa-required@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Mfa",
             last_name="Required",
             role="planner",
@@ -382,7 +383,7 @@ class TestIdentityViews:
 
         response = self.client.post(
             reverse("login"),
-            {"email": "mfa-required@example.com", "password": "StrongPass1"},
+            {"email": "mfa-required@example.com", "password": "StrongPass1!"},
             format="json",
         )
 
@@ -395,7 +396,7 @@ class TestIdentityViews:
     def test_login_two_factor_invalid_code_uses_standard_contract(self):
         user = DjangoUser.objects.create_user(
             email="mfa-invalid@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Mfa",
             last_name="Invalid",
             role="planner",
@@ -476,7 +477,7 @@ class TestIdentityViews:
     def test_profile_endpoint_returns_authenticated_user(self):
         user = DjangoUser.objects.create_user(
             email="profile@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Profile",
             last_name="User",
             role="planner",
@@ -494,7 +495,7 @@ class TestIdentityViews:
     def test_profile_update_preserves_password_setup_state(self):
         user = DjangoUser.objects.create_user(
             email="vendor-profile@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Vendor",
             last_name="User",
             role="vendor",
@@ -526,7 +527,7 @@ class TestIdentityViews:
 
         response = self.client.post(
             reverse("setup-password"),
-            {"password": "StrongPass1"},
+            {"password": "StrongPass1!"},
             format="json",
         )
 
@@ -543,7 +544,7 @@ class TestIdentityViews:
             reverse("register"),
             {
                 "email": "register-ip-one@example.com",
-                "password": "StrongPass1",
+                "password": "StrongPass1!",
                 "first_name": "One",
                 "last_name": "User",
                 "role": "planner",
@@ -557,7 +558,7 @@ class TestIdentityViews:
             reverse("register"),
             {
                 "email": "register-ip-two@example.net",
-                "password": "StrongPass1",
+                "password": "StrongPass1!",
                 "first_name": "Two",
                 "last_name": "User",
                 "role": "planner",
@@ -575,7 +576,7 @@ class TestIdentityViews:
             reverse("register"),
             {
                 "email": "domain-one@example.org",
-                "password": "StrongPass1",
+                "password": "StrongPass1!",
                 "first_name": "One",
                 "last_name": "User",
                 "role": "planner",
@@ -589,7 +590,7 @@ class TestIdentityViews:
             reverse("register"),
             {
                 "email": "domain-two@example.org",
-                "password": "StrongPass1",
+                "password": "StrongPass1!",
                 "first_name": "Two",
                 "last_name": "User",
                 "role": "planner",
@@ -601,10 +602,11 @@ class TestIdentityViews:
         assert response.status_code == 429
         assert response.data["code"] == "registration_rate_limited"
 
+    @override_settings(COOKIE_AUTH_ALLOWED_ORIGINS=[COOKIE_AUTH_ORIGIN])
     def test_refresh_token_returns_access_token(self):
         user = DjangoUser.objects.create_user(
             email="refresh@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Refresh",
             last_name="User",
             role="planner",
@@ -612,13 +614,18 @@ class TestIdentityViews:
         self.client.force_authenticate(user=user)
         login_response = self.client.post(
             reverse("login"),
-            {"email": "refresh@example.com", "password": "StrongPass1"},
+            {"email": "refresh@example.com", "password": "StrongPass1!"},
             format="json",
         )
         refresh_token = login_response.cookies["refresh_token"].value
 
         self.client.credentials()
-        response = self.client.post(reverse("token-refresh"), {"refresh": refresh_token}, format="json")
+        response = self.client.post(
+            reverse("token-refresh"),
+            {"refresh": refresh_token},
+            format="json",
+            HTTP_ORIGIN=COOKIE_AUTH_ORIGIN,
+        )
         assert response.status_code == 200
         assert response.data["success"] is True
         assert response.data["code"] == "token_refreshed"
@@ -626,45 +633,52 @@ class TestIdentityViews:
         assert "user" in response.data["data"]
         assert "refresh_token" in response.cookies
 
+    @override_settings(COOKIE_AUTH_ALLOWED_ORIGINS=[COOKIE_AUTH_ORIGIN])
     def test_refresh_token_can_use_cookie(self):
         user = DjangoUser.objects.create_user(
             email="cookie-refresh@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Cookie",
             last_name="Refresh",
             role="planner",
         )
         login_response = self.client.post(
             reverse("login"),
-            {"email": "cookie-refresh@example.com", "password": "StrongPass1"},
+            {"email": "cookie-refresh@example.com", "password": "StrongPass1!"},
             format="json",
         )
         refresh_token = login_response.cookies["refresh_token"].value
 
         self.client.cookies["refresh_token"] = refresh_token
-        response = self.client.post(reverse("token-refresh"), format="json")
+        response = self.client.post(reverse("token-refresh"), format="json", HTTP_ORIGIN=COOKIE_AUTH_ORIGIN)
         assert response.status_code == 200
         assert response.data["success"] is True
         assert response.data["code"] == "token_refreshed"
         assert "access" in response.data["data"]
         assert "user" in response.data["data"]
 
+    @override_settings(COOKIE_AUTH_ALLOWED_ORIGINS=[COOKIE_AUTH_ORIGIN])
     def test_revoke_token_clears_cookies(self):
         user = DjangoUser.objects.create_user(
             email="revoke@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Revoke",
             last_name="User",
             role="planner",
         )
         login_response = self.client.post(
             reverse("login"),
-            {"email": "revoke@example.com", "password": "StrongPass1"},
+            {"email": "revoke@example.com", "password": "StrongPass1!"},
             format="json",
         )
         refresh_token = login_response.cookies["refresh_token"].value
 
-        response = self.client.post(reverse("token-revoke"), {"refresh": refresh_token}, format="json")
+        response = self.client.post(
+            reverse("token-revoke"),
+            {"refresh": refresh_token},
+            format="json",
+            HTTP_ORIGIN=COOKIE_AUTH_ORIGIN,
+        )
         assert response.status_code == 200
         assert response.data["success"] is True
         assert response.data["code"] == "session_revoked"
@@ -686,7 +700,7 @@ class TestIdentityViews:
         enqueued = {}
         DjangoUser.objects.create_user(
             email="reset@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Reset",
             last_name="User",
             role="planner",
@@ -746,7 +760,7 @@ class TestIdentityViews:
         monkeypatch.setattr("tasks.email_tasks.send_password_reset_email_task.delay", lambda *args: enqueued.append(args))
         DjangoUser.objects.create_user(
             email="inactive@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Inactive",
             last_name="User",
             role="planner",
@@ -780,7 +794,7 @@ class TestIdentityViews:
         enqueued = {}
         DjangoUser.objects.create_user(
             email="nolog@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="No",
             last_name="Log",
             role="planner",
@@ -812,7 +826,7 @@ class TestIdentityViews:
         mail.outbox = []
         DjangoUser.objects.create_user(
             email="fail@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Fail",
             last_name="User",
             role="planner",
@@ -855,7 +869,7 @@ class TestIdentityViews:
         )
         user = DjangoUser.objects.create_user(
             email="task-reset@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Task",
             last_name="Reset",
             role="planner",
@@ -891,7 +905,7 @@ class TestIdentityViews:
         mail.outbox = []
         inactive_user = DjangoUser.objects.create_user(
             email="inactive-task-reset@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Inactive",
             last_name="Task",
             role="planner",
@@ -913,7 +927,7 @@ class TestIdentityViews:
     def test_password_reset_email_delivery_failure_is_recorded(self, monkeypatch, caplog):
         user = DjangoUser.objects.create_user(
             email="task-fail@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Task",
             last_name="Fail",
             role="planner",
@@ -962,7 +976,7 @@ class TestIdentityViews:
         )
         user = DjangoUser.objects.create_user(
             email="task-nolog@example.com",
-            password="StrongPass1",
+            password="StrongPass1!",
             first_name="Task",
             last_name="NoLog",
             role="planner",
@@ -1173,7 +1187,7 @@ class TestIdentityViews:
             last_name="Token",
             role="planner",
         )
-        caplog.set_level(logging.INFO, logger="infrastructure.adapters.jwt_token_service")
+        caplog.set_level(logging.INFO, logger="infrastructure.identity.jwt_token_service")
 
         token = _issue_reset_token(user)
 

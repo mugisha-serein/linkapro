@@ -4,7 +4,7 @@ from datetime import datetime
 
 from domain.identity.entities import User, UserRole
 from domain.identity.value_objects import Email, PasswordHash, TOTPSecret
-from infrastructure.repos.django_user_repository import DjangoUserRepository
+from infrastructure.identity.django_user_repository import DjangoUserRepository
 from django_app.identity.models import User as DjangoUser
 
 
