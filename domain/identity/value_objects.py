@@ -224,14 +224,16 @@ class TOTPSecret:
         normalized = self.value.strip().upper()
         object.__setattr__(self, "value", normalized)
         unpadded = normalized.rstrip("=")
-        if len(unpadded) < 16:
-            raise ValueError("TOTP secret must be at least 16 characters long")
         if not re.match(r'^[A-Z2-7]+=*$', normalized):
             raise ValueError("Invalid TOTP secret format")
         try:
             base64.b32decode(normalized, casefold=False)
         except (binascii.Error, ValueError):
             raise ValueError("Invalid TOTP secret format") from None
+        if "=" in normalized and len(unpadded) < 16:
+            raise ValueError("Invalid TOTP secret format")
+        if len(unpadded) < 16:
+            raise ValueError("TOTP secret must be at least 16 characters long")
 
     @property
     def raw_value(self) -> str:
