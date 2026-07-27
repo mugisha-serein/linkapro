@@ -63,7 +63,7 @@ class TestGoogleOAuthViews:
         self.client = APIClient()
 
     def test_google_login_redirects_to_google_auth(self, monkeypatch):
-        from django_app.identity import google_mfa_views
+        from django_app.identity.views import mfa as google_mfa_views
 
         monkeypatch.setattr(
             google_mfa_views,
@@ -83,7 +83,7 @@ class TestGoogleOAuthViews:
         assert "reason=invalid_role" in response.url
 
     def test_google_login_is_ip_throttled(self, monkeypatch, settings):
-        from django_app.identity import google_mfa_views
+        from django_app.identity.views import mfa as google_mfa_views
 
         cache.clear()
         settings.DEBUG = True
@@ -136,7 +136,7 @@ class TestGoogleOAuthViews:
         assert second_response.url == "http://localhost:3000/auth/error?reason=oauth_rate_limited"
 
     def test_google_callback_redirects_to_2fa_when_required(self, monkeypatch, settings):
-        from django_app.identity import google_mfa_views
+        from django_app.identity.views import mfa as google_mfa_views
 
         settings.DEBUG = True
         settings.FRONTEND_URL = "http://localhost:3000"
@@ -167,7 +167,7 @@ class TestGoogleOAuthViews:
         assert response["Pragma"] == "no-cache"
 
     def test_google_callback_redirects_success_with_refresh_cookie_only(self, monkeypatch, settings):
-        from django_app.identity import google_mfa_views
+        from django_app.identity.views import mfa as google_mfa_views
 
         settings.DEBUG = True
         settings.FRONTEND_URL = "http://localhost:3000"

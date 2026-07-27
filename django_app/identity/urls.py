@@ -1,19 +1,18 @@
 from django.urls import path
-from .views import (
-    RegisterView,
-    LoginView,
+from .views.auth import LoginView, ProfileView, RegisterView
+from .views.mfa import (
     EnableTwoFactorView,
+    GoogleCallbackView,
+    GoogleLoginView,
+    LoginTwoFactorView,
     VerifyTwoFactorSetupView,
-    ProfileView,
-    ForgotPasswordView,
 )
-from .google_mfa_views import GoogleCallbackView, GoogleLoginView
-from .mfa_views import LoginTwoFactorView
-from .secure_password_views import (
+from .views.password import (
+    ForgotPasswordView,
     SessionRevokingResetPasswordView,
     SessionRevokingSetupPasswordView,
 )
-from .session_views import TokenRefreshView, TokenRevokeView
+from .views.session import TokenRefreshView, TokenRevokeView
 from .token_throttles import (
     TokenRefreshFingerprintThrottle,
     TokenRefreshIPThrottle,
