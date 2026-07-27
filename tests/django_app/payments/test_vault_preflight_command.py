@@ -109,6 +109,22 @@ def test_vault_preflight_fails_when_round_trip_mismatches(monkeypatch):
 
 
 @override_settings(VAULT_ADDR="https://vault.internal:8200")
+def test_vault_preflight_failure_path_does_not_leak_secrets(monkeypatch):
+    from django_app.payments.management.commands import vault_preflight
+
+    monkeypatch.setattr(vault_preflight, "VaultKeyProvider", lambda: _Provider(mismatch=True))
+    stdout = StringIO()
+
+    with pytest.raises(CommandError) as raised:
+        call_command("vault_preflight", stdout=stdout)
+
+    failure_text = f"{stdout.getvalue()}\n{raised.value}"
+    assert "round-trip mismatch" in failure_text
+    assert "vault-token-secret" not in failure_text
+    assert "ciphertext-secret" not in failure_text
+
+
+@override_settings(VAULT_ADDR="https://vault.internal:8200")
 def test_vault_preflight_does_not_print_response_body(monkeypatch):
     from django_app.payments.management.commands import vault_preflight
 

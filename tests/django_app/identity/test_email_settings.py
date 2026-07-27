@@ -165,6 +165,32 @@ def test_production_settings_accept_vault_credential_file_env(tmp_path):
     assert "ok" in result.stdout
 
 
+def test_development_and_test_settings_allow_local_http_vault_addresses():
+    env = os.environ.copy()
+    env.update(
+        {
+            "PYTHONPATH": str(PROJECT_ROOT),
+            "DJANGO_SETTINGS_MODULE": "django_app.settings.development",
+            "VAULT_ADDR": "http://127.0.0.1:8200",
+        }
+    )
+
+    result = _run_settings_snippet(
+        "\n".join(
+            [
+                "from django_app.settings import development, test",
+                "assert development.VAULT_ADDR == 'http://127.0.0.1:8200'",
+                "assert test.VAULT_ADDR == 'http://127.0.0.1:8200'",
+                "print('ok')",
+            ]
+        ),
+        env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
+
 def test_production_settings_reject_blank_vault_credential_file(tmp_path):
     role_file = tmp_path / "vault_role_id"
     role_file.write_text(" \n", encoding="utf-8")
