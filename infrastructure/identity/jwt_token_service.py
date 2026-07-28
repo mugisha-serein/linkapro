@@ -13,6 +13,18 @@ from rest_framework_simplejwt.tokens import (
     AccessToken as SimpleAccessToken,
     RefreshToken,
 )
+from rest_framework_simplejwt.exceptions import TokenError
+
+from application.identity.shared.dtos.token_claims import (
+    AccessTokenClaims,
+    IssuedTokenPair,
+    RefreshTokenClaims,
+    RotatedTokenPairRequest,
+    StepUpTokenRequest,
+    TokenBootstrapClaims,
+)
+from application.identity.shared.ports import SESSION_ID_CLAIM
+from domain.identity.sessions import MalformedRefreshToken
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +46,13 @@ class JWTTokenService:
         return accepted_identity_token_env(payload.get("env"), context="jwt_token_service")
 
     @staticmethod
-    def _apply_bootstrap_claims(token, bootstrap_claims: dict | None) -> None:
+    def _apply_session_claims(token, bootstrap_claims: dict | None) -> None:
         if not bootstrap_claims:
             return
-        for key, value in bootstrap_claims.items():
-            token[key] = value
+        for key in (SESSION_ID_CLAIM, "scope", "step_up"):
+            value = bootstrap_claims.get(key)
+            if value is not None:
+                token[key] = value
 
     @staticmethod
     def _apply_auth_token_version(token, auth_token_version: int | None, bootstrap_claims: dict | None) -> None:
@@ -59,15 +73,17 @@ class JWTTokenService:
         token["user_id"] = user_id
         token["role"] = role
         token["env"] = self._token_env()
+        token["step_up"] = False
         if family_id:
             token["family"] = family_id
-        self._apply_bootstrap_claims(token, bootstrap_claims)
+        self._apply_session_claims(token, bootstrap_claims)
         self._apply_auth_token_version(token, auth_token_version, bootstrap_claims)
         return str(token)
 
     def create_refresh_token(
         self,
         user_id: str,
+        role: str | None = None,
         family_id: str | None = None,
         bootstrap_claims: dict | None = None,
         auth_token_version: int | None = None,
@@ -75,9 +91,12 @@ class JWTTokenService:
         token = RefreshToken()
         token["user_id"] = user_id
         token["env"] = self._token_env()
+        token["step_up"] = False
+        if role:
+            token["role"] = role
         if family_id:
             token["family"] = family_id
-        self._apply_bootstrap_claims(token, bootstrap_claims)
+        self._apply_session_claims(token, bootstrap_claims)
         self._apply_auth_token_version(token, auth_token_version, bootstrap_claims)
         return str(token)
 
@@ -98,11 +117,117 @@ class JWTTokenService:
         )
         refresh = self.create_refresh_token(
             user_id,
+            role,
             family_id=family_id,
             bootstrap_claims=bootstrap_claims,
             auth_token_version=auth_token_version,
         )
         return access, refresh
+
+    def inspect_refresh_token(self, refresh_token: str, *, context: str) -> RefreshTokenClaims:
+        try:
+            token = RefreshToken(refresh_token)
+        except TokenError:
+            raise MalformedRefreshToken("Invalid refresh token")
+
+        jti = token.get("jti")
+        family = token.get("family")
+        if not jti:
+            raise MalformedRefreshToken("Malformed refresh token")
+        if not family:
+            raise MalformedRefreshToken("Malformed refresh token family")
+        if accepted_identity_token_env(token.get("env"), context=context) is None:
+            raise MalformedRefreshToken("Token environment mismatch")
+
+        return RefreshTokenClaims(
+            raw=refresh_token,
+            jti=str(jti),
+            family=str(family),
+            user_id=str(token.get("user_id")) if token.get("user_id") else None,
+            session_id=str(token.get(SESSION_ID_CLAIM)) if token.get(SESSION_ID_CLAIM) else None,
+            issued_at=token.get("iat"),
+            expires_at=int(token["exp"]),
+            auth_token_version=token.get(AUTH_TOKEN_VERSION_CLAIM),
+            role=str(token.get("role", "")),
+            scope=str(token.get("scope", "")),
+            step_up=bool(token.get("step_up", False)),
+        )
+
+    def issue_rotated_pair(self, request: RotatedTokenPairRequest) -> IssuedTokenPair:
+        claims = request.claims
+        expected_env = self._token_env()
+        bootstrap_values = request.bootstrap_claims.values
+
+        new_refresh = RefreshToken()
+        new_refresh["user_id"] = claims.user_id
+        if claims.role:
+            new_refresh["role"] = claims.role
+        new_refresh["scope"] = claims.scope
+        new_refresh["env"] = expected_env
+        new_refresh["step_up"] = claims.step_up
+        new_refresh["family"] = claims.family
+        if claims.session_id:
+            new_refresh[SESSION_ID_CLAIM] = str(claims.session_id)
+        new_refresh["jti"] = request.refresh_jti
+        self._apply_auth_token_version(new_refresh, claims.auth_token_version, bootstrap_values)
+
+        new_access = new_refresh.access_token
+        new_access["user_id"] = claims.user_id
+        if claims.role:
+            new_access["role"] = claims.role
+        new_access["scope"] = claims.scope
+        new_access["env"] = expected_env
+        new_access["step_up"] = claims.step_up
+        new_access["family"] = claims.family
+        if claims.session_id:
+            new_access[SESSION_ID_CLAIM] = str(claims.session_id)
+        new_access["jti"] = request.access_jti
+        self._apply_auth_token_version(new_access, claims.auth_token_version, bootstrap_values)
+
+        return IssuedTokenPair(
+            access_token=str(new_access),
+            refresh_token=str(new_refresh),
+            bootstrap_claims=request.bootstrap_claims,
+        )
+
+    def inspect_access_token(self, access_token: str, *, context: str) -> AccessTokenClaims:
+        try:
+            token = SimpleAccessToken(access_token)
+        except TokenError:
+            raise MalformedRefreshToken("Invalid access token")
+
+        family = token.get("family")
+        if accepted_identity_token_env(token.get("env"), context=context) is None:
+            raise MalformedRefreshToken("Token environment mismatch")
+        if not family:
+            raise MalformedRefreshToken("Malformed token family")
+
+        return AccessTokenClaims(
+            user_id=str(token.get("user_id")) if token.get("user_id") else "",
+            family=str(family),
+            session_id=str(token.get(SESSION_ID_CLAIM)) if token.get(SESSION_ID_CLAIM) else None,
+            scope=str(token.get("scope", "")),
+            bootstrap_claims=TokenBootstrapClaims(self._bootstrap_claims(token)),
+        )
+
+    def issue_step_up_token(self, request: StepUpTokenRequest) -> str:
+        claims = request.claims
+        token = SimpleAccessToken()
+        token["user_id"] = claims.user_id
+        token["scope"] = claims.scope
+        token["env"] = self._token_env()
+        token["family"] = claims.family
+        if claims.session_id:
+            token[SESSION_ID_CLAIM] = str(claims.session_id)
+        token["step_up"] = True
+        token["jti"] = request.jti
+        self._apply_auth_token_version(
+            token,
+            None,
+            (claims.bootstrap_claims or TokenBootstrapClaims({})).values,
+        )
+        token.set_exp(lifetime=timedelta(minutes=5))
+        return str(token)
 
     def create_password_reset_token(self, user_id: str) -> str:
         now = datetime.now(timezone.utc)
@@ -256,6 +381,20 @@ class JWTTokenService:
             return payload
         except jwt.PyJWTError:
             return None
+
+    @staticmethod
+    def _bootstrap_claims(token) -> dict:
+        keys = (
+            "role",
+            AUTH_TOKEN_VERSION_CLAIM,
+            SESSION_ID_CLAIM,
+        )
+        claims = {key: token.get(key) for key in keys if token.get(key) is not None}
+        if "id" not in claims and token.get("user_id") is not None:
+            claims["id"] = str(token.get("user_id"))
+        if "is_authenticated" not in claims:
+            claims["is_authenticated"] = True
+        return claims
 
 
 def identity_token_env() -> str:

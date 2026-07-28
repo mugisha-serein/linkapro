@@ -1,17 +1,24 @@
 from django.contrib.auth.hashers import check_password, make_password
 
-from application.identity.ports import ITokenBlacklist
+from application.identity.shared.ports import ITokenBlacklist, PasswordHasher
 from django_app.common.redis_config import get_redis_client
-from domain.identity.value_objects import PasswordHash, PlainPassword
+from domain.identity.credentials import PasswordHash, PlainPassword
 
 
-class DjangoPasswordHasher:
+_DUMMY_PASSWORD_HASH = make_password("LinkaproDummyPassword1!")
+
+
+class DjangoPasswordHasher(PasswordHasher):
     def hash(self, plain: PlainPassword) -> str:
         return make_password(plain.value)
 
     def verify(self, plain: PlainPassword | str, hashed: PasswordHash) -> bool:
         candidate = plain.value if hasattr(plain, "value") else str(plain)
         return check_password(candidate, hashed.reveal_for_password_verification())
+
+    def verify_against_dummy(self, password: PlainPassword) -> None:
+        candidate = password.value if hasattr(password, "value") else str(password)
+        check_password(candidate, _DUMMY_PASSWORD_HASH)
 
 
 class RedisTokenBlacklist(ITokenBlacklist):

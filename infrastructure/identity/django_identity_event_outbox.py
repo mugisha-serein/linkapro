@@ -7,7 +7,7 @@ import uuid
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import IntegrityError, transaction
 
-from domain.identity.value_objects import SecurityReason
+from domain.identity.shared import SecurityReason
 from django_app.identity.models import IdentityDomainEventOutbox
 
 
