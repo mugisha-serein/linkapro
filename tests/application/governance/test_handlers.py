@@ -10,7 +10,8 @@ from application.governance.commands import (
 from application.governance.handlers import GovernanceCommandHandlers, GovernanceQueryHandlers
 from domain.governance.entities import ContentFlag, FlagStatus, ContentType
 from domain.vendors.profile.entity import VendorProfile, VendorStatus, ServiceCategory
-from domain.identity.entities import User, UserRole, Email
+from domain.identity.account import User, UserRole
+from domain.identity.credentials import Email
 
 
 @pytest.fixture

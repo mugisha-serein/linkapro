@@ -60,6 +60,8 @@ if not TOKEN_ENV:
 
 if not PASSWORD_RESET_HASH_KEY:
     raise ImproperlyConfigured("PASSWORD_RESET_HASH_KEY must be set")
+if not MFA_REPLAY_HMAC_KEY:
+    raise ImproperlyConfigured("MFA_REPLAY_HMAC_KEY must be set")
 
 def _vault_setting(name: str) -> str:
     return str(globals().get(name, "") or "").strip()

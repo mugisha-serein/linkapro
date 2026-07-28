@@ -2,8 +2,10 @@ import uuid
 import pytest
 from datetime import datetime
 
-from domain.identity.entities import User, UserRole
-from domain.identity.value_objects import Email, PasswordHash, TOTPSecret
+from domain.identity.account import User, UserRole
+from domain.identity.credentials import Email, PasswordHash
+from domain.identity.mfa import TOTPSecret
+from domain.identity.verification import VerificationCode, VerificationPolicy, VerificationPurpose
 from infrastructure.identity.django_user_repository import DjangoUserRepository
 from django_app.identity.models import User as DjangoUser
 
@@ -14,6 +16,18 @@ class _KeyProvider:
 
     def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
         return encrypted_dek
+
+
+def _succeeded_email_challenge(user_id: uuid.UUID):
+    code = VerificationCode("123456")
+    challenge = VerificationPolicy().issue_challenge(
+        user_id=user_id,
+        purpose=VerificationPurpose.EMAIL,
+        code=code,
+    )
+    VerificationPolicy().verify_challenge(challenge, code)
+    challenge.pull_events()
+    return challenge
 
 
 @pytest.mark.django_db
@@ -68,7 +82,7 @@ class TestDjangoUserRepository:
 
         # modify
         domain_user.first_name = "New"
-        domain_user.mark_verified()
+        domain_user.mark_verified(challenge=_succeeded_email_challenge(domain_user.id))
         repo.save(domain_user)
 
         updated = repo.get_by_id(domain_user.id)

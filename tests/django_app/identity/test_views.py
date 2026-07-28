@@ -9,13 +9,15 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from domain.identity.entities import User, UserRole
-from domain.identity.value_objects import Email, PasswordHash, PlainPassword, TOTPSecret
+from domain.identity.account import User, UserRole
+from domain.identity.credentials import Email, PasswordHash, PlainPassword
+from domain.identity.mfa import TOTPSecret
 from infrastructure.identity.django_user_repository import DjangoUserRepository
 from infrastructure.identity.shared.security_primitives import DjangoPasswordHasher
 from infrastructure.identity.jwt_token_service import JWTTokenService, password_reset_token_hash
 from django_app.identity.models import (
     IdentityDomainEventOutbox,
+    PasswordHistoryEntry,
     PasswordResetEmailDelivery,
     PasswordResetToken,
     User as DjangoUser,
@@ -55,8 +57,6 @@ class _KeyProvider:
 def _auth_throttle_rates(**overrides):
     rates = {
         "login_ip": "100/min",
-        "login_email": "100/min",
-        "login_user": "100/hour",
         "register_ip": "100/hour",
         "register_email_domain": "100/hour",
         "two_factor_ip": "100/min",
@@ -170,6 +170,7 @@ class TestIdentityViews:
             format="json",
         )
         assert register_response.status_code == 201
+        DjangoUser.objects.filter(email="fresh@example.com").update(is_verified=True)
 
         login_response = self.client.post(
             login_url,
@@ -200,6 +201,7 @@ class TestIdentityViews:
             last_name="User",
             role=UserRole.PLANNER,
             is_active=True,
+            is_verified=True,
         )
         self.repo.save(user)
 
@@ -218,6 +220,7 @@ class TestIdentityViews:
             first_name="W",
             last_name="User",
             role=UserRole.PLANNER,
+            is_verified=True,
         )
         self.repo.save(user)
 
@@ -253,8 +256,11 @@ class TestIdentityViews:
         assert response.data["message"] == "Too many sign-in attempts. Please try again later."
         assert response.data["field_errors"] == {}
 
-    @override_settings(REST_FRAMEWORK=_auth_throttle_rates(login_email="2/min"))
-    def test_login_email_throttle_blocks_repeated_same_email(self):
+    @override_settings(
+        REST_FRAMEWORK=_auth_throttle_rates(login_ip="100/min"),
+        LOGIN_FAILURE_LOCKOUT_THRESHOLD=8,
+    )
+    def test_login_email_is_not_http_throttled_across_ips(self):
         for index in range(2):
             response = self.client.post(
                 reverse("login"),
@@ -271,12 +277,15 @@ class TestIdentityViews:
             REMOTE_ADDR="203.0.113.30",
         )
 
-        assert response.status_code == 429
-        assert response.data["code"] == "login_rate_limited"
+        assert response.status_code == 401
+        assert response.data["code"] == "invalid_credentials"
 
-    @override_settings(REST_FRAMEWORK=_auth_throttle_rates(login_user="2/hour"))
-    def test_login_user_hour_throttle_blocks_repeated_same_user_identifier(self):
-        for index in range(2):
+    @override_settings(
+        REST_FRAMEWORK=_auth_throttle_rates(login_ip="100/min"),
+        LOGIN_FAILURE_LOCKOUT_THRESHOLD=8,
+    )
+    def test_login_user_identifier_is_not_http_throttled_across_ips(self):
+        for index in range(3):
             response = self.client.post(
                 reverse("login"),
                 {"email": "user-throttle@example.com", "password": "WrongPass1!"},
@@ -292,8 +301,8 @@ class TestIdentityViews:
             REMOTE_ADDR="203.0.113.50",
         )
 
-        assert response.status_code == 429
-        assert response.data["code"] == "login_rate_limited"
+        assert response.status_code == 401
+        assert response.data["code"] == "invalid_credentials"
 
     @override_settings(LOGIN_FAILURE_LOCKOUT_THRESHOLD=2, LOGIN_FAILURE_LOCKOUT_SECONDS=900)
     def test_failed_login_increments_progressive_counter_and_locks_out(self):
@@ -322,6 +331,7 @@ class TestIdentityViews:
             first_name="Clear",
             last_name="Failure",
             role="planner",
+            is_verified=True,
         )
         self.client.post(
             reverse("login"),
@@ -330,7 +340,7 @@ class TestIdentityViews:
         )
 
         email_hash = rate_limit_hash("clear-failure@example.com")
-        assert cache.get(f"login_fail:{email_hash}") == 1
+        assert len(cache.get(f"login_fail:{email_hash}")) == 1
 
         response = self.client.post(
             reverse("login"),
@@ -378,6 +388,7 @@ class TestIdentityViews:
             first_name="Mfa",
             last_name="Required",
             role="planner",
+            is_verified=True,
         )
         self.repo.set_totp_secret(user.id, TOTPSecret("JBSWY3DPEHPK3PXP"))
 
@@ -610,6 +621,7 @@ class TestIdentityViews:
             first_name="Refresh",
             last_name="User",
             role="planner",
+            is_verified=True,
         )
         self.client.force_authenticate(user=user)
         login_response = self.client.post(
@@ -641,6 +653,7 @@ class TestIdentityViews:
             first_name="Cookie",
             last_name="Refresh",
             role="planner",
+            is_verified=True,
         )
         login_response = self.client.post(
             reverse("login"),
@@ -665,6 +678,7 @@ class TestIdentityViews:
             first_name="Revoke",
             last_name="User",
             role="planner",
+            is_verified=True,
         )
         login_response = self.client.post(
             reverse("login"),
@@ -1088,6 +1102,11 @@ class TestIdentityViews:
             "status": "password_reset",
         }
         assert user.check_password("NewValidPass1!") is True
+        history_entry = PasswordHistoryEntry.objects.get(user=user)
+        assert self.hasher.verify(
+            PlainPassword("NewValidPass1!"),
+            PasswordHash(history_entry.password_hash),
+        )
         outbox = IdentityDomainEventOutbox.objects.get(
             aggregate_id=user.id,
             event_type="UserPasswordChanged",
@@ -1130,6 +1149,31 @@ class TestIdentityViews:
         assert second_response.data == PASSWORD_RESET_TOKEN_INVALID_RESPONSE
         assert user.check_password("NewValidPass1!") is True
         assert reset_token.status == PasswordResetToken.Status.USED
+
+    def test_reset_password_rejects_recently_used_password(self):
+        user = DjangoUser.objects.create_user(
+            email="history-reset@example.com",
+            password="OldPass1!",
+            first_name="History",
+            last_name="Reset",
+            role="planner",
+        )
+        token = _issue_reset_token(user)
+
+        response = self.client.post(
+            reverse("reset-password"),
+            {"token": token, "new_password": "OldPass1!"},
+            format="json",
+        )
+
+        user.refresh_from_db()
+        assert response.status_code == 400
+        assert response.data["code"] == "password_reset_validation_failed"
+        assert response.data["field_errors"] == {
+            "new_password": ["Choose a password you have not used recently."]
+        }
+        assert user.check_password("OldPass1!") is True
+        assert PasswordHistoryEntry.objects.filter(user=user).count() == 0
 
     def test_reset_password_revoked_and_expired_tokens_share_invalid_response(self):
         user = DjangoUser.objects.create_user(

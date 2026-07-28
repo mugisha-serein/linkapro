@@ -3,7 +3,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 import pyotp
 
-from domain.identity.value_objects import TOTPSecret
+from domain.identity.mfa import TOTPSecret
 from django_app.identity.models import User
 from infrastructure.identity.django_user_repository import DjangoUserRepository
 
@@ -52,6 +52,7 @@ class TestTwoFactor:
             first_name="T",
             last_name="User",
             role="planner",
+            is_verified=True,
         )
         self.client.force_authenticate(user=user)
         url = reverse("2fa-enable")
@@ -69,6 +70,7 @@ class TestTwoFactor:
             first_name="T",
             last_name="User",
             role="planner",
+            is_verified=True,
         )
         self.client.force_authenticate(user=user)
 
@@ -103,6 +105,7 @@ class TestTwoFactor:
             first_name="T",
             last_name="User",
             role="planner",
+            is_verified=True,
         )
         self.repo.set_totp_secret(user.id, TOTPSecret(secret))
 

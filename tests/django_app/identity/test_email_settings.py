@@ -22,6 +22,7 @@ def _production_env(**overrides):
             "DEFAULT_FROM_EMAIL": "no-reply@linkapro.rw",
             "FRONTEND_URL": "https://www.linkapro.rw",
             "PASSWORD_RESET_HASH_KEY": "password-reset-hash-key",
+            "MFA_REPLAY_HMAC_KEY": "mfa-replay-hmac-key",
             "VAULT_ADDR": "https://vault:8200",
             "VAULT_ROLE_ID": "role-id",
             "VAULT_SECRET_ID": "secret-id",
@@ -246,6 +247,16 @@ def test_production_settings_raise_if_password_reset_hash_key_missing():
 
     assert result.returncode != 0
     assert "PASSWORD_RESET_HASH_KEY must be set" in result.stderr
+
+
+def test_production_settings_raise_if_mfa_replay_hmac_key_missing():
+    result = _import_settings(
+        "django_app.settings.production",
+        _production_env(MFA_REPLAY_HMAC_KEY=None),
+    )
+
+    assert result.returncode != 0
+    assert "MFA_REPLAY_HMAC_KEY must be set" in result.stderr
 
 
 def test_production_settings_default_token_env_is_production():
