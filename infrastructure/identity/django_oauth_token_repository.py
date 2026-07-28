@@ -3,9 +3,9 @@ import secrets
 from typing import Optional
 from django.core.exceptions import ObjectDoesNotExist
 
-from domain.identity.entities import OAuthToken as DomainToken
-from domain.identity.value_objects import OAuthAccessToken, OAuthProvider, OAuthRefreshToken
-from domain.identity.interfaces import IOAuthTokenRepository
+from domain.identity.oauth import OAuthToken as DomainToken
+from domain.identity.oauth import OAuthAccessToken, OAuthProvider, OAuthRefreshToken
+from application.identity.shared.ports import IOAuthTokenRepository
 from django_app.identity.models import OAuthToken as DjangoToken, User as DjangoUser
 from payments.application.ports import IKeyProvider
 from payments.helpers.encryption import encrypted_field_from_json, encrypted_field_to_json

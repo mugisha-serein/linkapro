@@ -19,6 +19,7 @@ class TestLoginPasswordPolicy:
             first_name="Legacy",
             last_name="User",
             role="planner",
+            is_verified=True,
         )
 
         response = self.client.post(

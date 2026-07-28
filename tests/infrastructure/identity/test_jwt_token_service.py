@@ -49,11 +49,15 @@ def test_session_tokens_share_family():
     refresh_payload = RefreshToken(refresh)
 
     assert access_payload["family"] == refresh_payload["family"]
+    assert access_payload["role"] == "planner"
+    assert refresh_payload["role"] == "planner"
+    assert access_payload["step_up"] is False
+    assert refresh_payload["step_up"] is False
     assert access_payload["env"] == settings.TOKEN_ENV
     assert refresh_payload["env"] == settings.TOKEN_ENV
 
 
-def test_session_tokens_embed_bootstrap_claims():
+def test_session_tokens_do_not_embed_profile_bootstrap_claims():
     service = JWTTokenService()
     access, refresh = service.create_session_tokens(
         "user-123",
@@ -77,10 +81,24 @@ def test_session_tokens_embed_bootstrap_claims():
     )
     access_payload = AccessToken(access)
     refresh_payload = RefreshToken(refresh)
+    excluded_claims = {
+        "email",
+        "first_name",
+        "last_name",
+        "display_name",
+        "avatar",
+        "created_at",
+        "last_login",
+    }
 
-    assert access_payload["display_name"] == "Test User"
-    assert access_payload["requires_password_setup"] is False
-    assert refresh_payload["display_name"] == "Test User"
+    for claim in excluded_claims:
+        assert claim not in access_payload
+        assert claim not in refresh_payload
+    assert access_payload["user_id"] == "user-123"
+    assert access_payload["role"] == "planner"
+    assert refresh_payload["role"] == "planner"
+    assert access_payload["auth_token_version"] == 0
+    assert refresh_payload["auth_token_version"] == 0
 
 
 @override_settings(TOKEN_ENV="identity-prod", PAYMENT_ENV="payment-live")

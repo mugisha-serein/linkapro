@@ -8,6 +8,8 @@ from django_app.common.api_responses import api_error, api_success
 from django_app.identity.services import get_auth_session_facade
 from django_app.identity.shared.cookies import clear_auth_cookies, extract_refresh_token, set_refresh_cookie
 from django_app.identity.shared.csrf_protection import cookie_session_request_is_allowed
+from domain.identity.authentication import AuthenticationError
+from domain.identity.sessions import SessionError
 
 
 def _cookie_session_forbidden(request):
@@ -41,7 +43,7 @@ class TokenRefreshView(APIView):
         session = get_auth_session_facade()
         try:
             result = session.refresh_session(session_token)
-        except ValueError:
+        except (AuthenticationError, SessionError):
             response = api_error(
                 code="refresh_token_invalid",
                 message="Authentication required.",
@@ -88,7 +90,7 @@ class TokenRevokeView(APIView):
         session = get_auth_session_facade()
         try:
             session.revoke_session(session_token)
-        except ValueError:
+        except SessionError:
             response = api_success(
                 code="session_revoked",
                 message="Signed out successfully.",

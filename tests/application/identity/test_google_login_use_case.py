@@ -5,9 +5,33 @@ from unittest.mock import Mock
 import pytest
 
 from application.identity.use_cases.google_login import GoogleLoginUseCase
-from domain.identity.entities import OAuthToken, User, UserRole
-from domain.identity.value_objects import Email, OAuthProvider
+from domain.identity.account import User, UserRole
+from domain.identity.oauth import OAuthToken
+from domain.identity.credentials import Email
+from domain.identity.oauth import OAuthProvider
 from domain.shared.utils import utc_now
+
+
+class RecordingUnitOfWork:
+    def __init__(self):
+        self.entered = False
+        self.committed = False
+        self.rolled_back = False
+
+    def __enter__(self):
+        self.entered = True
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        if exc_type is not None or not self.committed:
+            self.rolled_back = True
+        return None
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
 
 
 @pytest.fixture
@@ -85,11 +109,54 @@ class TestGoogleLoginUseCase:
         assert result.refresh == "refresh_token"
         assert result.bootstrap_user is not None
         assert result.bootstrap_user["email"] == "new.oauth@example.com"
-        assert mock_user_repo.save.call_count == 2
+        assert mock_user_repo.save.call_count == 3
+
+    def test_create_account_rolls_back_unit_of_work_when_oauth_save_fails(
+        self,
+        mock_user_repo,
+        mock_oauth_repo,
+        mock_token_service,
+        mock_session_store,
+        mock_event_dispatcher,
+    ):
+        unit_of_work = RecordingUnitOfWork()
+        mock_user_repo.get_by_email.return_value = None
+        mock_user_repo.save.side_effect = lambda u: u
+        mock_oauth_repo.get_by_provider_and_user.return_value = None
+        mock_oauth_repo.save.side_effect = RuntimeError("oauth write failed")
+        use_case = GoogleLoginUseCase(
+            user_repo=mock_user_repo,
+            oauth_repo=mock_oauth_repo,
+            token_service=mock_token_service,
+            session_store=mock_session_store,
+            event_dispatcher=mock_event_dispatcher,
+            unit_of_work=unit_of_work,
+        )
+
+        with pytest.raises(RuntimeError, match="oauth write failed"):
+            use_case.execute(
+                {
+                    "email": "partial.oauth@example.com",
+                    "name": "Partial OAuth",
+                    "google_id": "google-partial",
+                    "email_verified": True,
+                },
+                {
+                    "access_token": "google_access",
+                    "refresh_token": "google_refresh",
+                    "expires_in": 3600,
+                },
+                signup_role="planner",
+            )
+
+        assert mock_user_repo.save.called is True
+        assert mock_oauth_repo.save.called is True
+        assert unit_of_work.entered is True
+        assert unit_of_work.committed is False
+        assert unit_of_work.rolled_back is True
         mock_oauth_repo.save.assert_called_once()
-        mock_token_service.create_session_tokens.assert_not_called()
-        mock_token_service.create_access_token.assert_called_once()
-        mock_token_service.create_refresh_token.assert_called_once()
+        mock_token_service.create_access_token.assert_not_called()
+        mock_token_service.create_refresh_token.assert_not_called()
 
     def test_creates_vendor_when_signup_role_is_vendor(
         self,
@@ -133,6 +200,7 @@ class TestGoogleLoginUseCase:
             first_name="Two",
             last_name="Factor",
             role=UserRole.PLANNER,
+            is_verified=True,
             two_factor_enabled=True,
         )
         mock_user_repo.get_by_email.return_value = user
@@ -207,6 +275,7 @@ class TestGoogleLoginUseCase:
             first_name="Canon",
             last_name="User",
             role=UserRole.PLANNER,
+            is_verified=True,
         )
         linked_elsewhere = OAuthToken(
             id=uuid.uuid4(),

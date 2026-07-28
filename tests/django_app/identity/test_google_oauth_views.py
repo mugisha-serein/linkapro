@@ -43,7 +43,7 @@ class _AuthSessionFacadeStub:
     def __init__(self, result):
         self._result = result
 
-    def oauth_login(self, user_data, token_data, signup_role=None):
+    def login_with_google(self, user_data, token_data, signup_role=None):
         return self._result
 
 

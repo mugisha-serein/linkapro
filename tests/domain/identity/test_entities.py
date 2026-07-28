@@ -4,23 +4,46 @@ from dataclasses import fields
 from datetime import datetime, UTC, timedelta
 from freezegun import freeze_time
 
-from domain.identity.entities import AccountStatus, User, OAuthToken, UserRole
-from domain.identity.events import (
+from domain.identity.account import (
+    AccountStatus,
+    AccountCannotBeActivated,
+    User,
     UserActivated,
     UserDeactivated,
-    UserPasswordChanged,
+    UserLocked,
+    UserRegistered,
+    UserRestored,
+    UserRole,
+    UserSuspended,
+    UserUnlocked,
+)
+from domain.identity.authentication import UserLoggedIn
+from domain.identity.authorization import (
+    Permission,
+    RoleAssignmentDenied,
+    RoleAssignmentRequiresActor,
+    RoleCannotBeSelfAssigned,
     UserRoleChanged,
-    UserTwoFactorDisabled,
-    UserTwoFactorEnabled,
-    UserVerified,
 )
-from domain.identity.value_objects import (
-    Email,
-    OAuthAccessToken,
-    OAuthProvider,
-    OAuthRefreshToken,
-    PasswordHash,
-)
+from domain.identity.credentials import UserPasswordChanged
+from domain.identity.mfa import UserTwoFactorDisabled, UserTwoFactorEnabled
+from domain.identity.oauth import OAuthToken
+from domain.identity.oauth import UserOAuthLinked
+from domain.identity.verification import UserVerified, VerificationCode, VerificationPolicy, VerificationPurpose
+from domain.identity.credentials import Email, PasswordHash
+from domain.identity.oauth import OAuthAccessToken, OAuthLinkingPolicy, OAuthProvider, OAuthRefreshToken
+
+
+def _succeeded_email_challenge(user_id: uuid.UUID):
+    code = VerificationCode("123456")
+    challenge = VerificationPolicy().issue_challenge(
+        user_id=user_id,
+        purpose=VerificationPurpose.EMAIL,
+        code=code,
+    )
+    VerificationPolicy().verify_challenge(challenge, code)
+    challenge.pull_events()
+    return challenge
 
 
 class TestUserEntity:
@@ -89,7 +112,9 @@ class TestUserEntity:
         ("field_name", "value"),
         [
             ("role", UserRole.VENDOR),
+            ("status", AccountStatus.SUSPENDED),
             ("is_active", False),
+            ("is_verified", True),
             ("password_hash", PasswordHash("new_hash")),
             ("auth_token_version", 2),
             ("two_factor_enabled", True),
@@ -249,7 +274,12 @@ class TestUserEntity:
             auth_token_version=4,
         )
 
-        user.change_role(UserRole.VENDOR)
+        actor_id = uuid.uuid4()
+        user.change_role(
+            UserRole.VENDOR,
+            actor_user_id=actor_id,
+            actor_role=UserRole.ADMIN,
+        )
 
         assert user.role is UserRole.VENDOR
         assert user.auth_token_version == 5
@@ -259,6 +289,7 @@ class TestUserEntity:
         assert events[0].user_id == user.id
         assert events[0].previous_role is UserRole.PLANNER
         assert events[0].new_role is UserRole.VENDOR
+        assert events[0].actor_user_id == actor_id
         assert events[0].auth_token_version == user.auth_token_version
 
     def test_change_role_noops_when_unchanged(self):
@@ -290,7 +321,74 @@ class TestUserEntity:
         )
 
         with pytest.raises(ValueError):
-            user.change_role("owner")
+            user.change_role(
+                "owner",
+                actor_user_id=uuid.uuid4(),
+                actor_role=UserRole.ADMIN,
+            )
+
+        assert user.role is UserRole.PLANNER
+        assert user.auth_token_version == 4
+        assert user.pull_events() == []
+
+    def test_change_role_requires_authorizing_actor_for_transition(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            auth_token_version=4,
+        )
+
+        with pytest.raises(RoleAssignmentRequiresActor):
+            user.change_role(UserRole.VENDOR)
+
+        assert user.role is UserRole.PLANNER
+        assert user.auth_token_version == 4
+        assert user.pull_events() == []
+
+    def test_change_role_rejects_self_assignment_to_admin(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            auth_token_version=4,
+        )
+
+        with pytest.raises(RoleCannotBeSelfAssigned):
+            user.change_role(
+                UserRole.ADMIN,
+                actor_user_id=user.id,
+                actor_role=UserRole.ADMIN,
+            )
+
+        assert user.role is UserRole.PLANNER
+        assert user.auth_token_version == 4
+        assert user.pull_events() == []
+
+    def test_change_role_requires_admin_assignment_permission_for_escalation(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            auth_token_version=4,
+        )
+
+        with pytest.raises(RoleAssignmentDenied):
+            user.change_role(
+                UserRole.ADMIN,
+                actor_user_id=uuid.uuid4(),
+                actor_role=UserRole.ADMIN,
+                permissions={Permission.ASSIGN_USER_ROLE},
+            )
 
         assert user.role is UserRole.PLANNER
         assert user.auth_token_version == 4
@@ -394,6 +492,7 @@ class TestUserEntity:
             last_name="Doe",
             role=UserRole.PLANNER,
             is_active=False,
+            is_verified=True,
             updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         with freeze_time("2025-01-01 12:00:00"):
@@ -418,8 +517,9 @@ class TestUserEntity:
             role=UserRole.PLANNER,
             is_verified=False,
         )
-        user.mark_verified()
-        user.mark_verified()
+        challenge = _succeeded_email_challenge(user.id)
+        user.mark_verified(challenge=challenge)
+        user.mark_verified(challenge=challenge)
         events = user.pull_events()
         assert user.is_verified is True
         assert len(events) == 1
@@ -436,6 +536,7 @@ class TestUserEntity:
             last_name="Doe",
             role=UserRole.PLANNER,
             is_active=False,
+            is_verified=True,
         )
         user.activate()
         user.activate()
@@ -445,6 +546,68 @@ class TestUserEntity:
         assert isinstance(events[0], UserActivated)
         assert events[0].user_id == user.id
         assert events[0].auth_token_version == user.auth_token_version
+
+    def test_activate_rejects_unverified_account(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            is_active=False,
+            is_verified=False,
+        )
+
+        with pytest.raises(AccountCannotBeActivated, match="verified before activation"):
+            user.activate()
+
+        assert user.status is AccountStatus.DEACTIVATED_PENDING_VERIFICATION
+        assert user.is_active is False
+        assert user.is_verified is False
+        assert user.pull_events() == []
+
+    def test_account_status_transitions_record_domain_events(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            is_verified=True,
+            auth_token_version=2,
+        )
+
+        user.suspend("Policy review")
+        assert user.status is AccountStatus.SUSPENDED
+        assert user.is_active is False
+        assert user.auth_token_version == 3
+
+        user.restore()
+        assert user.status is AccountStatus.ACTIVE
+        assert user.is_active is True
+        assert user.auth_token_version == 4
+
+        user.lock()
+        assert user.status is AccountStatus.LOCKED
+        assert user.is_active is False
+        assert user.auth_token_version == 5
+
+        user.unlock()
+        assert user.status is AccountStatus.ACTIVE
+        assert user.is_active is True
+        assert user.auth_token_version == 6
+
+        events = user.pull_events()
+        assert [type(event) for event in events] == [
+            UserSuspended,
+            UserRestored,
+            UserLocked,
+            UserUnlocked,
+        ]
+        assert str(events[0].reason) == "Policy review"
+        assert [event.auth_token_version for event in events] == [3, 4, 5, 6]
 
     def test_two_factor_mutations_record_domain_events(self):
         user = User(
@@ -482,6 +645,41 @@ class TestUserEntity:
             role=role,
         )
         assert user.role is role
+        assert user.status is AccountStatus.PENDING_VERIFICATION
+        assert user.is_active is True
+        assert user.is_verified is False
+
+    def test_register_new_can_create_verified_oauth_account(self):
+        user = User.register_new(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=None,
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+            is_verified=True,
+        )
+
+        assert user.status is AccountStatus.ACTIVE
+        assert user.is_active is True
+        assert user.is_verified is True
+
+    def test_register_new_records_user_registered_event(self):
+        user = User.register_new(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+        )
+
+        events = user.pull_events()
+        assert len(events) == 1
+        assert isinstance(events[0], UserRegistered)
+        assert events[0].user_id == user.id
+        assert events[0].email == user.email
+        assert events[0].role is UserRole.PLANNER
 
     def test_register_new_rejects_admin(self):
         with pytest.raises(ValueError, match="cannot self-register"):
@@ -508,11 +706,12 @@ class TestUserEntity:
             updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
         assert user.role is UserRole.ADMIN
+        assert user.status is AccountStatus.ACTIVE
 
     @pytest.mark.parametrize(
         ("is_active", "is_verified", "expected"),
         [
-            (False, False, AccountStatus.DEACTIVATED),
+            (False, False, AccountStatus.DEACTIVATED_PENDING_VERIFICATION),
             (False, True, AccountStatus.DEACTIVATED),
             (True, False, AccountStatus.PENDING_VERIFICATION),
             (True, True, AccountStatus.ACTIVE),
@@ -558,6 +757,29 @@ class TestUserEntity:
         with freeze_time("2025-01-01"):
             user.record_login()
         assert user.last_login == datetime(2025, 1, 1, tzinfo=UTC)
+        events = user.pull_events()
+        assert len(events) == 1
+        assert isinstance(events[0], UserLoggedIn)
+        assert events[0].user_id == user.id
+        assert events[0].occurred_at == user.last_login
+
+    def test_oauth_link_methods_record_domain_events(self):
+        user = User(
+            id=uuid.uuid4(),
+            email=Email("test@example.com"),
+            password_hash=None,
+            first_name="John",
+            last_name="Doe",
+            role=UserRole.PLANNER,
+        )
+
+        user.link_oauth_provider(OAuthProvider.GOOGLE)
+        user.relink_oauth_provider("google")
+
+        events = user.pull_events()
+        assert [type(event) for event in events] == [UserOAuthLinked, UserOAuthLinked]
+        assert [event.provider for event in events] == ["google", "google"]
+        assert all(event.user_id == user.id for event in events)
 
 
 class TestOAuthTokenEntity:
@@ -690,3 +912,51 @@ class TestOAuthTokenEntity:
                 refresh_token="new-refresh",
                 expires_at=datetime(2099, 1, 1),
             )
+
+    def test_link_to_reassigns_owner_when_policy_authorizes_relink(self):
+        original_owner_id = uuid.uuid4()
+        new_owner_id = uuid.uuid4()
+        token = OAuthToken(
+            id=uuid.uuid4(),
+            user_id=original_owner_id,
+            provider=OAuthProvider.GOOGLE,
+            provider_user_id="12345",
+            access_token="abc",
+            refresh_token=None,
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+        )
+        policy = OAuthLinkingPolicy().decide(
+            provider=OAuthProvider.GOOGLE,
+            provider_user_id="12345",
+            account=type("Account", (), {"id": new_owner_id, "password_hash": None})(),
+            provider_identity_link=token,
+            existing_account_link=None,
+            provider_email_verified=True,
+        )
+
+        token.link_to(new_owner_id, policy, occurred_at=datetime.now(UTC))
+
+        assert token.user_id == new_owner_id
+
+    def test_link_to_rejects_unauthorized_reassignment(self):
+        token = OAuthToken(
+            id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            provider=OAuthProvider.GOOGLE,
+            provider_user_id="12345",
+            access_token="abc",
+            refresh_token=None,
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+        )
+        target_id = uuid.uuid4()
+        policy = OAuthLinkingPolicy().decide(
+            provider=OAuthProvider.GOOGLE,
+            provider_user_id="12345",
+            account=type("Account", (), {"id": target_id, "password_hash": None})(),
+            provider_identity_link=None,
+            existing_account_link=None,
+            provider_email_verified=True,
+        )
+
+        with pytest.raises(ValueError, match="not authorized"):
+            token.link_to(target_id, policy, occurred_at=datetime.now(UTC))

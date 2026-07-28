@@ -3,22 +3,31 @@ import pytest
 from dataclasses import fields
 from datetime import datetime, UTC
 
-from domain.identity.entities import UserRole
-from domain.identity.events import (
-    PasswordResetRequested,
+from domain.identity.account import (
     UserActivated,
     UserDeactivated,
-    UserLoggedIn,
-    UserOAuthLinked,
-    UserPasswordChanged,
+    UserLocked,
     UserRegistered,
-    UserRoleChanged,
-    UserTwoFactorDisabled,
-    UserTwoFactorEnabled,
-    UserVerified,
+    UserRestored,
+    UserRole,
+    UserSuspended,
+    UserUnlocked,
 )
-from domain.identity.value_objects import Email
-from domain.identity.value_objects import InvalidSecurityReasonError, SecurityReason
+from domain.identity.authentication import UserLoggedIn
+from domain.identity.authorization import UserRoleChanged
+from domain.identity.credentials import Email
+from domain.identity.credentials import UserPasswordChanged
+from domain.identity.mfa import UserTwoFactorDisabled, UserTwoFactorEnabled
+from domain.identity.oauth import UserOAuthLinked
+from domain.identity.recovery import PasswordResetRequested
+from domain.identity.shared import InvalidSecurityReasonError, SecurityReason
+from domain.identity.verification import UserVerified
+from domain.identity.verification import (
+    VerificationChallengeExpiredEvent,
+    VerificationChallengeIssued,
+    VerificationChallengeResent,
+    VerificationChallengeSucceeded,
+)
 
 
 class TestIdentityEvents:
@@ -42,11 +51,19 @@ class TestIdentityEvents:
             PasswordResetRequested,
             UserVerified,
             UserActivated,
+            UserLocked,
+            UserRestored,
             UserRoleChanged,
             UserOAuthLinked,
             UserDeactivated,
+            UserSuspended,
             UserTwoFactorEnabled,
             UserTwoFactorDisabled,
+            UserUnlocked,
+            VerificationChallengeExpiredEvent,
+            VerificationChallengeIssued,
+            VerificationChallengeResent,
+            VerificationChallengeSucceeded,
         ]
 
         for event_type in event_types:

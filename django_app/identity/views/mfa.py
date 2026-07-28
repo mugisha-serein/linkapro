@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+from io import BytesIO
+
+import qrcode
 from django.shortcuts import redirect
 from django.views import View
 from rest_framework import status
@@ -8,7 +12,8 @@ from rest_framework.views import APIView
 
 from application.identity.auth_policy import AuthenticationStatus
 from application.identity.commands import EnableTwoFactorCommand, LoginTwoFactorCommand, VerifyTwoFactorSetupCommand
-from application.identity.shared.oauth_state import (
+from application.identity.errors import InvalidTwoFactorCodeError, UserNotFoundError
+from django_app.identity.shared.oauth_state import (
     OAUTH_STATE_COOKIE_NAME,
     clear_oauth_state_cookie,
     consume_oauth_state,
@@ -45,6 +50,13 @@ from .auth import (
 )
 
 
+def _qr_code_base64(value: str) -> str:
+    img = qrcode.make(value)
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
 class EnableTwoFactorView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -57,13 +69,14 @@ class EnableTwoFactorView(APIView):
                 code="mfa_setup_started",
                 message="Two-factor setup started.",
                 data={
+                    "enrollment_id": setup_dto.enrollment_id,
                     "secret": setup_dto.secret,
                     "provisioning_uri": setup_dto.provisioning_uri,
-                    "qr_code_base64": setup_dto.qr_code_base64,
+                    "qr_code_base64": _qr_code_base64(setup_dto.provisioning_uri),
                 },
                 request=request,
             )
-        except ValueError:
+        except UserNotFoundError:
             return api_error(
                 code="mfa_setup_failed",
                 message="Unable to start two-factor setup.",
@@ -87,7 +100,7 @@ class VerifyTwoFactorSetupView(APIView):
             )
         cmd = VerifyTwoFactorSetupCommand(
             user_id=request.user.id,
-            token=serializer.validated_data["token"],
+            token=serializer.verification_code(),
         )
         handlers = get_command_handlers()
         try:
@@ -98,7 +111,7 @@ class VerifyTwoFactorSetupView(APIView):
                 data={},
                 request=request,
             )
-        except ValueError:
+        except InvalidTwoFactorCodeError:
             return api_error(
                 code="mfa_setup_verification_failed",
                 message="Invalid verification code.",
@@ -140,10 +153,7 @@ class LoginTwoFactorView(APIView):
                 request=request,
             )
 
-        cmd = LoginTwoFactorCommand(
-            temp_token=temp_token,
-            token=serializer.validated_data["token"],
-        )
+        cmd = serializer.to_command()
         session = get_auth_session_facade()
         auth_result = session.login_two_factor(cmd)
         if auth_result.status is not AuthenticationStatus.AUTHENTICATED:
@@ -183,7 +193,7 @@ class GoogleLoginView(View):
         if not _allow_google_oauth_request(request, self):
             return _redirect_error("oauth_rate_limited")
 
-        from application.identity.shared.oauth_state import ALLOWED_OAUTH_SIGNUP_ROLES
+        from django_app.identity.shared.oauth_state import ALLOWED_OAUTH_SIGNUP_ROLES
 
         signup_role = (request.GET.get("role") or "").strip().lower()
         if signup_role not in ALLOWED_OAUTH_SIGNUP_ROLES:
@@ -237,7 +247,7 @@ class GoogleCallbackView(View):
         try:
             token_data = adapter.exchange_code(code)
             user_data = adapter.get_user_info(token_data["access_token"])
-            result = get_auth_session_facade().oauth_login(
+            result = get_auth_session_facade().login_with_google(
                 user_data,
                 token_data,
                 signup_role=state_result.role,

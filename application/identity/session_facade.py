@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from application.identity.auth_policy import AuthenticationDecision
@@ -7,8 +7,8 @@ from application.identity.commands import LoginTwoFactorCommand, LoginUserComman
 
 @dataclass(frozen=True)
 class SessionRefreshResult:
-    access_token: str
-    refresh_token: str
+    access_token: str = field(repr=False)
+    refresh_token: str = field(repr=False)
     bootstrap_user: dict
 
 
@@ -24,7 +24,7 @@ class IdentitySessionFacade:
     def login_two_factor(self, cmd: LoginTwoFactorCommand) -> AuthenticationDecision:
         return self.command_handlers.login_two_factor(cmd)
 
-    def oauth_login(
+    def login_with_google(
         self,
         user_data: dict,
         token_data: Optional[dict] = None,

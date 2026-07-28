@@ -2,6 +2,8 @@ import uuid
 import pytest
 from unittest.mock import MagicMock, ANY
 from application.identity.token_handlers import TokenCommandHandlers
+from domain.identity.sessions import MalformedRefreshToken
+from infrastructure.identity.jwt_token_service import JWTTokenService
 
 pytestmark = pytest.mark.django_db
 
@@ -49,7 +51,7 @@ class TestTokenRotation:
 
     @pytest.fixture
     def handler(self, blacklist, session_store):
-        return TokenCommandHandlers(blacklist, session_store=session_store)
+        return TokenCommandHandlers(blacklist, session_store=session_store, token_service=JWTTokenService())
 
     def _create_refresh_token_str(self, user_id=None, jti=None, family=None, step_up=False, scope="", env="test"):
         from rest_framework_simplejwt.tokens import RefreshToken
@@ -95,7 +97,7 @@ class TestTokenRotation:
         assert decoded["family"] == payload["family"]
 
     def test_invalid_refresh_token_raises(self, handler, blacklist):
-        with pytest.raises(ValueError, match="Invalid refresh token"):
+        with pytest.raises(MalformedRefreshToken, match="Invalid refresh token"):
             handler.refresh_access_token("invalid_token_string")
         blacklist.blacklist.assert_not_called()
 
@@ -131,7 +133,7 @@ class TestTokenRotation:
 
         refresh_str, _ = self._create_refresh_token_str(env="test")
 
-        with pytest.raises(ValueError, match="Token environment mismatch"):
+        with pytest.raises(MalformedRefreshToken, match="Token environment mismatch"):
             handler.refresh_access_token(refresh_str)
         blacklist.blacklist.assert_not_called()
 
@@ -142,6 +144,6 @@ class TestTokenRotation:
         token["jti"] = str(uuid.uuid4())
         token["env"] = "test"
 
-        with pytest.raises(ValueError, match="family"):
+        with pytest.raises(MalformedRefreshToken, match="family"):
             handler.refresh_access_token(str(token))
         blacklist.blacklist.assert_not_called()

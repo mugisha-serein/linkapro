@@ -12,7 +12,7 @@ from domain.governance.interfaces import (
 from domain.governance.events import AdminActionPerformed
 
 from domain.vendors.profile.interfaces import IVendorProfileRepository
-from domain.identity.interfaces import IUserRepository
+from application.identity.shared.ports import IUserRepository
 
 from .commands import *
 from .dtos import *

@@ -19,7 +19,6 @@ from .mfa import (
 from .password import (
     ForgotPasswordView,
     ResetPasswordView,
-    SessionRevokingResetPasswordView,
     SessionRevokingSetupPasswordView,
     SetupPasswordView,
 )
@@ -35,7 +34,6 @@ __all__ = [
     "ProfileView",
     "RegisterView",
     "ResetPasswordView",
-    "SessionRevokingResetPasswordView",
     "SessionRevokingSetupPasswordView",
     "SetupPasswordView",
     "TokenRefreshView",

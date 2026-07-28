@@ -2,6 +2,8 @@ import uuid
 import pytest
 from unittest.mock import MagicMock
 from application.identity.token_handlers import TokenCommandHandlers
+from domain.identity.sessions import MalformedRefreshToken, RefreshTokenReuseDetected
+from infrastructure.identity.jwt_token_service import JWTTokenService
 
 pytestmark = pytest.mark.django_db
 
@@ -43,7 +45,7 @@ class TestTheftDetection:
 
     @pytest.fixture
     def handler(self, blacklist, session_store):
-        return TokenCommandHandlers(blacklist, session_store=session_store)
+        return TokenCommandHandlers(blacklist, session_store=session_store, token_service=JWTTokenService())
 
     def _create_refresh_token_str(self, jti=None, family=None, env="test", include_family=True):
         from rest_framework_simplejwt.tokens import RefreshToken
@@ -62,7 +64,7 @@ class TestTheftDetection:
         family = str(uuid.uuid4())
         blacklist.is_blacklisted.return_value = True
 
-        with pytest.raises(ValueError, match="revoked"):
+        with pytest.raises(RefreshTokenReuseDetected, match="revoked"):
             handler.refresh_access_token(self._create_refresh_token_str(family=family))
 
         blacklist.blacklist_family.assert_called_once_with(family)
@@ -72,7 +74,7 @@ class TestTheftDetection:
         settings.SIMPLE_JWT = {"SIGNING_KEY": TEST_SECRET, "ALGORITHM": "HS256"}
 
         blacklist.is_blacklisted.return_value = True
-        with pytest.raises(ValueError, match="family"):
+        with pytest.raises(MalformedRefreshToken, match="family"):
             handler.refresh_access_token(self._create_refresh_token_str(include_family=False))
 
         blacklist.blacklist_family.assert_not_called()

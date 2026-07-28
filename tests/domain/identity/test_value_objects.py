@@ -1,18 +1,17 @@
 import pytest
 
-from domain.identity.value_objects import (
+from domain.identity.account import PersonName
+from domain.identity.credentials import (
     Email,
-    OAuthAccessToken,
-    OAuthRefreshToken,
-    PasswordHash,
-    PersonName,
-    PlainPassword,
-    SecurityReason,
-    TOTPSecret,
     InvalidEmailError,
-    InvalidSecurityReasonError,
+    PasswordHash,
+    PasswordPolicy,
+    PlainPassword,
     WeakPasswordError,
 )
+from domain.identity.mfa import TOTPSecret
+from domain.identity.oauth import OAuthAccessToken, OAuthRefreshToken
+from domain.identity.shared import InvalidSecurityReasonError, SecurityReason
 
 
 class TestEmail:
@@ -83,32 +82,38 @@ class TestPlainPassword:
             PlainPassword(" Password1!")
 
     def test_too_short_raises_error(self):
+        password = PlainPassword("Short1")
         with pytest.raises(WeakPasswordError, match="at least 8 characters"):
-            PlainPassword("Short1")
+            PasswordPolicy.validate(password)
 
     def test_missing_uppercase_raises_error(self):
+        password = PlainPassword("nouppercase1!")
         with pytest.raises(WeakPasswordError, match="uppercase"):
-            PlainPassword("nouppercase1!")
+            PasswordPolicy.validate(password)
 
     def test_missing_lowercase_raises_error(self):
+        password = PlainPassword("NOLOWERCASE1!")
         with pytest.raises(WeakPasswordError, match="lowercase"):
-            PlainPassword("NOLOWERCASE1!")
+            PasswordPolicy.validate(password)
 
     def test_missing_digit_raises_error(self):
+        password = PlainPassword("NoDigitHere!")
         with pytest.raises(WeakPasswordError, match="digit"):
-            PlainPassword("NoDigitHere!")
+            PasswordPolicy.validate(password)
 
     def test_missing_special_character_raises_error(self):
+        password = PlainPassword("NoSpecial1")
         with pytest.raises(WeakPasswordError, match="special character"):
-            PlainPassword("NoSpecial1")
+            PasswordPolicy.validate(password)
 
     def test_whitespace_cannot_satisfy_special_character_rule(self):
         with pytest.raises(WeakPasswordError):
             PlainPassword("Password1 ")
 
     def test_too_long_raises_error(self):
+        password = PlainPassword("A1!" + "a" * 126)
         with pytest.raises(WeakPasswordError, match="at most 128 characters"):
-            PlainPassword("A1!" + "a" * 126)
+            PasswordPolicy.validate(password)
 
     def test_str_representation_is_masked(self):
         pwd = PlainPassword("Secret123!")
