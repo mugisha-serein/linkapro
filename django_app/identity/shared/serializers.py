@@ -2,12 +2,15 @@ from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from application.identity.commands import RegisterUserCommand, LoginUserCommand
-from domain.identity.value_objects import Email, PlainPassword
+from domain.identity.account import AccountRole
+from domain.identity.credentials import Email, PasswordPolicy, PlainPassword
+from domain.identity.verification import VerificationCode
 
 
 def validate_plain_password(value):
     try:
-        PlainPassword(value)
+        plain_password = PlainPassword(value)
+        PasswordPolicy.validate(plain_password)
         validate_password(value)
     except DjangoValidationError as e:
         raise serializers.ValidationError(list(e.messages))
@@ -39,7 +42,7 @@ class RegisterSerializer(serializers.Serializer):
             plain_password=PlainPassword(self.validated_data["password"]),
             first_name=self.validated_data["first_name"],
             last_name=self.validated_data["last_name"],
-            role=self.validated_data["role"],
+            role=AccountRole(self.validated_data["role"]),
         )
 
 
@@ -50,7 +53,7 @@ class LoginSerializer(serializers.Serializer):
     def to_command(self) -> LoginUserCommand:
         return LoginUserCommand(
             email=Email(self.validated_data["email"]),
-            plain_password=self.validated_data["password"],
+            plain_password=PlainPassword(self.validated_data["password"]),
         )
 
 
@@ -58,9 +61,20 @@ class TwoFactorLoginSerializer(serializers.Serializer):
     temp_token = serializers.CharField()
     token = serializers.CharField(min_length=6, max_length=6)
 
+    def to_command(self):
+        from application.identity.commands import LoginTwoFactorCommand
+
+        return LoginTwoFactorCommand(
+            temp_token=self.validated_data["temp_token"],
+            token=VerificationCode(self.validated_data["token"]),
+        )
+
 
 class TwoFactorSetupVerifySerializer(serializers.Serializer):
     token = serializers.CharField(min_length=6, max_length=6)
+
+    def verification_code(self) -> VerificationCode:
+        return VerificationCode(self.validated_data["token"])
 
 
 class UpdateProfileSerializer(serializers.Serializer):

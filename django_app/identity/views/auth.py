@@ -11,16 +11,16 @@ from rest_framework.views import APIView
 
 from application.identity.auth_policy import AuthenticationStatus
 from application.identity.commands import UpdateProfileCommand
+from application.identity.errors import DuplicateUserError, UserNotFoundError
 from application.identity.queries import GetUserByIdQuery
+from application.identity.shared.mappers import account_derived_fields
 from django_app.common.api_responses import api_error, api_success
 from django_app.identity.services import get_auth_session_facade, get_command_handlers, get_query_handlers
 from django_app.identity.shared.cookies import clear_auth_cookies, set_refresh_cookie
 from django_app.identity.shared.serializers import LoginSerializer, RegisterSerializer, UpdateProfileSerializer
 from django_app.identity.throttles import (
     AuthRateLimited,
-    LoginEmailThrottle,
     LoginIPThrottle,
-    LoginUserThrottle,
     RegisterEmailDomainThrottle,
     RegisterIPThrottle,
     RegistrationRateLimited,
@@ -140,9 +140,13 @@ def _bootstrap_user_payload(source) -> dict:
     has_password = getattr(source, "has_password", None)
     if has_password is None:
         has_password = bool(getattr(source, "password_hash", None))
-    requires_password_setup = getattr(source, "requires_password_setup", None)
-    if requires_password_setup is None:
-        requires_password_setup = not has_password
+    derived = account_derived_fields(
+        first_name=source.first_name,
+        last_name=source.last_name,
+        email=str(source.email),
+        is_verified=source.is_verified,
+        has_password=has_password,
+    )
 
     return {
         "id": str(source.id),
@@ -150,21 +154,19 @@ def _bootstrap_user_payload(source) -> dict:
         "role": role,
         "first_name": source.first_name,
         "last_name": source.last_name,
-        "display_name": getattr(source, "display_name", None)
-        or f"{source.first_name} {source.last_name}".strip()
-        or str(source.email),
+        "display_name": getattr(source, "display_name", None) or derived["display_name"],
         "avatar": getattr(source, "avatar", None),
         "is_active": source.is_active,
         "is_verified": source.is_verified,
         "has_password": has_password,
-        "requires_password_setup": requires_password_setup,
+        "requires_password_setup": getattr(
+            source,
+            "requires_password_setup",
+            derived["requires_password_setup"],
+        ),
         "two_factor_enabled": getattr(source, "two_factor_enabled", False),
         "is_authenticated": True,
-        "onboarding_complete": getattr(
-            source,
-            "onboarding_complete",
-            bool(source.is_verified and has_password),
-        ),
+        "onboarding_complete": getattr(source, "onboarding_complete", derived["onboarding_complete"]),
     }
 
 
@@ -221,7 +223,7 @@ class RegisterView(APIView):
                 status=status.HTTP_201_CREATED,
                 request=request,
             )
-        except ValueError:
+        except DuplicateUserError:
             return api_error(
                 code="registration_validation_failed",
                 message="Please fix the highlighted fields.",
@@ -234,7 +236,7 @@ class RegisterView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class LoginView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [LoginIPThrottle, LoginEmailThrottle, LoginUserThrottle]
+    throttle_classes = [LoginIPThrottle]
 
     def throttled(self, request, wait):
         raise AuthRateLimited(wait=wait, request=request)
@@ -342,7 +344,7 @@ class ProfileView(APIView):
                 data={"user": _serialize_user_profile(user_dto)},
                 request=request,
             )
-        except ValueError:
+        except UserNotFoundError:
             return api_error(
                 code="profile_update_failed",
                 message="Unable to update profile.",

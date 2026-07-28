@@ -191,6 +191,22 @@ class PasswordResetToken(models.Model):
         return f"{self.user_id} password reset token {self.status}"
 
 
+class PasswordHistoryEntry(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="password_history_entries")
+    password_hash = models.TextField()
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "-created_at"], name="id_pwd_hist_user_created_idx"),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user_id} password history entry"
+
+
 class IdentityDomainEventOutbox(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
