@@ -1,10 +1,11 @@
-import uuid
-from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
-from application.identity.dtos import SessionBootstrapDTO
-from application.identity.ports import ISessionStore, SESSION_ID_CLAIM
+from application.identity.dtos import AuthenticationResult
+from application.identity.shared.mappers import session_bootstrap_payload
+from application.identity.shared.dtos import TokenClaims
+from application.identity.shared.ports import ISessionStore, PasswordHasher, SESSION_ID_CLAIM
+from domain.identity.authentication import evaluate_authentication_eligibility
+from domain.identity.sessions import TokenFamily
 
 
 class AuthenticationStatus(str, Enum):
@@ -17,14 +18,7 @@ class AuthenticationStatus(str, Enum):
     INVALID_MFA_CODE = "invalid_mfa_code"
 
 
-@dataclass(frozen=True)
-class AuthenticationDecision:
-    status: AuthenticationStatus
-    user: Optional[object] = None
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
-    temp_token: Optional[str] = None
-    bootstrap_user: Optional[dict] = None
+AuthenticationDecision = AuthenticationResult
 
 
 class IdentityAuthenticationPolicy:
@@ -32,27 +26,27 @@ class IdentityAuthenticationPolicy:
         self.token_service = token_service
         self.session_store = session_store
 
-    def evaluate_password_login(self, user, plain_password, password_hasher) -> AuthenticationDecision:
-        if not user:
-            return AuthenticationDecision(AuthenticationStatus.INVALID_CREDENTIALS)
-        if not user.is_active:
+    def evaluate_password_login(self, user, plain_password, password_hasher: PasswordHasher) -> AuthenticationDecision:
+        eligibility = evaluate_authentication_eligibility(user)
+        if not eligibility.allowed:
             return AuthenticationDecision(AuthenticationStatus.INACTIVE, user=user)
         if not user.password_hash:
             return AuthenticationDecision(AuthenticationStatus.SOCIAL_LOGIN_ONLY, user=user)
         if not password_hasher.verify(plain_password, user.password_hash):
             return AuthenticationDecision(AuthenticationStatus.INVALID_CREDENTIALS, user=user)
-        return self._finalize_login(user)
+        return self._finalize_login(user, eligibility)
 
     def evaluate_oauth_login(self, user) -> AuthenticationDecision:
-        if not user.is_active:
+        eligibility = evaluate_authentication_eligibility(user)
+        if not eligibility.allowed:
             return AuthenticationDecision(AuthenticationStatus.INACTIVE, user=user)
-        return self._finalize_login(user)
+        return self._finalize_login(user, eligibility)
 
     def issue_authenticated_login(self, user) -> AuthenticationDecision:
         return self._issue_authenticated_tokens(user)
 
-    def _finalize_login(self, user) -> AuthenticationDecision:
-        if user.two_factor_enabled:
+    def _finalize_login(self, user, eligibility) -> AuthenticationDecision:
+        if eligibility.requires_mfa:
             temp_token = self.token_service.create_temp_token(str(user.id))
             return AuthenticationDecision(
                 status=AuthenticationStatus.MFA_REQUIRED,
@@ -62,20 +56,29 @@ class IdentityAuthenticationPolicy:
         return self._issue_authenticated_tokens(user)
 
     def _issue_authenticated_tokens(self, user) -> AuthenticationDecision:
-        token_family = str(uuid.uuid4())
-        session_id = self.session_store.create_identity_session(user_id=str(user.id), token_family=token_family)
-        bootstrap_user = SessionBootstrapDTO.from_user(user).to_dict()
-        bootstrap_user[SESSION_ID_CLAIM] = session_id
+        token_family = TokenFamily.issue()
+        session_id = self.session_store.create_identity_session(user_id=str(user.id), token_family=token_family.id)
+        bootstrap_user = session_bootstrap_payload(user, session_id=session_id)
+        token_claims = TokenClaims(
+            user_id=str(user.id),
+            role=user.role.value,
+            family=token_family.id,
+            session_id=session_id,
+            auth_token_version=getattr(user, "auth_token_version", 0),
+        )
         access_token = self.token_service.create_access_token(
-            str(user.id),
-            user.role.value,
-            family_id=token_family,
+            token_claims.user_id,
+            token_claims.role or "",
+            family_id=token_claims.family,
             bootstrap_claims=bootstrap_user,
+            auth_token_version=token_claims.auth_token_version,
         )
         refresh_token = self.token_service.create_refresh_token(
-            str(user.id),
-            family_id=token_family,
+            token_claims.user_id,
+            token_claims.role,
+            family_id=token_claims.family,
             bootstrap_claims=bootstrap_user,
+            auth_token_version=token_claims.auth_token_version,
         )
         return AuthenticationDecision(
             status=AuthenticationStatus.AUTHENTICATED,

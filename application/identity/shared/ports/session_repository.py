@@ -1,4 +1,9 @@
+"""Session persistence port for identity application services."""
+
 from typing import Protocol
+import uuid
+
+from domain.identity.sessions import IdentitySession
 
 
 SESSION_ID_CLAIM = "session_id"
@@ -41,16 +46,20 @@ class ISessionStore(Protocol):
     ) -> None:
         ...
 
-
-class ITokenBlacklist(Protocol):
-    def is_blacklisted(self, jti: str) -> bool:
+    def revoke_all_identity_sessions(
+        self,
+        *,
+        user_id: uuid.UUID | str,
+        reason: str = "session_revoked",
+    ) -> int:
         ...
 
-    def blacklist(self, jti: str, ttl: int) -> None:
+    def list_active_identity_sessions(self, *, user_id: uuid.UUID | str) -> tuple[IdentitySession, ...]:
         ...
 
-    def is_family_blacklisted(self, family_id: str) -> bool:
-        ...
 
-    def blacklist_family(self, family_id: str) -> None:
-        ...
+__all__ = [
+    "AUTH_TOKEN_VERSION_CLAIM",
+    "ISessionStore",
+    "SESSION_ID_CLAIM",
+]
