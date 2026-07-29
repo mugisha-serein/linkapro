@@ -146,6 +146,7 @@ def _consume_identity_event(event: IdentityDomainEventOutbox) -> None:
         revoke_user_sessions(
             event.aggregate_id,
             reason=_event_reason(event.payload) or "credential_change",
+            bump_auth_token_version=False,
         )
 
 

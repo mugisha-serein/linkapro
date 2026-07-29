@@ -1,8 +1,15 @@
 from urllib.parse import urlencode
 import time
+from datetime import timedelta
 
 import requests
 from django.conf import settings
+from django.utils import timezone
+
+from application.identity.oauth import GoogleLoginCommand, ProviderIdentity
+from domain.identity.account import AccountRole
+from domain.identity.credentials import Email
+from domain.identity.oauth import OAuthAccessToken, OAuthProvider, OAuthRefreshToken
 
 
 class GoogleOAuthAdapterError(Exception):
@@ -68,6 +75,15 @@ class GoogleOAuthAdapter:
         self._validate_id_token(id_token)
         return data
 
+    def build_login_command(self, code: str, *, signup_role: AccountRole) -> GoogleLoginCommand:
+        token_data = self.exchange_code(code)
+        user_data = self.get_user_info(token_data["access_token"])
+        return self._to_login_command(
+            user_data=user_data,
+            token_data=token_data,
+            signup_role=signup_role,
+        )
+
     def get_user_info(self, access_token: str) -> dict:
         headers = {"Authorization": f"Bearer {access_token}"}
         try:
@@ -94,7 +110,61 @@ class GoogleOAuthAdapter:
             "given_name": data.get("given_name", ""),
             "family_name": data.get("family_name", ""),
             "picture": data.get("picture", ""),
+            "email_verified": True,
         }
+
+    @staticmethod
+    def _to_login_command(
+        *,
+        user_data: dict,
+        token_data: dict,
+        signup_role: AccountRole,
+    ) -> GoogleLoginCommand:
+        google_id = str(user_data.get("google_id") or "").strip()
+        email = Email(str(user_data.get("email") or "").strip().lower())
+        if not google_id:
+            raise GoogleOAuthAdapterError("Google userinfo missing required identity fields")
+
+        access_token_raw = str(token_data.get("access_token") or "")
+        if not access_token_raw:
+            raise GoogleOAuthAdapterError("Google token response missing access_token")
+
+        expires_in = int(token_data.get("expires_in") or 3600)
+        first_name, last_name = GoogleOAuthAdapter._split_name(user_data)
+        return GoogleLoginCommand(
+            identity=ProviderIdentity(
+                provider=OAuthProvider.GOOGLE,
+                provider_user_id=google_id,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                email_verified=bool(user_data.get("email_verified", True)),
+            ),
+            access_token=OAuthAccessToken(access_token_raw),
+            refresh_token=(
+                OAuthRefreshToken(str(token_data["refresh_token"]))
+                if token_data.get("refresh_token")
+                else None
+            ),
+            expires_at=timezone.now() + timedelta(seconds=expires_in),
+            signup_role=signup_role,
+        )
+
+    @staticmethod
+    def _split_name(user_data: dict) -> tuple[str, str]:
+        first_name = str(user_data.get("given_name") or "").strip()
+        last_name = str(user_data.get("family_name") or "").strip()
+        if first_name:
+            return first_name, last_name or "User"
+
+        full_name = str(user_data.get("name") or "").strip()
+        if full_name:
+            parts = full_name.split(maxsplit=1)
+            if len(parts) == 1:
+                return parts[0], "User"
+            return parts[0], parts[1]
+
+        return "Google", "User"
 
     def _validate_id_token(self, id_token: str) -> None:
         try:

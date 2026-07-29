@@ -1,10 +1,7 @@
 """Assign a role to an identity account."""
 
-from typing import Protocol
-
-from application.identity.commands import AssignRoleCommand
-from application.identity.shared.ports import Clock, IUserRepository
-from domain.identity.account import UserRole
+from application.identity.authorization.assign_role_command import AssignRoleCommand
+from application.identity.shared.ports import Clock, EventOutbox, AccountRepository
 from domain.identity.authorization import RoleAssignmentPolicy
 
 from ._account_administration import (
@@ -13,16 +10,11 @@ from ._account_administration import (
 )
 
 
-class EventOutbox(Protocol):
-    def dispatch(self, event) -> None:
-        ...
-
-
 class AssignRoleUseCase:
     def __init__(
         self,
         *,
-        account_repository: IUserRepository,
+        account_repository: AccountRepository,
         event_outbox: EventOutbox,
         clock: Clock,
         role_assignment_policy: RoleAssignmentPolicy | None = None,
@@ -40,7 +32,7 @@ class AssignRoleUseCase:
             policy=self.role_assignment_policy,
         )
         context.target.change_role(
-            UserRole(cmd.new_role),
+            cmd.new_role,
             actor_user_id=context.actor.id,
             actor_role=context.actor.role,
             reason=cmd.reason,

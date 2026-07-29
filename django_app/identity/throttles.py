@@ -11,6 +11,7 @@ from rest_framework.settings import api_settings
 from rest_framework.throttling import SimpleRateThrottle
 
 from application.identity.account_lockout import AccountLockoutConfig, AccountLockoutService
+from infrastructure.identity.django_authentication_attempt_repository import DjangoAuthenticationAttemptRepository
 from django_app.common.api_responses import api_error_payload
 
 logger = logging.getLogger(__name__)
@@ -455,7 +456,10 @@ def _login_lockout_config() -> AccountLockoutConfig:
 
 
 def _account_lockout_service() -> AccountLockoutService:
-    return AccountLockoutService(store=cache, config=_login_lockout_config())
+    return AccountLockoutService(
+        repository=DjangoAuthenticationAttemptRepository(),
+        config=_login_lockout_config(),
+    )
 
 
 def get_client_ip(request) -> str:

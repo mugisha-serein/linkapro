@@ -1,6 +1,10 @@
 """Typed token claims and issuance request DTOs."""
 
 from dataclasses import dataclass, field
+from datetime import datetime
+import uuid
+
+from domain.identity.sessions import RefreshTokenSnapshot, TokenFamily
 
 
 @dataclass(frozen=True)
@@ -20,18 +24,16 @@ class TokenClaims:
 
 
 @dataclass(frozen=True)
-class RefreshTokenClaims:
+class RefreshTokenClaims(RefreshTokenSnapshot):
     raw: str = field(repr=False)
-    jti: str
-    family: str
-    user_id: str | None
-    session_id: str | None
-    issued_at: int | None
     expires_at: int
-    auth_token_version: int | None
     role: str = ""
     scope: str = ""
     step_up: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.family, TokenFamily):
+            object.__setattr__(self, "family", TokenFamily(self.family))
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,17 @@ class StepUpTokenRequest:
     jti: str
 
 
+@dataclass(frozen=True)
+class MfaLoginGrant:
+    grant_id: str
+    account_id: uuid.UUID
+    expires_at: datetime
+    challenge_id: uuid.UUID
+
+    def remaining_ttl_seconds(self, *, now: datetime) -> int:
+        return max(int((self.expires_at - now).total_seconds()), 1)
+
+
 __all__ = [
     "AccessTokenClaims",
     "IssuedTokenPair",
@@ -72,4 +85,5 @@ __all__ = [
     "StepUpTokenRequest",
     "TokenBootstrapClaims",
     "TokenClaims",
+    "MfaLoginGrant",
 ]

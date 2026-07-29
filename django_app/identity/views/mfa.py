@@ -10,9 +10,12 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 
-from application.identity.auth_policy import AuthenticationStatus
-from application.identity.commands import EnableTwoFactorCommand, LoginTwoFactorCommand, VerifyTwoFactorSetupCommand
+from application.identity.authentication import AuthenticationStatus
+from application.identity.authentication.complete_mfa_login_command import LoginTwoFactorCommand
+from application.identity.mfa.begin_mfa_enrollment_command import EnableTwoFactorCommand
+from application.identity.mfa.confirm_mfa_enrollment_command import VerifyTwoFactorSetupCommand
 from application.identity.errors import InvalidTwoFactorCodeError, UserNotFoundError
+from domain.identity.account import AccountRole
 from django_app.identity.shared.oauth_state import (
     OAUTH_STATE_COOKIE_NAME,
     clear_oauth_state_cookie,
@@ -21,7 +24,7 @@ from django_app.identity.shared.oauth_state import (
     set_oauth_state_cookie,
 )
 from django_app.common.api_responses import api_error, api_success
-from django_app.identity.services import get_auth_session_facade, get_command_handlers, get_google_oauth_adapter
+from django_app.identity.services import get_command_handlers, get_google_login_use_case, get_google_oauth_adapter
 from django_app.identity.shared.cookies import (
     clear_auth_cookies,
     clear_mfa_temp_cookie,
@@ -154,8 +157,7 @@ class LoginTwoFactorView(APIView):
             )
 
         cmd = serializer.to_command()
-        session = get_auth_session_facade()
-        auth_result = session.login_two_factor(cmd)
+        auth_result = get_command_handlers().login_two_factor(cmd)
         if auth_result.status is not AuthenticationStatus.AUTHENTICATED:
             record_mfa_failure(request, temp_token, auth_status=auth_result.status)
             response = _auth_error_response(auth_result.status, request=request)
@@ -245,13 +247,9 @@ class GoogleCallbackView(View):
 
         adapter = get_google_oauth_adapter()
         try:
-            token_data = adapter.exchange_code(code)
-            user_data = adapter.get_user_info(token_data["access_token"])
-            result = get_auth_session_facade().login_with_google(
-                user_data,
-                token_data,
-                signup_role=state_result.role,
-            )
+            signup_role = AccountRole(state_result.role)
+            command = adapter.build_login_command(code, signup_role=signup_role)
+            result = get_google_login_use_case().execute(command)
         except Exception:
             response = _redirect_error("oauth_failed")
             clear_oauth_state_cookie(response)

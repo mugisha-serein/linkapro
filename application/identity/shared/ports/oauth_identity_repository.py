@@ -25,6 +25,10 @@ class IOAuthTokenRepository(ABC):
         """Retrieve token by internal user and provider."""
 
     @abstractmethod
+    def list_by_user(self, user_id: uuid.UUID) -> tuple[OAuthToken, ...]:
+        """Retrieve all linked provider identities for an internal user."""
+
+    @abstractmethod
     def delete_for_user(self, user_id: uuid.UUID, provider: OAuthProvider) -> None:
         """Remove linked provider for user."""
 

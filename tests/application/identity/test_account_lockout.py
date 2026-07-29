@@ -1,28 +1,37 @@
 from datetime import datetime, timedelta, timezone
 
 from application.identity.account_lockout import AccountLockoutConfig, AccountLockoutService
+from domain.identity.authentication import FailedAttemptCounter
 
 
-class MemoryStore:
+class MemoryAuthenticationAttemptRepository:
     def __init__(self):
-        self.values = {}
+        self.counters = {}
+        self.saved_ttls = None
 
-    def get(self, key):
-        return self.values.get(key)
+    def load_failed_attempt_counter(self, account_key):
+        return self.counters.get(account_key, FailedAttemptCounter())
 
-    def set(self, key, value, timeout=None):
-        self.values[key] = value
+    def save_failed_attempt_counter(
+        self,
+        account_key,
+        counter,
+        *,
+        observation_window_seconds,
+        lock_duration_seconds,
+    ):
+        self.counters[account_key] = counter
+        self.saved_ttls = (observation_window_seconds, lock_duration_seconds)
 
-    def delete_many(self, keys):
-        for key in keys:
-            self.values.pop(key, None)
+    def clear_failed_attempt_counter(self, account_key):
+        self.counters.pop(account_key, None)
 
 
 def test_account_lockout_service_persists_failures_and_locks_account():
-    store = MemoryStore()
+    repository = MemoryAuthenticationAttemptRepository()
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     service = AccountLockoutService(
-        store=store,
+        repository=repository,
         config=AccountLockoutConfig(
             max_failures=2,
             observation_window_seconds=900,
@@ -36,14 +45,16 @@ def test_account_lockout_service_persists_failures_and_locks_account():
 
     assert first.locked is False
     assert second.locked is True
-    assert len(store.values["login_fail:account-key"]) == 2
-    assert store.values["login_lock:account-key"] == (now + timedelta(seconds=600)).isoformat()
+    counter = repository.load_failed_attempt_counter("account-key")
+    assert len(counter.attempts) == 2
+    assert counter.locked_until == now + timedelta(seconds=600)
+    assert repository.saved_ttls == (900, 600)
 
 
 def test_account_lockout_service_resets_on_success():
-    store = MemoryStore()
+    repository = MemoryAuthenticationAttemptRepository()
     service = AccountLockoutService(
-        store=store,
+        repository=repository,
         config=AccountLockoutConfig(
             max_failures=2,
             observation_window_seconds=900,
@@ -55,4 +66,4 @@ def test_account_lockout_service_resets_on_success():
     service.record_failure("account-key")
     service.record_success("account-key")
 
-    assert store.values == {}
+    assert repository.counters == {}

@@ -18,13 +18,14 @@ from rest_framework_simplejwt.exceptions import TokenError
 from application.identity.shared.dtos.token_claims import (
     AccessTokenClaims,
     IssuedTokenPair,
+    MfaLoginGrant,
     RefreshTokenClaims,
     RotatedTokenPairRequest,
     StepUpTokenRequest,
     TokenBootstrapClaims,
 )
 from application.identity.shared.ports import SESSION_ID_CLAIM
-from domain.identity.sessions import MalformedRefreshToken
+from domain.identity.sessions import MalformedRefreshToken, TokenFamily
 
 logger = logging.getLogger(__name__)
 
@@ -140,14 +141,14 @@ class JWTTokenService:
             raise MalformedRefreshToken("Token environment mismatch")
 
         return RefreshTokenClaims(
-            raw=refresh_token,
             jti=str(jti),
-            family=str(family),
+            family=TokenFamily(str(family)),
             user_id=str(token.get("user_id")) if token.get("user_id") else None,
             session_id=str(token.get(SESSION_ID_CLAIM)) if token.get(SESSION_ID_CLAIM) else None,
             issued_at=token.get("iat"),
-            expires_at=int(token["exp"]),
             auth_token_version=token.get(AUTH_TOKEN_VERSION_CLAIM),
+            raw=refresh_token,
+            expires_at=int(token["exp"]),
             role=str(token.get("role", "")),
             scope=str(token.get("scope", "")),
             step_up=bool(token.get("step_up", False)),
@@ -165,7 +166,7 @@ class JWTTokenService:
         new_refresh["scope"] = claims.scope
         new_refresh["env"] = expected_env
         new_refresh["step_up"] = claims.step_up
-        new_refresh["family"] = claims.family
+        new_refresh["family"] = claims.family.id
         if claims.session_id:
             new_refresh[SESSION_ID_CLAIM] = str(claims.session_id)
         new_refresh["jti"] = request.refresh_jti
@@ -178,7 +179,7 @@ class JWTTokenService:
         new_access["scope"] = claims.scope
         new_access["env"] = expected_env
         new_access["step_up"] = claims.step_up
-        new_access["family"] = claims.family
+        new_access["family"] = claims.family.id
         if claims.session_id:
             new_access[SESSION_ID_CLAIM] = str(claims.session_id)
         new_access["jti"] = request.access_jti
@@ -335,7 +336,7 @@ class JWTTokenService:
             return None
         return payload.get("user_id"), token_record
 
-    def create_email_verification_token(self, user_id: str) -> str:
+    def create_email_verification_token(self, user_id: str, challenge_id: str) -> str:
         now = datetime.now(timezone.utc)
         payload = {
             "user_id": user_id,
@@ -344,9 +345,12 @@ class JWTTokenService:
             "exp": now + settings.EMAIL_VERIFICATION_TIMEOUT,
             "iat": now,
         }
+        payload["challenge_id"] = challenge_id
         return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
 
-    def verify_email_verification_token(self, token_str: str) -> Optional[str]:
+    def verify_email_verification_token(self, token_str) -> Optional[str]:
+        if hasattr(token_str, "reveal_for_email_verification"):
+            token_str = token_str.reveal_for_email_verification()
         try:
             payload = jwt.decode(
                 token_str, settings.SECRET_KEY, algorithms=["HS256"]
@@ -355,14 +359,15 @@ class JWTTokenService:
                 return None
             if self._enforce_env(payload) is None:
                 return None
-            return payload.get("user_id")
+            return payload.get("challenge_id")
         except jwt.PyJWTError:
             return None
 
-    def create_temp_token(self, user_id: str) -> str:
+    def create_temp_token(self, user_id: str, challenge_id: str) -> str:
         now = datetime.now(timezone.utc)
         payload = {
             "user_id": user_id,
+            "challenge_id": challenge_id,
             "purpose": "2fa",
             "jti": str(uuid.uuid4()),
             "env": self._token_env(),
@@ -380,6 +385,20 @@ class JWTTokenService:
                 return None
             return payload
         except jwt.PyJWTError:
+            return None
+
+    def inspect_mfa_login_grant(self, temp_token: str) -> MfaLoginGrant | None:
+        payload = self.verify_temp_token(temp_token)
+        if not payload:
+            return None
+        try:
+            return MfaLoginGrant(
+                grant_id=str(payload["jti"]),
+                account_id=uuid.UUID(str(payload["user_id"])),
+                expires_at=datetime.fromtimestamp(float(payload["exp"]), tz=timezone.utc),
+                challenge_id=uuid.UUID(str(payload["challenge_id"])),
+            )
+        except (KeyError, TypeError, ValueError, OSError):
             return None
 
     @staticmethod

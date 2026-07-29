@@ -5,7 +5,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from django_app.common.api_responses import api_error, api_success
-from django_app.identity.services import get_auth_session_facade
+from django_app.identity.services import get_refresh_session_use_case, get_revoke_session_use_case
 from django_app.identity.shared.cookies import clear_auth_cookies, extract_refresh_token, set_refresh_cookie
 from django_app.identity.shared.csrf_protection import cookie_session_request_is_allowed
 from domain.identity.authentication import AuthenticationError
@@ -40,9 +40,8 @@ class TokenRefreshView(APIView):
             clear_auth_cookies(response)
             return response
 
-        session = get_auth_session_facade()
         try:
-            result = session.refresh_session(session_token)
+            access_token, refresh_token, bootstrap_user = get_refresh_session_use_case().execute(session_token)
         except (AuthenticationError, SessionError):
             response = api_error(
                 code="refresh_token_invalid",
@@ -57,13 +56,13 @@ class TokenRefreshView(APIView):
             code="token_refreshed",
             message="Session refreshed.",
             data={
-                "access": result.access_token,
-                "user": result.bootstrap_user,
+                "access": access_token,
+                "user": bootstrap_user,
             },
             status=status.HTTP_200_OK,
             request=request,
         )
-        set_refresh_cookie(response, result.refresh_token)
+        set_refresh_cookie(response, refresh_token)
         return response
 
 
@@ -87,9 +86,8 @@ class TokenRevokeView(APIView):
             clear_auth_cookies(response)
             return response
 
-        session = get_auth_session_facade()
         try:
-            session.revoke_session(session_token)
+            get_revoke_session_use_case().execute(session_token)
         except SessionError:
             response = api_success(
                 code="session_revoked",

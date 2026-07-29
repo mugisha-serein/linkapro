@@ -1,37 +1,31 @@
 """Django gateway for password reset completion."""
 from __future__ import annotations
 
-from django.db import transaction
 from django.conf import settings
-from django.contrib.auth.hashers import check_password
 
-from application.identity.recovery import PasswordResetVerification
-from domain.identity.credentials import PasswordHash, PasswordHistory, PlainPassword
+from application.identity.shared.ports import (
+    PasswordHistoryRepository,
+    PasswordResetRepository,
+    PasswordResetVerification,
+)
+from domain.identity.credentials import PasswordHash, PasswordHistory
 from domain.identity.recovery import PasswordResetToken, PasswordResetTokenStatus
 from django_app.identity.models import PasswordHistoryEntry as DjangoPasswordHistoryEntry
 from django_app.identity.models import PasswordResetToken as DjangoPasswordResetToken
 from django_app.identity.models import User
-from infrastructure.identity.django_identity_event_outbox import DjangoIdentityEventOutboxDispatcher
 from infrastructure.identity.jwt_token_service import (
     JWTTokenService,
     password_reset_token_hash,
-    password_reset_value_hash,
 )
 
 
-class DjangoPasswordResetGateway:
+class DjangoPasswordResetGateway(PasswordResetRepository, PasswordHistoryRepository):
     def __init__(
         self,
         *,
         token_service: JWTTokenService | None = None,
-        event_dispatcher: DjangoIdentityEventOutboxDispatcher | None = None,
     ):
         self.token_service = token_service or JWTTokenService()
-        self.event_dispatcher = event_dispatcher or DjangoIdentityEventOutboxDispatcher()
-
-    def complete_in_transaction(self, operation):
-        with transaction.atomic():
-            return operation()
 
     def verify_reset_token(self, raw_token: str) -> PasswordResetVerification | None:
         payload = self.token_service.decode_password_reset_token_payload(raw_token)
@@ -65,28 +59,20 @@ class DjangoPasswordResetGateway:
     def get_password_history(self, user) -> PasswordHistory:
         limit = self._history_limit()
         hashes = []
-        if user.password:
+        current_password_hash = getattr(user, "password_hash", None)
+        if current_password_hash:
+            hashes.append(current_password_hash)
+        elif getattr(user, "password", None):
             hashes.append(PasswordHash(user.password))
         hashes.extend(
             PasswordHash(entry.password_hash)
-            for entry in DjangoPasswordHistoryEntry.objects.filter(user=user).order_by("-created_at")[:limit]
+            for entry in DjangoPasswordHistoryEntry.objects.filter(user_id=user.id).order_by("-created_at")[:limit]
         )
         return PasswordHistory(hashes, max_entries=limit)
 
-    def password_matches(self, plain_password: PlainPassword, password_hash: PasswordHash) -> bool:
-        return check_password(
-            plain_password.value,
-            password_hash.reveal_for_password_verification(),
-        )
-
-    def set_user_password(self, user, new_password: str) -> PasswordHash:
-        user.set_password(new_password)
-        user.save(update_fields=["password", "updated_at"])
-        return PasswordHash(user.password)
-
     def remember_password_hash(self, *, user, password_hash: PasswordHash, now) -> None:
         DjangoPasswordHistoryEntry.objects.create(
-            user=user,
+            user_id=user.id,
             password_hash=password_hash.reveal_for_password_verification(),
             created_at=now,
         )
@@ -103,29 +89,23 @@ class DjangoPasswordResetGateway:
 
     def revoke_other_active_tokens(self, *, user, exclude_token_id, now) -> None:
         DjangoPasswordResetToken.objects.filter(
-            user=user,
+            user_id=user.id,
             status=DjangoPasswordResetToken.Status.ACTIVE,
         ).exclude(id=exclude_token_id).update(
             status=DjangoPasswordResetToken.Status.REVOKED,
             updated_at=now,
         )
 
-    def dispatch_password_changed(self, event) -> None:
-        self.event_dispatcher.dispatch(event)
-
-    def hash_reset_value(self, value: str) -> str:
-        return password_reset_value_hash(value)
-
     def _history_limit(self) -> int:
         return int(getattr(settings, "PASSWORD_HISTORY_LIMIT", 5))
 
     def _prune_password_history(self, user) -> None:
         keep_ids = list(
-            DjangoPasswordHistoryEntry.objects.filter(user=user)
+            DjangoPasswordHistoryEntry.objects.filter(user_id=user.id)
             .order_by("-created_at")
             .values_list("id", flat=True)[: self._history_limit()]
         )
-        DjangoPasswordHistoryEntry.objects.filter(user=user).exclude(id__in=keep_ids).delete()
+        DjangoPasswordHistoryEntry.objects.filter(user_id=user.id).exclude(id__in=keep_ids).delete()
 
     @staticmethod
     def _to_domain(record: DjangoPasswordResetToken) -> PasswordResetToken:

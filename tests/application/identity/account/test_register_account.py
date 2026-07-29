@@ -5,8 +5,9 @@ from unittest.mock import Mock
 import pytest
 
 from application.identity.account import RegisterAccountUseCase
-from application.identity.commands import RegisterUserCommand
+from application.identity.account.register_account_command import RegisterUserCommand
 from application.identity.errors import DuplicateUserError
+from application.identity.shared.ports import NullIdentityUnitOfWork
 from domain.identity.account import AccountRole, User, UserRegistered, UserRole
 from domain.identity.credentials import Email, PasswordHash, PlainPassword
 
@@ -28,6 +29,7 @@ def _use_case(account_repository, password_hasher, event_outbox):
         event_outbox=event_outbox,
         clock=FixedClock(),
         id_generator=FixedIdGenerator(),
+        unit_of_work=NullIdentityUnitOfWork(),
     )
 
 

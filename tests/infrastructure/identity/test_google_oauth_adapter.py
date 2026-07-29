@@ -1,5 +1,7 @@
 import pytest
 
+from domain.identity.account import AccountRole
+from domain.identity.oauth import OAuthProvider
 from infrastructure.identity.google_oauth_adapter import (
     GoogleOAuthAdapter,
     GoogleOAuthAdapterError,
@@ -124,6 +126,58 @@ class TestGoogleOAuthAdapter:
 
         data = adapter.exchange_code("oauth-code")
         assert data["access_token"] == "access"
+
+    def test_build_login_command_returns_typed_normalized_identity(self, settings, monkeypatch):
+        settings.GOOGLE_CLIENT_ID = "expected-client-id"
+        settings.GOOGLE_CLIENT_SECRET = "secret"
+        settings.GOOGLE_REDIRECT_URI = "https://api.example.com/oauth/callback"
+
+        adapter = GoogleOAuthAdapter()
+
+        def fake_post(*args, **kwargs):
+            return _Response(
+                True,
+                {
+                    "access_token": "access",
+                    "refresh_token": "refresh",
+                    "id_token": "id-token",
+                    "expires_in": 3600,
+                },
+            )
+
+        def fake_get(url, *args, **kwargs):
+            if url == adapter.TOKEN_INFO_URL:
+                return _Response(
+                    True,
+                    {
+                        "aud": "expected-client-id",
+                        "iss": "https://accounts.google.com",
+                        "exp": "9999999999",
+                    },
+                )
+            return _Response(
+                True,
+                {
+                    "sub": "google-123",
+                    "email": "USER@Example.COM ",
+                    "email_verified": True,
+                    "given_name": "OAuth",
+                    "family_name": "Tester",
+                },
+            )
+
+        monkeypatch.setattr("infrastructure.identity.google_oauth_adapter.requests.post", fake_post)
+        monkeypatch.setattr("infrastructure.identity.google_oauth_adapter.requests.get", fake_get)
+
+        command = adapter.build_login_command("oauth-code", signup_role=AccountRole.PLANNER)
+
+        assert command.identity.provider is OAuthProvider.GOOGLE
+        assert command.identity.provider_user_id == "google-123"
+        assert str(command.identity.email) == "user@example.com"
+        assert command.identity.first_name == "OAuth"
+        assert command.identity.last_name == "Tester"
+        assert command.identity.email_verified is True
+        assert command.signup_role is AccountRole.PLANNER
 
     def test_get_user_info_rejects_unverified_email(self, monkeypatch):
         adapter = GoogleOAuthAdapter()

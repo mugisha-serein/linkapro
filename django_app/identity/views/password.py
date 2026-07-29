@@ -6,7 +6,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 
-from application.identity.commands import ResetPasswordCommand, SetupPasswordCommand
+from application.identity.credentials.setup_password_command import SetupPasswordCommand
 from domain.identity.credentials import PasswordReuseNotAllowed, PlainPassword
 from domain.identity.recovery import InvalidPasswordResetToken, PasswordResetUserInactive
 from django_app.common.api_responses import api_error, api_success
@@ -31,6 +31,7 @@ from django_app.identity.throttles import (
     ResetPasswordIPThrottle,
     ResetPasswordTokenThrottle,
 )
+from infrastructure.identity.jwt_token_service import password_reset_value_hash
 
 from .auth import _serialize_user_profile
 
@@ -159,11 +160,11 @@ class ResetPasswordView(APIView):
 
         try:
             result = get_reset_password_handler().handle(
-                ResetPasswordCommand(
-                    token=serializer.validated_data["token"],
-                    new_password=serializer.validated_data["new_password"],
-                    client_ip=_client_ip(request),
-                    user_agent=request.META.get("HTTP_USER_AGENT", ""),
+                serializer.to_command(
+                    client_ip_hash=password_reset_value_hash(_client_ip(request)),
+                    user_agent_hash=password_reset_value_hash(
+                        request.META.get("HTTP_USER_AGENT", "")
+                    ),
                 )
             )
         except (InvalidPasswordResetToken, PasswordResetUserInactive):

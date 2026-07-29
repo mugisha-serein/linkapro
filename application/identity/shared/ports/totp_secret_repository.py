@@ -7,7 +7,7 @@ import uuid
 from domain.identity.mfa import TOTPSecret
 
 
-class ITOTPSecretRepository(ABC):
+class TotpSecretRepository(ABC):
     @abstractmethod
     def set_totp_secret(self, user_id: uuid.UUID, secret: TOTPSecret) -> None:
         """Persist the user's TOTP secret."""
@@ -21,4 +21,4 @@ class ITOTPSecretRepository(ABC):
         """Clear the user's TOTP secret."""
 
 
-__all__ = ["ITOTPSecretRepository"]
+__all__ = ["TotpSecretRepository"]

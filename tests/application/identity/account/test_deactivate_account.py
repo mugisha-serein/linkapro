@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from application.identity.account import DeactivateAccountUseCase
-from application.identity.commands import DeactivateUserCommand
+from application.identity.account.deactivate_account_command import DeactivateUserCommand
 from application.identity.errors import UserNotFoundError
 from domain.identity.account import User, UserDeactivated, UserRole
 from domain.identity.credentials import Email, PasswordHash
@@ -44,11 +44,13 @@ def test_deactivate_account_persists_and_dispatches_actor_metadata():
         actor.id: actor,
         user.id: user,
     }.get(user_id)
+    revoke_all_sessions_use_case = Mock()
 
     DeactivateAccountUseCase(
         account_repository=account_repository,
         event_outbox=event_outbox,
         clock=FixedClock(),
+        revoke_all_sessions_use_case=revoke_all_sessions_use_case,
     ).execute(
         DeactivateUserCommand(
             user_id=user.id,
@@ -64,6 +66,10 @@ def test_deactivate_account_persists_and_dispatches_actor_metadata():
     assert event.actor_user_id == actor_id
     assert str(event.reason) == "manual admin deactivation"
     assert event.occurred_at == datetime(2026, 1, 1, tzinfo=UTC)
+    revoke_all_sessions_use_case.execute.assert_called_once_with(
+        user_id=user.id,
+        reason="account_deactivated",
+    )
 
 
 def test_deactivate_account_missing_user_raises_typed_error():
@@ -76,6 +82,7 @@ def test_deactivate_account_missing_user_raises_typed_error():
             account_repository=account_repository,
             event_outbox=event_outbox,
             clock=FixedClock(),
+            revoke_all_sessions_use_case=Mock(),
         ).execute(DeactivateUserCommand(user_id=uuid.uuid4()))
 
     account_repository.save.assert_not_called()

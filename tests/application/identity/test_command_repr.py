@@ -1,24 +1,25 @@
 import uuid
 from datetime import UTC, datetime
 
-from application.identity.auth_policy import AuthenticationDecision, AuthenticationStatus
-from application.identity.commands import (
-    LoginTwoFactorCommand,
-    LoginUserCommand,
-    OAuthLoginCommand,
-    RegisterUserCommand,
+from application.identity.authentication import AuthenticationDecision, AuthenticationStatus
+from application.identity.account.register_account_command import RegisterUserCommand
+from application.identity.authentication.complete_mfa_login_command import LoginTwoFactorCommand
+from application.identity.authentication.login_with_password_command import LoginUserCommand
+from application.identity.mfa.confirm_mfa_enrollment_command import VerifyTwoFactorSetupCommand
+from application.identity.oauth.google_login_command import OAuthLoginCommand, ProviderIdentity
+from application.identity.recovery.reset_password_command import (
+    PasswordResetTokenInput,
     ResetPasswordCommand,
-    VerifyEmailCommand,
-    VerifyTwoFactorSetupCommand,
+    SecurityMetadataHash,
 )
+from application.identity.verification.verify_email_command import VerifyEmailCommand
 from application.identity.dtos import AuthenticationResultDTO, TwoFactorChallengeDTO, TwoFactorSetupDTO, UserDTO
 from application.identity.shared.dtos import IssuedTokenPair, RefreshTokenClaims, TokenBootstrapClaims
-from application.identity.session_facade import SessionRefreshResult
-from application.identity.use_cases.google_login import GoogleLoginResult
+from application.identity.oauth import GoogleLoginResult
 from domain.identity.account import AccountRole
 from domain.identity.credentials import Email, PlainPassword
 from domain.identity.oauth import OAuthAccessToken, OAuthProvider, OAuthRefreshToken
-from domain.identity.verification import VerificationCode
+from domain.identity.verification import EmailVerificationToken, VerificationCode
 
 
 def _assert_repr_hides(command, *secrets: str) -> None:
@@ -46,7 +47,9 @@ def test_secret_bearing_identity_commands_do_not_expose_raw_values_in_repr():
         "LoginPass1!",
     )
     _assert_repr_hides(
-        VerifyEmailCommand(verification_token="raw-email-verification-token"),
+        VerifyEmailCommand(
+            verification_token=EmailVerificationToken("raw-email-verification-token")
+        ),
         "raw-email-verification-token",
     )
     _assert_repr_hides(
@@ -60,10 +63,10 @@ def test_secret_bearing_identity_commands_do_not_expose_raw_values_in_repr():
     )
     _assert_repr_hides(
         ResetPasswordCommand(
-            token="raw-reset-token",
-            new_password="ResetPass1!",
-            client_ip="127.0.0.1",
-            user_agent="test",
+            token=PasswordResetTokenInput("raw-reset-token"),
+            new_password=PlainPassword("ResetPass1!"),
+            client_ip_hash=SecurityMetadataHash("a" * 64),
+            user_agent_hash=SecurityMetadataHash("b" * 64),
         ),
         "raw-reset-token",
         "ResetPass1!",
@@ -73,10 +76,17 @@ def test_secret_bearing_identity_commands_do_not_expose_raw_values_in_repr():
 def test_oauth_login_command_redacts_provider_tokens():
     _assert_repr_hides(
         OAuthLoginCommand(
-            provider=OAuthProvider.GOOGLE,
-            provider_user_id="google-user-id",
+            identity=ProviderIdentity(
+                provider=OAuthProvider.GOOGLE,
+                provider_user_id="google-user-id",
+                email=Email("oauth@example.com"),
+                first_name="OAuth",
+                last_name="User",
+                email_verified=True,
+            ),
             access_token=OAuthAccessToken("raw-oauth-access-token"),
             refresh_token=OAuthRefreshToken("raw-oauth-refresh-token"),
+            expires_at=datetime(2026, 1, 1, tzinfo=UTC),
             signup_role=AccountRole.PLANNER,
         ),
         "raw-oauth-access-token",
@@ -139,15 +149,6 @@ def test_secret_bearing_identity_result_dtos_do_not_expose_raw_values_in_repr():
         "raw-google-temp-token",
         "raw-google-access-token",
         "raw-google-refresh-token",
-    )
-    _assert_repr_hides(
-        SessionRefreshResult(
-            access_token="raw-session-access-token",
-            refresh_token="raw-session-refresh-token",
-            bootstrap_user={"id": "user-id"},
-        ),
-        "raw-session-access-token",
-        "raw-session-refresh-token",
     )
     _assert_repr_hides(
         IssuedTokenPair(

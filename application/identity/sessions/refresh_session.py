@@ -1,35 +1,39 @@
 """Refresh an identity session by rotating a refresh token."""
 
-from datetime import datetime, timezone
 from typing import Tuple
 
 from application.identity.shared.dtos.token_claims import (
-    RefreshTokenClaims,
     RotatedTokenPairRequest,
     TokenBootstrapClaims,
 )
-from application.identity.shared.ports import IdentityTokenService, ISessionStore, ITokenBlacklist
-from domain.identity.authentication import AuthenticationNotAllowed
-from domain.identity.sessions import (
-    RefreshRotationDecision,
-    RefreshTokenSnapshot,
-    SessionPolicy,
-    SessionRevoked,
-    TokenFamily,
+from application.identity.shared.ports import (
+    IdentityTokenService,
+    SessionBootstrapReader,
+    SessionRepository,
+    SessionSecurityStateReader,
+    TokenRevocationStore,
 )
+from domain.identity.authentication import AuthenticationNotAllowed
+from domain.identity.sessions import SessionPolicy
+
+from .apply_refresh_rotation import apply_refresh_decision, raise_refresh_rejection
 
 
 class RefreshSessionUseCase:
     def __init__(
         self,
         *,
-        blacklist: ITokenBlacklist,
-        session_store: ISessionStore,
+        blacklist: TokenRevocationStore,
+        session_repository: SessionRepository,
+        session_security_state_reader: SessionSecurityStateReader,
+        session_bootstrap_reader: SessionBootstrapReader,
         token_service: IdentityTokenService,
         session_policy: SessionPolicy | None = None,
     ) -> None:
         self.blacklist = blacklist
-        self.session_store = session_store
+        self.session_repository = session_repository
+        self.session_security_state_reader = session_security_state_reader
+        self.session_bootstrap_reader = session_bootstrap_reader
         self.token_service = token_service
         self.session_policy = session_policy or SessionPolicy()
 
@@ -38,35 +42,34 @@ class RefreshSessionUseCase:
             refresh_token,
             context="refresh_token_rotation",
         )
-        token_snapshot = refresh_snapshot(claims)
         decision = self.session_policy.evaluate_refresh_rotation(
-            token_snapshot,
+            claims,
             token_already_used=self.blacklist.is_blacklisted(claims.jti),
-            family_revoked=self.blacklist.is_family_blacklisted(claims.family),
-            user_sessions_revoked=self.session_store.is_token_revoked_for_user(
+            family_revoked=self.blacklist.is_family_blacklisted(claims.family.id),
+            user_sessions_revoked=self.session_security_state_reader.is_token_revoked_for_user(
                 claims.user_id,
                 claims.issued_at,
             ),
-            token_version_matches_active_user=self.session_store.token_version_matches_active_user(
+            token_version_matches_active_user=self.session_security_state_reader.token_version_matches_active_user(
                 claims.user_id,
                 claims.auth_token_version,
             ),
         )
         apply_refresh_decision(
             decision,
-            token_snapshot,
+            claims,
             claims,
             blacklist=self.blacklist,
-            session_store=self.session_store,
+            session_repository=self.session_repository,
         )
         if not decision.allowed:
             raise_refresh_rejection(decision)
 
-        bootstrap_claims = self.session_store.get_bootstrap_claims(claims.user_id, claims.session_id)
+        bootstrap_claims = self.session_bootstrap_reader.get_bootstrap_claims(claims.user_id, claims.session_id)
         if not bootstrap_claims:
             raise AuthenticationNotAllowed("User is no longer active")
 
-        token_ids = token_snapshot.family.rotate()
+        token_ids = claims.family.rotate()
         issued = self.token_service.issue_rotated_pair(
             RotatedTokenPairRequest(
                 claims=claims,
@@ -77,56 +80,4 @@ class RefreshSessionUseCase:
         )
         return issued.access_token, issued.refresh_token, issued.bootstrap_claims.values
 
-
-def remaining_ttl(claims: RefreshTokenClaims) -> int:
-    expires_at = datetime.fromtimestamp(int(claims.expires_at), tz=timezone.utc)
-    ttl = int((expires_at - datetime.now(timezone.utc)).total_seconds())
-    return max(ttl, 1)
-
-
-def refresh_snapshot(claims: RefreshTokenClaims) -> RefreshTokenSnapshot:
-    return RefreshTokenSnapshot(
-        jti=claims.jti,
-        family=TokenFamily(claims.family),
-        session_id=claims.session_id,
-        user_id=claims.user_id,
-        issued_at=claims.issued_at,
-        auth_token_version=claims.auth_token_version,
-    )
-
-
-def apply_refresh_decision(
-    decision: RefreshRotationDecision,
-    token_snapshot: RefreshTokenSnapshot,
-    claims: RefreshTokenClaims,
-    *,
-    blacklist: ITokenBlacklist,
-    session_store: ISessionStore,
-) -> None:
-    if decision.blacklist_presented_token:
-        blacklist.blacklist(token_snapshot.jti, ttl=remaining_ttl(claims))
-    if decision.revoke_family:
-        blacklist.blacklist_family(token_snapshot.family.id)
-    if decision.touch_session:
-        session_store.touch_identity_session(token_snapshot.session_id, token_snapshot.family.id)
-    if decision.revoke_session and decision.reason is not None:
-        session_store.revoke_identity_session(
-            session_id=token_snapshot.session_id,
-            token_family=token_snapshot.family.id,
-            reason=decision.reason.value,
-        )
-
-
-def raise_refresh_rejection(decision: RefreshRotationDecision) -> None:
-    if decision.error is not None:
-        raise decision.error("Token has been revoked")
-    raise SessionRevoked("Token has been revoked")
-
-
-__all__ = [
-    "RefreshSessionUseCase",
-    "apply_refresh_decision",
-    "raise_refresh_rejection",
-    "refresh_snapshot",
-    "remaining_ttl",
-]
+__all__ = ["RefreshSessionUseCase"]

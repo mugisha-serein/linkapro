@@ -1,113 +1,58 @@
 """Complete a password login that requires MFA."""
 
-import hashlib
-import time
-import uuid
-from datetime import UTC, datetime, timedelta
-from typing import Protocol
-
-from application.identity.auth_policy import AuthenticationDecision, AuthenticationStatus, IdentityAuthenticationPolicy
-from application.identity.commands import LoginTwoFactorCommand
+from .authenticated_session_issuer import AuthenticationDecision, AuthenticationStatus, AuthenticatedSessionIssuer
+from application.identity.authentication.complete_mfa_login_command import LoginTwoFactorCommand
+from application.identity.mfa.consume_recovery_code import ConsumeRecoveryCodeCommand, ConsumeRecoveryCodeUseCase
 from application.identity.shared.ports import (
-    ITOTPSecretRepository,
-    ITokenBlacklist,
-    IUserRepository,
+    AccountRepository,
+    EventOutbox,
+    MfaChallengeRepository,
     MfaReplayStore,
+    TokenRevocationStore,
+    TotpSecretRepository,
     TotpService,
 )
-from domain.identity.mfa import MfaChallenge, MfaChallengeExpired, MfaMethod, MfaVerificationResult
+from domain.identity.mfa import MfaChallengeExpired, MfaPolicy
 from domain.shared.utils import utc_now
-
-
-TOTP_REPLAY_TTL_SECONDS = 90
-
-
-class EventOutbox(Protocol):
-    def dispatch(self, event) -> None:
-        ...
-
-
-def _temp_token_blacklist_key(payload: dict, temp_token: str) -> str:
-    jti = payload.get("jti")
-    if jti:
-        return str(jti)
-    token_hash = hashlib.sha256(temp_token.encode("utf-8")).hexdigest()
-    return f"temp:{token_hash}"
-
-
-def _temp_token_blacklist_ttl(payload: dict) -> int:
-    exp = payload.get("exp")
-    if exp is None:
-        return 180
-    return max(int(float(exp) - time.time()), 1)
-
-
-def _verify_totp_challenge(
-    *,
-    challenge: MfaChallenge,
-    accepted: bool,
-    now: datetime,
-) -> MfaVerificationResult:
-    try:
-        can_attempt = challenge.can_attempt(now=now)
-    except MfaChallengeExpired:
-        return MfaVerificationResult(False, challenge)
-    if challenge.method is not MfaMethod.TOTP or not can_attempt:
-        return MfaVerificationResult(False, challenge)
-    if accepted:
-        return MfaVerificationResult(True, challenge.consume(now=now))
-    return MfaVerificationResult(False, challenge.record_failed_attempt())
-
-
-def _mfa_challenge_from_temp_payload(payload: dict, *, user_id: uuid.UUID) -> MfaChallenge:
-    now = utc_now()
-    exp = payload.get("exp")
-    expires_at = datetime.fromtimestamp(float(exp), tz=UTC) if exp is not None else now + timedelta(seconds=180)
-    if expires_at <= now:
-        expires_at = now + timedelta(seconds=1)
-    return MfaChallenge(
-        id=uuid.uuid5(uuid.NAMESPACE_URL, str(payload.get("jti") or f"mfa-temp:{user_id}")),
-        user_id=user_id,
-        method=MfaMethod.TOTP,
-        issued_at=now - timedelta(seconds=1),
-        expires_at=expires_at,
-        max_attempts=1,
-    )
 
 
 class CompleteMfaLoginUseCase:
     def __init__(
         self,
         *,
-        account_repository: IUserRepository,
-        totp_secret_repository: ITOTPSecretRepository,
+        account_repository: AccountRepository,
+        totp_secret_repository: TotpSecretRepository,
         token_service,
-        token_blacklist: ITokenBlacklist,
+        token_blacklist: TokenRevocationStore,
+        mfa_challenge_repository: MfaChallengeRepository,
         mfa_replay_store: MfaReplayStore,
         totp_service: TotpService,
-        auth_policy: IdentityAuthenticationPolicy,
+        consume_recovery_code_use_case: ConsumeRecoveryCodeUseCase,
         event_outbox: EventOutbox,
+        session_issuer: AuthenticatedSessionIssuer,
+        mfa_policy: MfaPolicy | None = None,
     ) -> None:
         self.account_repository = account_repository
         self.totp_secret_repository = totp_secret_repository
         self.token_service = token_service
         self.token_blacklist = token_blacklist
+        self.mfa_challenge_repository = mfa_challenge_repository
         self.mfa_replay_store = mfa_replay_store
         self.totp_service = totp_service
-        self.auth_policy = auth_policy
+        self.consume_recovery_code_use_case = consume_recovery_code_use_case
+        self.session_issuer = session_issuer
         self.event_outbox = event_outbox
+        self.mfa_policy = mfa_policy or MfaPolicy()
 
     def execute(self, cmd: LoginTwoFactorCommand) -> AuthenticationDecision:
-        payload = self.token_service.verify_temp_token(cmd.temp_token)
-        if not payload:
+        grant = self.token_service.inspect_mfa_login_grant(cmd.temp_token)
+        if not grant:
             return AuthenticationDecision(status=AuthenticationStatus.INVALID_TEMP_TOKEN)
 
-        temp_token_key = _temp_token_blacklist_key(payload, cmd.temp_token)
-        if self.token_blacklist.is_blacklisted(temp_token_key):
+        if self.token_blacklist.is_mfa_grant_blacklisted(grant):
             return AuthenticationDecision(status=AuthenticationStatus.INVALID_TEMP_TOKEN)
 
-        user_id = uuid.UUID(payload["user_id"])
-        user = self.account_repository.get_by_id(user_id)
+        user = self.account_repository.get_by_id(grant.account_id)
         if not user or not user.is_active:
             return AuthenticationDecision(
                 status=AuthenticationStatus.INACTIVE
@@ -119,27 +64,50 @@ class CompleteMfaLoginUseCase:
         if not secret:
             return AuthenticationDecision(status=AuthenticationStatus.INVALID_TEMP_TOKEN)
 
-        challenge = _mfa_challenge_from_temp_payload(payload, user_id=user.id)
+        challenge = self.mfa_challenge_repository.get(grant.challenge_id)
+        if challenge is None or challenge.user_id != user.id:
+            return AuthenticationDecision(status=AuthenticationStatus.INVALID_TEMP_TOKEN)
+
         now = utc_now()
-        result = _verify_totp_challenge(
+        totp_accepted = self.totp_service.verify(secret, cmd.token, now=now)
+        recovery_accepted = False
+        if not totp_accepted and _challenge_can_attempt(challenge, now=now):
+            recovery_accepted = self.consume_recovery_code_use_case.execute(
+                ConsumeRecoveryCodeCommand(user_id=user.id, code=cmd.token)
+            )
+        result = self.mfa_policy.verify_challenge(
             challenge=challenge,
-            accepted=self.totp_service.verify(secret, cmd.token, now=now),
+            accepted=totp_accepted or recovery_accepted,
             now=now,
         )
         if not result.accepted:
+            self.mfa_challenge_repository.save(result.challenge)
             return AuthenticationDecision(status=AuthenticationStatus.INVALID_MFA_CODE)
-        if self.mfa_replay_store.has_been_used(challenge.id, cmd.token):
+        if totp_accepted and self.mfa_replay_store.has_been_used(challenge.id, cmd.token):
             return AuthenticationDecision(status=AuthenticationStatus.INVALID_MFA_CODE)
-        self.mfa_replay_store.mark_used(challenge.id, cmd.token, ttl=TOTP_REPLAY_TTL_SECONDS)
+        if totp_accepted:
+            self.mfa_replay_store.mark_used(
+                challenge.id,
+                cmd.token,
+                ttl=self.mfa_policy.remaining_challenge_ttl_seconds(challenge, now=now),
+            )
+        self.mfa_challenge_repository.save(result.challenge)
 
         user.record_login()
         self.account_repository.save(user)
         for event in user.pull_events():
             self.event_outbox.dispatch(event)
 
-        decision = self.auth_policy.issue_authenticated_login(user)
-        self.token_blacklist.blacklist(temp_token_key, ttl=_temp_token_blacklist_ttl(payload))
+        decision = self.session_issuer.issue_authenticated_login(user)
+        self.token_blacklist.blacklist_mfa_grant(grant)
         return decision
 
 
 __all__ = ["CompleteMfaLoginUseCase"]
+
+
+def _challenge_can_attempt(challenge, *, now) -> bool:
+    try:
+        return challenge.can_attempt(now=now)
+    except MfaChallengeExpired:
+        return False

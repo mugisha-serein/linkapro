@@ -8,7 +8,7 @@ from domain.identity.account import User
 from domain.identity.credentials import Email, PasswordHistory
 
 
-class IUserRepository(ABC):
+class AccountRepository(ABC):
     @abstractmethod
     def get_by_id(self, user_id: uuid.UUID) -> Optional[User]:
         """Retrieve user by ID."""
@@ -39,4 +39,4 @@ class IUserRepository(ABC):
         """Deactivate a user without permanently deleting data."""
 
 
-__all__ = ["IUserRepository"]
+__all__ = ["AccountRepository"]

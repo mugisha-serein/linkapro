@@ -10,12 +10,10 @@ from application.identity.authorization import (
     SuspendAccountUseCase,
     UnlockAccountUseCase,
 )
-from application.identity.commands import (
-    AssignRoleCommand,
-    ReactivateAccountCommand,
-    SuspendAccountCommand,
-    UnlockAccountCommand,
-)
+from application.identity.authorization.assign_role_command import AssignRoleCommand
+from application.identity.authorization.reactivate_account_command import ReactivateAccountCommand
+from application.identity.authorization.suspend_account_command import SuspendAccountCommand
+from application.identity.authorization.unlock_account_command import UnlockAccountCommand
 from domain.identity.account import (
     AccountStatus,
     User,
@@ -26,6 +24,7 @@ from domain.identity.account import (
 )
 from domain.identity.authorization import RoleAssignmentDenied, UserRoleChanged
 from domain.identity.credentials import Email, PasswordHash
+from domain.identity.shared.security_reason import SecurityReason
 
 
 class FixedClock:
@@ -70,8 +69,8 @@ def test_assign_role_consults_policy_then_dispatches_recorded_event():
         AssignRoleCommand(
             actor_id=actor.id,
             target_user_id=target.id,
-            new_role="vendor",
-            reason="support request",
+            new_role=UserRole.VENDOR,
+            reason=SecurityReason("support request"),
         )
     )
 
@@ -98,7 +97,7 @@ def test_assign_role_rejects_unauthorized_actor():
             AssignRoleCommand(
                 actor_id=actor.id,
                 target_user_id=target.id,
-                new_role="vendor",
+                new_role=UserRole.VENDOR,
             )
         )
 
@@ -111,16 +110,18 @@ def test_suspend_account_uses_actor_policy_and_records_actor_metadata():
     target = _user()
     account_repository = _repo(actor, target)
     event_outbox = Mock()
+    revoke_all_sessions_use_case = Mock()
 
     SuspendAccountUseCase(
         account_repository=account_repository,
         event_outbox=event_outbox,
         clock=FixedClock(),
+        revoke_all_sessions_use_case=revoke_all_sessions_use_case,
     ).execute(
         SuspendAccountCommand(
             actor_id=actor.id,
             target_user_id=target.id,
-            reason="terms violation",
+            reason=SecurityReason("terms violation"),
         )
     )
 
@@ -129,6 +130,10 @@ def test_suspend_account_uses_actor_policy_and_records_actor_metadata():
     assert isinstance(event, UserSuspended)
     assert event.actor_user_id == actor.id
     assert str(event.reason) == "terms violation"
+    revoke_all_sessions_use_case.execute.assert_called_once_with(
+        user_id=target.id,
+        reason="account_suspended",
+    )
 
 
 def test_reactivate_account_records_actor_metadata():

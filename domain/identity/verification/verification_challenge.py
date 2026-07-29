@@ -108,6 +108,11 @@ class VerificationChallenge(AggregateRoot):
         if not code.matches_digest(self.code_digest):
             self.failed_attempts += 1
             raise InvalidVerificationCode("Invalid verification code")
+        self.consume(now=occurred_at)
+
+    def consume(self, now: datetime | None = None) -> None:
+        occurred_at = _now_or_system(now)
+        self.ensure_usable(occurred_at)
         self.succeeded_at = occurred_at
         self._record_event(
             VerificationChallengeSucceeded(

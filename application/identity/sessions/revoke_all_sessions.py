@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import uuid
 
-from application.identity.shared.ports import ISessionStore, TokenFamilyRepository
+from application.identity.shared.ports import SessionRepository, TokenFamilyRepository
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class RevokeAllSessionsUseCase:
     def __init__(
         self,
         *,
-        session_repository: ISessionStore,
+        session_repository: SessionRepository,
         token_family_repository: TokenFamilyRepository,
     ) -> None:
         self.session_repository = session_repository

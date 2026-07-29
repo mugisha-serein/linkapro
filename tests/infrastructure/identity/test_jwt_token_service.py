@@ -5,6 +5,7 @@ import jwt
 from django.test import override_settings
 from django.conf import settings
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+from domain.identity.verification import EmailVerificationToken
 from infrastructure.identity.jwt_token_service import JWTTokenService
 
 
@@ -135,16 +136,23 @@ def test_token_env_change_invalidates_password_reset_token(settings):
 def test_email_verification_and_temp_tokens_use_token_env():
     service = JWTTokenService()
 
-    email_token = service.create_email_verification_token("user-123")
-    temp_token = service.create_temp_token("user-123")
+    email_token = service.create_email_verification_token("user-123", "challenge-123")
+    challenge_id = str(uuid.uuid4())
+    user_id = str(uuid.uuid4())
+    temp_token = service.create_temp_token(user_id, challenge_id)
 
     email_payload = jwt.decode(email_token, settings.SECRET_KEY, algorithms=["HS256"])
     temp_payload = jwt.decode(temp_token, settings.SECRET_KEY, algorithms=["HS256"])
     assert email_payload["env"] == "identity-prod"
     assert temp_payload["env"] == "identity-prod"
     assert temp_payload["jti"]
-    assert service.verify_email_verification_token(email_token) == "user-123"
-    assert service.verify_temp_token(temp_token)["user_id"] == "user-123"
+    assert temp_payload["challenge_id"] == challenge_id
+    assert service.verify_email_verification_token(EmailVerificationToken(email_token)) == "challenge-123"
+    grant = service.inspect_mfa_login_grant(temp_token)
+    assert grant is not None
+    assert str(grant.account_id) == user_id
+    assert str(grant.challenge_id) == challenge_id
+    assert grant.grant_id == temp_payload["jti"]
 
 
 @override_settings(TOKEN_ENV="identity-prod", PAYMENT_ENV="legacy-test", ACCEPT_LEGACY_PAYMENT_ENV_TOKENS=True)

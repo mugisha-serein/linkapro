@@ -1,6 +1,8 @@
 from django.contrib.auth.hashers import check_password, make_password
+from django.utils import timezone
 
-from application.identity.shared.ports import ITokenBlacklist, PasswordHasher
+from application.identity.shared.dtos import MfaLoginGrant
+from application.identity.shared.ports import TokenRevocationStore, PasswordHasher
 from django_app.common.redis_config import get_redis_client
 from domain.identity.credentials import PasswordHash, PlainPassword
 
@@ -21,7 +23,7 @@ class DjangoPasswordHasher(PasswordHasher):
         check_password(candidate, _DUMMY_PASSWORD_HASH)
 
 
-class RedisTokenBlacklist(ITokenBlacklist):
+class RedisTokenBlacklist(TokenRevocationStore):
     def __init__(self):
         self.client = get_redis_client()
 
@@ -37,3 +39,12 @@ class RedisTokenBlacklist(ITokenBlacklist):
     def blacklist_family(self, family_id: str) -> None:
         # Individual tokens check both jti and family blacklist.
         self.client.setex(f"family:{family_id}", 7 * 24 * 3600, "1")
+
+    def is_mfa_grant_blacklisted(self, grant: MfaLoginGrant) -> bool:
+        return self.is_blacklisted(grant.grant_id)
+
+    def blacklist_mfa_grant(self, grant: MfaLoginGrant) -> None:
+        self.blacklist(
+            grant.grant_id,
+            ttl=grant.remaining_ttl_seconds(now=timezone.now()),
+        )

@@ -3,9 +3,11 @@ from enum import Enum
 from application.identity.dtos import AuthenticationResult
 from application.identity.shared.mappers import session_bootstrap_payload
 from application.identity.shared.dtos import TokenClaims
-from application.identity.shared.ports import ISessionStore, PasswordHasher, SESSION_ID_CLAIM
+from application.identity.shared.ports import MfaChallengeRepository, SessionRepository, PasswordHasher
 from domain.identity.authentication import evaluate_authentication_eligibility
+from domain.identity.mfa import MfaMethod, MfaPolicy
 from domain.identity.sessions import TokenFamily
+from domain.shared.utils import utc_now
 
 
 class AuthenticationStatus(str, Enum):
@@ -16,15 +18,24 @@ class AuthenticationStatus(str, Enum):
     SOCIAL_LOGIN_ONLY = "social_login_only"
     INVALID_TEMP_TOKEN = "invalid_temp_token"
     INVALID_MFA_CODE = "invalid_mfa_code"
+    LOCKED = "locked"
 
 
 AuthenticationDecision = AuthenticationResult
 
 
-class IdentityAuthenticationPolicy:
-    def __init__(self, token_service, session_store: ISessionStore):
+class AuthenticatedSessionIssuer:
+    def __init__(
+        self,
+        token_service,
+        session_store: SessionRepository,
+        mfa_challenge_repository: MfaChallengeRepository | None = None,
+        mfa_policy: MfaPolicy | None = None,
+    ):
         self.token_service = token_service
         self.session_store = session_store
+        self.mfa_challenge_repository = mfa_challenge_repository
+        self.mfa_policy = mfa_policy or MfaPolicy()
 
     def evaluate_password_login(self, user, plain_password, password_hasher: PasswordHasher) -> AuthenticationDecision:
         eligibility = evaluate_authentication_eligibility(user)
@@ -47,7 +58,15 @@ class IdentityAuthenticationPolicy:
 
     def _finalize_login(self, user, eligibility) -> AuthenticationDecision:
         if eligibility.requires_mfa:
-            temp_token = self.token_service.create_temp_token(str(user.id))
+            if self.mfa_challenge_repository is None:
+                raise ValueError("MFA challenge repository is required for MFA login")
+            challenge = self.mfa_policy.issue_challenge(
+                user_id=user.id,
+                method=MfaMethod.TOTP,
+                now=utc_now(),
+            )
+            self.mfa_challenge_repository.save(challenge)
+            temp_token = self.token_service.create_temp_token(str(user.id), str(challenge.id))
             return AuthenticationDecision(
                 status=AuthenticationStatus.MFA_REQUIRED,
                 user=user,

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from application.identity.errors import UserNotFoundError
-from application.identity.shared.ports import IUserRepository
+from application.identity.shared.ports import AccountRepository
 from domain.identity.account import User
 from domain.identity.authorization import (
     RoleAssignmentContext,
@@ -20,7 +20,7 @@ class AccountAdministrationContext:
 
 def load_authorized_account_administration_context(
     *,
-    account_repository: IUserRepository,
+    account_repository: AccountRepository,
     actor_id,
     target_user_id,
     policy: RoleAssignmentPolicy | None = None,
@@ -46,7 +46,7 @@ def load_authorized_account_administration_context(
     return AccountAdministrationContext(actor=actor, target=target)
 
 
-def save_and_dispatch(*, account_repository: IUserRepository, event_outbox, target: User) -> None:
+def save_and_dispatch(*, account_repository: AccountRepository, event_outbox, target: User) -> None:
     account_repository.save(target)
     for event in target.pull_events():
         event_outbox.dispatch(event)

@@ -1,9 +1,7 @@
 """Reactivate a deactivated identity account."""
 
-from typing import Protocol
-
-from application.identity.commands import ReactivateAccountCommand
-from application.identity.shared.ports import Clock, IUserRepository
+from application.identity.authorization.reactivate_account_command import ReactivateAccountCommand
+from application.identity.shared.ports import Clock, EventOutbox, AccountRepository
 from domain.identity.authorization import RoleAssignmentPolicy
 
 from ._account_administration import (
@@ -12,16 +10,11 @@ from ._account_administration import (
 )
 
 
-class EventOutbox(Protocol):
-    def dispatch(self, event) -> None:
-        ...
-
-
 class ReactivateAccountUseCase:
     def __init__(
         self,
         *,
-        account_repository: IUserRepository,
+        account_repository: AccountRepository,
         event_outbox: EventOutbox,
         clock: Clock,
         role_assignment_policy: RoleAssignmentPolicy | None = None,
