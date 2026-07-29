@@ -1,20 +1,9 @@
 """MFA enrollment and replay storage ports."""
 
 import uuid
-from typing import Any, Protocol
+from typing import Protocol
 
 from domain.identity.verification import VerificationCode
-
-
-class MfaEnrollmentStore(Protocol):
-    def save(self, user_id: uuid.UUID, state: Any, ttl: int) -> None:
-        ...
-
-    def get(self, user_id: uuid.UUID) -> Any | None:
-        ...
-
-    def consume(self, user_id: uuid.UUID) -> None:
-        ...
 
 
 class MfaReplayStore(Protocol):
@@ -25,4 +14,4 @@ class MfaReplayStore(Protocol):
         ...
 
 
-__all__ = ["MfaEnrollmentStore", "MfaReplayStore"]
+__all__ = ["MfaReplayStore"]

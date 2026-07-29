@@ -12,3 +12,11 @@ class InvalidCredentialsError(ValueError):
 
 class InvalidTwoFactorCodeError(ValueError):
     pass
+
+
+class OAuthRelinkRequiresStepUp(ValueError):
+    pass
+
+
+class OAuthUnlinkWouldRemoveOnlyAuthenticationMethod(ValueError):
+    pass

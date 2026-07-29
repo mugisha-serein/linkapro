@@ -10,7 +10,7 @@ SESSION_ID_CLAIM = "session_id"
 AUTH_TOKEN_VERSION_CLAIM = "auth_token_version"
 
 
-class ISessionStore(Protocol):
+class SessionRepository(Protocol):
     def create_identity_session(
         self,
         *,
@@ -26,15 +26,6 @@ class ISessionStore(Protocol):
         ...
 
     def identity_session_is_active(self, session_id: str | None, token_family: str | None = None) -> bool:
-        ...
-
-    def is_token_revoked_for_user(self, user_id, issued_at) -> bool:
-        ...
-
-    def token_version_matches_active_user(self, user_id, token_version) -> bool:
-        ...
-
-    def get_bootstrap_claims(self, user_id, session_id: str | None = None) -> dict | None:
         ...
 
     def revoke_identity_session(
@@ -60,6 +51,6 @@ class ISessionStore(Protocol):
 
 __all__ = [
     "AUTH_TOKEN_VERSION_CLAIM",
-    "ISessionStore",
+    "SessionRepository",
     "SESSION_ID_CLAIM",
 ]

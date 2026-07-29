@@ -1,5 +1,6 @@
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,12 @@ from django.core.cache import cache
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
+
+from application.identity.oauth import GoogleLoginCommand, ProviderIdentity
+from domain.identity.account import AccountRole
+from domain.identity.credentials import Email
+from domain.identity.oauth import OAuthAccessToken, OAuthProvider, OAuthRefreshToken
+from domain.shared.utils import utc_now
 
 
 @dataclass
@@ -23,27 +30,36 @@ class _UseCaseResult:
 class _AdapterStub:
     def __init__(self, auth_url="https://accounts.google.com/fake-auth"):
         self._auth_url = auth_url
+        self.command = None
 
     def build_auth_url(self, state=None):
         return self._auth_url
 
-    def exchange_code(self, code):
-        return {"access_token": "google_access", "refresh_token": "google_refresh", "expires_in": 3600}
+    def build_login_command(self, code, *, signup_role):
+        self.command = GoogleLoginCommand(
+            identity=ProviderIdentity(
+                provider=OAuthProvider.GOOGLE,
+                provider_user_id="google-123",
+                email=Email("oauth@example.com"),
+                first_name="OAuth",
+                last_name="User",
+                email_verified=True,
+            ),
+            access_token=OAuthAccessToken("google_access"),
+            refresh_token=OAuthRefreshToken("google_refresh"),
+            expires_at=utc_now() + timedelta(seconds=3600),
+            signup_role=signup_role,
+        )
+        return self.command
 
-    def get_user_info(self, access_token):
-        return {
-            "email": "oauth@example.com",
-            "google_id": "google-123",
-            "name": "OAuth User",
-            "picture": "",
-        }
 
-
-class _AuthSessionFacadeStub:
+class _GoogleLoginUseCaseStub:
     def __init__(self, result):
         self._result = result
+        self.command = None
 
-    def login_with_google(self, user_data, token_data, signup_role=None):
+    def execute(self, command):
+        self.command = command
         return self._result
 
 
@@ -140,13 +156,15 @@ class TestGoogleOAuthViews:
 
         settings.DEBUG = True
         settings.FRONTEND_URL = "http://localhost:3000"
-        monkeypatch.setattr(google_mfa_views, "get_google_oauth_adapter", lambda: _AdapterStub())
+        use_case = _GoogleLoginUseCaseStub(
+            _UseCaseResult(requires_2fa=True, temp_token="temp-abc")
+        )
+        adapter = _AdapterStub()
+        monkeypatch.setattr(google_mfa_views, "get_google_oauth_adapter", lambda: adapter)
         monkeypatch.setattr(
             google_mfa_views,
-            "get_auth_session_facade",
-            lambda: _AuthSessionFacadeStub(
-                _UseCaseResult(requires_2fa=True, temp_token="temp-abc")
-            ),
+            "get_google_login_use_case",
+            lambda: use_case,
         )
         monkeypatch.setattr(
             google_mfa_views,
@@ -165,6 +183,8 @@ class TestGoogleOAuthViews:
         assert response.cookies["refresh_token"].value == ""
         assert response["Cache-Control"] == "no-store"
         assert response["Pragma"] == "no-cache"
+        assert use_case.command is adapter.command
+        assert use_case.command.signup_role is AccountRole.PLANNER
 
     def test_google_callback_redirects_success_with_refresh_cookie_only(self, monkeypatch, settings):
         from django_app.identity.views import mfa as google_mfa_views
@@ -174,8 +194,8 @@ class TestGoogleOAuthViews:
         monkeypatch.setattr(google_mfa_views, "get_google_oauth_adapter", lambda: _AdapterStub())
         monkeypatch.setattr(
             google_mfa_views,
-            "get_auth_session_facade",
-            lambda: _AuthSessionFacadeStub(
+            "get_google_login_use_case",
+            lambda: _GoogleLoginUseCaseStub(
                 _UseCaseResult(
                     requires_2fa=False,
                     access="access-token",

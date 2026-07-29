@@ -1,5 +1,6 @@
 """Identity verification domain model."""
 from .resend_policy import VerificationResendPolicy
+from .email_verification_token import EmailVerificationToken
 from .verification_challenge import VerificationChallenge
 from .verification_code import VerificationCode
 from .verification_errors import (
@@ -24,6 +25,7 @@ from .verification_purpose import VerificationPurpose
 
 __all__ = [
     "InvalidVerificationCode",
+    "EmailVerificationToken",
     "UserVerified",
     "VerificationAttemptLimitExceeded",
     "VerificationAttemptsExhausted",

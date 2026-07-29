@@ -1,4 +1,5 @@
 import pytest
+from django.utils import timezone
 from django.urls import reverse
 from rest_framework.test import APIClient
 import pyotp
@@ -36,6 +37,12 @@ class TestTwoFactor:
 
             def blacklist_family(self, family_id):
                 self.blacklisted_families.add(family_id)
+
+            def is_mfa_grant_blacklisted(self, grant):
+                return self.is_blacklisted(grant.grant_id)
+
+            def blacklist_mfa_grant(self, grant):
+                self.blacklist(grant.grant_id, grant.remaining_ttl_seconds(now=timezone.now()))
 
         def django_user_repository_factory():
             return DjangoUserRepository(key_provider=_KeyProvider())

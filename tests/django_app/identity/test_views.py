@@ -11,7 +11,9 @@ from rest_framework.test import APIClient
 
 from domain.identity.account import User, UserRole
 from domain.identity.credentials import Email, PasswordHash, PlainPassword
-from domain.identity.mfa import TOTPSecret
+from domain.identity.mfa import MfaMethod, MfaPolicy, TOTPSecret
+from infrastructure.identity.django_mfa_challenge_store import DjangoMfaChallengeRepository
+from infrastructure.identity.django_authentication_attempt_repository import DjangoAuthenticationAttemptRepository
 from infrastructure.identity.django_user_repository import DjangoUserRepository
 from infrastructure.identity.shared.security_primitives import DjangoPasswordHasher
 from infrastructure.identity.jwt_token_service import JWTTokenService, password_reset_token_hash
@@ -23,7 +25,6 @@ from django_app.identity.models import (
     User as DjangoUser,
 )
 from django_app.identity.password_reset_email import send_password_reset_email
-from django_app.identity.throttles import rate_limit_hash
 from tasks.email_tasks import send_password_reset_email_task
 from tasks.identity_domain_events import publish_identity_domain_event
 
@@ -98,6 +99,12 @@ class TestIdentityViews:
 
             def blacklist_family(self, family_id):
                 self.blacklisted_families.add(family_id)
+
+            def is_mfa_grant_blacklisted(self, grant):
+                return self.is_blacklisted(grant.grant_id)
+
+            def blacklist_mfa_grant(self, grant):
+                self.blacklist(grant.grant_id, grant.remaining_ttl_seconds(now=timezone.now()))
 
         def django_user_repository_factory():
             return DjangoUserRepository(key_provider=_KeyProvider())
@@ -306,13 +313,16 @@ class TestIdentityViews:
 
     @override_settings(LOGIN_FAILURE_LOCKOUT_THRESHOLD=2, LOGIN_FAILURE_LOCKOUT_SECONDS=900)
     def test_failed_login_increments_progressive_counter_and_locks_out(self):
-        for _ in range(2):
-            response = self.client.post(
-                reverse("login"),
-                {"email": "progressive@example.com", "password": "WrongPass1!"},
-                format="json",
-            )
-            assert response.status_code == 401
+        first = self.client.post(
+            reverse("login"),
+            {"email": "progressive@example.com", "password": "WrongPass1!"},
+            format="json",
+        )
+        second = self.client.post(
+            reverse("login"),
+            {"email": "progressive@example.com", "password": "WrongPass1!"},
+            format="json",
+        )
 
         response = self.client.post(
             reverse("login"),
@@ -320,8 +330,73 @@ class TestIdentityViews:
             format="json",
         )
 
-        assert response.status_code == 429
-        assert response.data["code"] == "login_rate_limited"
+        assert first.status_code == 401
+        assert second.status_code == 423
+        assert second.data["code"] == "account_locked"
+        assert response.status_code == 423
+        assert response.data["code"] == "account_locked"
+
+    @override_settings(
+        REST_FRAMEWORK=_auth_throttle_rates(login_ip="100/min"),
+        LOGIN_FAILURE_LOCKOUT_THRESHOLD=2,
+        LOGIN_FAILURE_LOCKOUT_SECONDS=60,
+        LOGIN_FAILURE_OBSERVATION_WINDOW_SECONDS=60,
+    )
+    def test_failed_login_lockout_persists_and_expires_naturally(self, monkeypatch):
+        user = DjangoUser.objects.create_user(
+            email="lock-expiry@example.com",
+            password="StrongPass1!",
+            first_name="Lock",
+            last_name="Expiry",
+            role="planner",
+            is_verified=True,
+        )
+        current_time = {"value": timezone.now()}
+
+        class FrozenSystemClock:
+            def now(self):
+                return current_time["value"]
+
+        monkeypatch.setattr("application.identity.account_lockout.SystemClock", FrozenSystemClock)
+
+        first = self.client.post(
+            reverse("login"),
+            {"email": "lock-expiry@example.com", "password": "WrongPass1!"},
+            format="json",
+        )
+        second = self.client.post(
+            reverse("login"),
+            {"email": "lock-expiry@example.com", "password": "WrongPass1!"},
+            format="json",
+        )
+
+        attempt_repository = DjangoAuthenticationAttemptRepository()
+        persisted_counter = attempt_repository.load_failed_attempt_counter("lock-expiry@example.com")
+        assert first.status_code == 401
+        assert second.status_code == 423
+        assert second.data["code"] == "account_locked"
+        assert persisted_counter.locked_until == current_time["value"] + timedelta(seconds=60)
+
+        still_locked = self.client.post(
+            reverse("login"),
+            {"email": "lock-expiry@example.com", "password": "StrongPass1!"},
+            format="json",
+        )
+
+        assert still_locked.status_code == 423
+        assert still_locked.data["code"] == "account_locked"
+
+        current_time["value"] = current_time["value"] + timedelta(seconds=61)
+        unlocked = self.client.post(
+            reverse("login"),
+            {"email": "lock-expiry@example.com", "password": "StrongPass1!"},
+            format="json",
+        )
+
+        assert unlocked.status_code == 200
+        assert unlocked.data["code"] == "login_completed"
+        assert attempt_repository.load_failed_attempt_counter(user.email).attempts == ()
+        assert attempt_repository.load_failed_attempt_counter(user.email).locked_until is None
 
     @override_settings(LOGIN_FAILURE_LOCKOUT_THRESHOLD=8, LOGIN_FAILURE_LOCKOUT_SECONDS=900)
     def test_successful_login_clears_progressive_failure_counter(self):
@@ -339,8 +414,8 @@ class TestIdentityViews:
             format="json",
         )
 
-        email_hash = rate_limit_hash("clear-failure@example.com")
-        assert len(cache.get(f"login_fail:{email_hash}")) == 1
+        attempt_repository = DjangoAuthenticationAttemptRepository()
+        assert len(attempt_repository.load_failed_attempt_counter("clear-failure@example.com").attempts) == 1
 
         response = self.client.post(
             reverse("login"),
@@ -350,7 +425,7 @@ class TestIdentityViews:
 
         assert response.status_code == 200
         assert response.data["code"] == "login_completed"
-        assert cache.get(f"login_fail:{email_hash}") is None
+        assert attempt_repository.load_failed_attempt_counter("clear-failure@example.com").attempts == ()
         assert user.id
 
     def test_login_rate_limiter_cache_failure_fails_closed(self, monkeypatch):
@@ -413,7 +488,13 @@ class TestIdentityViews:
             role="planner",
         )
         self.repo.set_totp_secret(user.id, TOTPSecret("JBSWY3DPEHPK3PXP"))
-        temp_token = JWTTokenService().create_temp_token(str(user.id))
+        challenge = MfaPolicy().issue_challenge(
+            user_id=user.id,
+            method=MfaMethod.TOTP,
+            now=timezone.now(),
+        )
+        DjangoMfaChallengeRepository().save(challenge)
+        temp_token = JWTTokenService().create_temp_token(str(user.id), str(challenge.id))
 
         response = self.client.post(
             reverse("2fa-login"),
@@ -1111,7 +1192,7 @@ class TestIdentityViews:
             aggregate_id=user.id,
             event_type="UserPasswordChanged",
         )
-        assert outbox.payload["reason"]["value"] == "credential_recovery"
+        assert outbox.aggregate_version == 1
         assert reset_token.status == PasswordResetToken.Status.USED
         assert reset_token.used_at is not None
         assert reset_token.used_ip_hash

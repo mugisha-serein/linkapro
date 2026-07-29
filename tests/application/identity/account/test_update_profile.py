@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from application.identity.account import UpdateAccountProfileUseCase
-from application.identity.commands import UpdateProfileCommand
+from application.identity.account.update_profile_command import UpdateProfileCommand
 from application.identity.errors import UserNotFoundError
 from domain.identity.account import User, UserRole
 from domain.identity.credentials import Email, PasswordHash

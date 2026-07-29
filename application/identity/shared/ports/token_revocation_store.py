@@ -2,8 +2,10 @@
 
 from typing import Protocol
 
+from application.identity.shared.dtos import MfaLoginGrant
 
-class ITokenBlacklist(Protocol):
+
+class TokenRevocationStore(Protocol):
     def is_blacklisted(self, jti: str) -> bool:
         ...
 
@@ -16,5 +18,11 @@ class ITokenBlacklist(Protocol):
     def blacklist_family(self, family_id: str) -> None:
         ...
 
+    def is_mfa_grant_blacklisted(self, grant: MfaLoginGrant) -> bool:
+        ...
 
-__all__ = ["ITokenBlacklist"]
+    def blacklist_mfa_grant(self, grant: MfaLoginGrant) -> None:
+        ...
+
+
+__all__ = ["TokenRevocationStore"]

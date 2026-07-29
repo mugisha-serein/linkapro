@@ -3,22 +3,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from math import ceil
-from typing import Callable, Protocol
+from typing import Callable
 
 from domain.identity.authentication import (
     AccountLockoutDecision,
     AccountLockoutPolicy,
-    AuthenticationAttempt,
-    FailedAttemptCounter,
 )
 from domain.identity.shared import SystemClock
 
-
-class LockoutStateStore(Protocol):
-    def get(self, key: str): ...
-    def set(self, key: str, value, timeout: int | None = None): ...
-    def delete_many(self, keys): ...
+from application.identity.shared.ports import AuthenticationAttemptRepository
 
 
 @dataclass(frozen=True)
@@ -39,11 +32,11 @@ class AccountLockoutService:
     def __init__(
         self,
         *,
-        store: LockoutStateStore,
+        repository: AuthenticationAttemptRepository,
         config: AccountLockoutConfig,
         now: Callable[[], datetime] | None = None,
     ):
-        self.store = store
+        self.repository = repository
         self.config = config
         self.policy = config.policy()
         self.now = now or SystemClock().now
@@ -52,79 +45,28 @@ class AccountLockoutService:
         if not account_key:
             return AccountLockoutDecision(locked=False, failed_attempts=0)
         now = self.now()
-        return self.policy.evaluate(self._load_counter(account_key), now=now)
+        return self.policy.evaluate(
+            self.repository.load_failed_attempt_counter(account_key),
+            now=now,
+        )
 
     def record_failure(self, account_key: str | None) -> AccountLockoutDecision:
         if not account_key:
             return AccountLockoutDecision(locked=False, failed_attempts=0)
         now = self.now()
-        counter = self.policy.record_failure(self._load_counter(account_key), now=now)
-        self._save_counter(account_key, counter)
+        counter = self.policy.record_failure(
+            self.repository.load_failed_attempt_counter(account_key),
+            now=now,
+        )
+        self.repository.save_failed_attempt_counter(
+            account_key,
+            counter,
+            observation_window_seconds=self.config.observation_window_seconds,
+            lock_duration_seconds=self.config.lock_duration_seconds,
+        )
         return self.policy.evaluate(counter, now=now)
 
     def record_success(self, account_key: str | None) -> None:
         if not account_key:
             return
-        self.store.delete_many([self._attempts_key(account_key), self._lock_key(account_key)])
-
-    def _load_counter(self, account_key: str) -> FailedAttemptCounter:
-        attempts = tuple(
-            AuthenticationAttempt(occurred_at=occurred_at, succeeded=False)
-            for occurred_at in self._load_attempt_times(account_key)
-        )
-        locked_until = self._parse_datetime(self.store.get(self._lock_key(account_key)))
-        return FailedAttemptCounter(attempts=attempts, locked_until=locked_until)
-
-    def _save_counter(self, account_key: str, counter: FailedAttemptCounter) -> None:
-        attempt_times = [
-            attempt.occurred_at.isoformat()
-            for attempt in counter.attempts
-            if not attempt.succeeded
-        ]
-        self.store.set(
-            self._attempts_key(account_key),
-            attempt_times,
-            timeout=self._ttl(self.config.observation_window_seconds),
-        )
-        if counter.locked_until:
-            self.store.set(
-                self._lock_key(account_key),
-                counter.locked_until.isoformat(),
-                timeout=self._ttl(self.config.lock_duration_seconds),
-            )
-
-    def _load_attempt_times(self, account_key: str) -> tuple[datetime, ...]:
-        raw_attempts = self.store.get(self._attempts_key(account_key)) or []
-        if isinstance(raw_attempts, int):
-            return tuple(self.now() for _ in range(raw_attempts))
-        if not isinstance(raw_attempts, (list, tuple)):
-            return ()
-        return tuple(
-            parsed
-            for value in raw_attempts
-            if (parsed := self._parse_datetime(value)) is not None
-        )
-
-    @staticmethod
-    def _parse_datetime(value) -> datetime | None:
-        if not value:
-            return None
-        try:
-            parsed = datetime.fromisoformat(str(value))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            return None
-        return parsed
-
-    @staticmethod
-    def _ttl(seconds: int) -> int:
-        return max(ceil(seconds), 1)
-
-    @staticmethod
-    def _attempts_key(account_key: str) -> str:
-        return f"login_fail:{account_key}"
-
-    @staticmethod
-    def _lock_key(account_key: str) -> str:
-        return f"login_lock:{account_key}"
+        self.repository.clear_failed_attempt_counter(account_key)

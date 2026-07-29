@@ -8,7 +8,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from domain.identity.account import AccountStatus, User as DomainUser, UserRole as DomainRole
 from domain.identity.credentials import Email, PasswordHash, PasswordHistory
 from domain.identity.mfa import TOTPSecret
-from application.identity.shared.ports import ITOTPSecretRepository, IUserRepository
+from application.identity.shared.ports import TotpSecretRepository, AccountRepository
 from django_app.identity.models import PasswordHistoryEntry as DjangoPasswordHistoryEntry
 from django_app.identity.models import User as DjangoUser
 from payments.application.ports import IKeyProvider
@@ -18,7 +18,7 @@ from payments.infrastructure.crypto import decrypt_field, encrypt_field
 from payments.infrastructure.vault_key_provider import VaultKeyProvider
 
 
-class DjangoUserRepository(IUserRepository, ITOTPSecretRepository):
+class DjangoUserRepository(AccountRepository, TotpSecretRepository):
     def __init__(self, key_provider: Optional[IKeyProvider] = None):
         self.key_provider = key_provider or VaultKeyProvider()
 

@@ -6,7 +6,7 @@ import uuid
 
 from application.identity.dtos import UserDTO
 from application.identity.shared.mappers import to_user_dto
-from application.identity.shared.ports import IUserRepository
+from application.identity.shared.ports import AccountRepository
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class GetUserByIdQuery:
 
 
 class GetAccountQueryUseCase:
-    def __init__(self, *, account_repository: IUserRepository) -> None:
+    def __init__(self, *, account_repository: AccountRepository) -> None:
         self.account_repository = account_repository
 
     def execute(self, query: GetUserByIdQuery) -> Optional[UserDTO]:

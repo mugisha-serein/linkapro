@@ -1,5 +1,5 @@
 from application.identity.shared.mappers import session_bootstrap_payload_from_values
-from application.identity.shared.ports import ISessionStore
+from application.identity.shared.ports import SessionBootstrapReader, SessionRepository, SessionSecurityStateReader
 from django_app.identity.session_revocation import (
     is_token_revoked_for_user,
     token_version_matches_active_user,
@@ -13,7 +13,7 @@ from django_app.identity.session_tracking import (
 from domain.identity.sessions import IdentitySession, SessionId, SessionStatus, TokenFamily
 
 
-class DjangoIdentitySessionStore(ISessionStore):
+class DjangoIdentitySessionStore(SessionRepository, SessionSecurityStateReader, SessionBootstrapReader):
     def create_identity_session(
         self,
         *,

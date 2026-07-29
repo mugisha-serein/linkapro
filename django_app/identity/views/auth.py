@@ -9,13 +9,13 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 
-from application.identity.auth_policy import AuthenticationStatus
-from application.identity.commands import UpdateProfileCommand
+from application.identity.authentication import AuthenticationStatus
+from application.identity.account.update_profile_command import UpdateProfileCommand
 from application.identity.errors import DuplicateUserError, UserNotFoundError
 from application.identity.queries import GetUserByIdQuery
 from application.identity.shared.mappers import account_derived_fields
 from django_app.common.api_responses import api_error, api_success
-from django_app.identity.services import get_auth_session_facade, get_command_handlers, get_query_handlers
+from django_app.identity.services import get_command_handlers, get_query_handlers
 from django_app.identity.shared.cookies import clear_auth_cookies, set_refresh_cookie
 from django_app.identity.shared.serializers import LoginSerializer, RegisterSerializer, UpdateProfileSerializer
 from django_app.identity.throttles import (
@@ -26,9 +26,7 @@ from django_app.identity.throttles import (
     RegistrationRateLimited,
     clear_login_failures,
     get_client_ip,
-    is_login_locked_out,
     rate_limit_hash,
-    record_login_failure,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +59,11 @@ def _auth_error_contract(auth_status):
             "Your verification session has expired. Please sign in again.",
             {"temp_token": ["Verification session expired."]},
         ),
+        AuthenticationStatus.LOCKED: (
+            "account_locked",
+            "Too many sign-in attempts. Please try again later.",
+            {},
+        ),
     }
     return mapping.get(
         auth_status,
@@ -71,11 +74,12 @@ def _auth_error_contract(auth_status):
 def _auth_error_response(auth_status, request=None):
     code, message, field_errors = _auth_error_contract(auth_status)
     logger.info("identity_authentication_failed", extra={"auth_status": getattr(auth_status, "value", str(auth_status))})
+    response_status = status.HTTP_423_LOCKED if auth_status is AuthenticationStatus.LOCKED else status.HTTP_401_UNAUTHORIZED
     return api_error(
         code=code,
         message=message,
         field_errors=field_errors,
-        status=status.HTTP_401_UNAUTHORIZED,
+        status=response_status,
         request=request,
     )
 
@@ -252,15 +256,8 @@ class LoginView(APIView):
                 request=request,
             )
         email = serializer.validated_data["email"]
-        if is_login_locked_out(request, email):
-            return _rate_limited_response(
-                code="login_rate_limited",
-                message="Too many sign-in attempts. Please try again later.",
-                request=request,
-            )
         cmd = serializer.to_command()
-        session = get_auth_session_facade()
-        auth_result = session.login(cmd)
+        auth_result = get_command_handlers().login_user(cmd)
         if auth_result.status is AuthenticationStatus.MFA_REQUIRED:
             clear_login_failures(request, email, user_id=getattr(auth_result.user, "id", None))
             response = api_success(
@@ -277,7 +274,6 @@ class LoginView(APIView):
             return response
 
         if auth_result.status is not AuthenticationStatus.AUTHENTICATED:
-            record_login_failure(request, email, auth_status=auth_result.status)
             response = _auth_error_response(auth_result.status, request=request)
             clear_auth_cookies(response)
             return response

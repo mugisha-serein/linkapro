@@ -8,6 +8,7 @@ from application.identity.shared.dtos.token_claims import (
     RefreshTokenClaims,
     RotatedTokenPairRequest,
     StepUpTokenRequest,
+    MfaLoginGrant,
 )
 
 
@@ -24,8 +25,15 @@ class IdentityTokenService(Protocol):
     def issue_step_up_token(self, request: StepUpTokenRequest) -> str:
         ...
 
+    def create_temp_token(self, user_id: str, challenge_id: str) -> str:
+        ...
+
+    def inspect_mfa_login_grant(self, temp_token: str) -> MfaLoginGrant | None:
+        ...
+
 
 __all__ = [
     "AccessTokenClaims",
     "IdentityTokenService",
+    "MfaLoginGrant",
 ]

@@ -1,9 +1,18 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from application.identity.commands import RegisterUserCommand, LoginUserCommand
+from application.identity.account.register_account_command import RegisterUserCommand
+from application.identity.authentication.login_with_password_command import LoginUserCommand
+from application.identity.authorization.assign_role_command import AssignRoleCommand
+from application.identity.authorization.suspend_account_command import SuspendAccountCommand
+from application.identity.recovery.reset_password_command import (
+    PasswordResetTokenInput,
+    ResetPasswordCommand,
+    SecurityMetadataHash,
+)
 from domain.identity.account import AccountRole
 from domain.identity.credentials import Email, PasswordPolicy, PlainPassword
+from domain.identity.shared.security_reason import InvalidSecurityReasonError, SecurityReason
 from domain.identity.verification import VerificationCode
 
 
@@ -62,7 +71,7 @@ class TwoFactorLoginSerializer(serializers.Serializer):
     token = serializers.CharField(min_length=6, max_length=6)
 
     def to_command(self):
-        from application.identity.commands import LoginTwoFactorCommand
+        from application.identity.authentication.complete_mfa_login_command import LoginTwoFactorCommand
 
         return LoginTwoFactorCommand(
             temp_token=self.validated_data["temp_token"],
@@ -80,6 +89,43 @@ class TwoFactorSetupVerifySerializer(serializers.Serializer):
 class UpdateProfileSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=150, required=False)
     last_name = serializers.CharField(max_length=150, required=False)
+
+
+class AssignRoleSerializer(serializers.Serializer):
+    new_role = serializers.ChoiceField(choices=[role.value for role in AccountRole])
+    reason = serializers.CharField(required=False, allow_blank=False, trim_whitespace=True)
+
+    def validate_reason(self, value):
+        try:
+            return SecurityReason(value)
+        except InvalidSecurityReasonError as exc:
+            raise serializers.ValidationError(str(exc))
+
+    def to_command(self, *, actor_id, target_user_id) -> AssignRoleCommand:
+        reason = self.validated_data.get("reason")
+        return AssignRoleCommand(
+            actor_id=actor_id,
+            target_user_id=target_user_id,
+            new_role=AccountRole(self.validated_data["new_role"]),
+            reason=reason,
+        )
+
+
+class SuspendAccountSerializer(serializers.Serializer):
+    reason = serializers.CharField(allow_blank=False, trim_whitespace=True)
+
+    def validate_reason(self, value):
+        try:
+            return SecurityReason(value)
+        except InvalidSecurityReasonError as exc:
+            raise serializers.ValidationError(str(exc))
+
+    def to_command(self, *, actor_id, target_user_id) -> SuspendAccountCommand:
+        return SuspendAccountCommand(
+            actor_id=actor_id,
+            target_user_id=target_user_id,
+            reason=self.validated_data["reason"],
+        )
 
 
 class SetupPasswordSerializer(serializers.Serializer):
@@ -113,3 +159,11 @@ class ResetPasswordSerializer(serializers.Serializer):
         attrs["token"] = token
         attrs["new_password"] = password
         return attrs
+
+    def to_command(self, *, client_ip_hash: str, user_agent_hash: str) -> ResetPasswordCommand:
+        return ResetPasswordCommand(
+            token=PasswordResetTokenInput(self.validated_data["token"]),
+            new_password=PlainPassword(self.validated_data["new_password"]),
+            client_ip_hash=SecurityMetadataHash(client_ip_hash),
+            user_agent_hash=SecurityMetadataHash(user_agent_hash),
+        )

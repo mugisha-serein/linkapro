@@ -1,9 +1,8 @@
 """Suspend an identity account."""
 
-from typing import Protocol
-
-from application.identity.commands import SuspendAccountCommand
-from application.identity.shared.ports import Clock, IUserRepository
+from application.identity.authorization.suspend_account_command import SuspendAccountCommand
+from application.identity.sessions import RevokeAllSessionsUseCase
+from application.identity.shared.ports import Clock, EventOutbox, AccountRepository
 from domain.identity.authorization import RoleAssignmentPolicy
 
 from ._account_administration import (
@@ -12,23 +11,20 @@ from ._account_administration import (
 )
 
 
-class EventOutbox(Protocol):
-    def dispatch(self, event) -> None:
-        ...
-
-
 class SuspendAccountUseCase:
     def __init__(
         self,
         *,
-        account_repository: IUserRepository,
+        account_repository: AccountRepository,
         event_outbox: EventOutbox,
         clock: Clock,
+        revoke_all_sessions_use_case: RevokeAllSessionsUseCase,
         role_assignment_policy: RoleAssignmentPolicy | None = None,
     ) -> None:
         self.account_repository = account_repository
         self.event_outbox = event_outbox
         self.clock = clock
+        self.revoke_all_sessions_use_case = revoke_all_sessions_use_case
         self.role_assignment_policy = role_assignment_policy or RoleAssignmentPolicy()
 
     def execute(self, cmd: SuspendAccountCommand) -> None:
@@ -47,6 +43,10 @@ class SuspendAccountUseCase:
             account_repository=self.account_repository,
             event_outbox=self.event_outbox,
             target=context.target,
+        )
+        self.revoke_all_sessions_use_case.execute(
+            user_id=context.target.id,
+            reason="account_suspended",
         )
 
 

@@ -1,0 +1,5 @@
+Subject: Verify your email
+
+Use this verification token to confirm your Linkapro email address:
+
+{{ token }}

@@ -1,14 +1,14 @@
 """Update identity account profile fields."""
 
-from application.identity.commands import UpdateProfileCommand
+from application.identity.account.update_profile_command import UpdateProfileCommand
 from application.identity.dtos import UserDTO
 from application.identity.errors import UserNotFoundError
 from application.identity.shared.mappers import to_user_dto
-from application.identity.shared.ports import IUserRepository
+from application.identity.shared.ports import AccountRepository
 
 
 class UpdateAccountProfileUseCase:
-    def __init__(self, *, account_repository: IUserRepository) -> None:
+    def __init__(self, *, account_repository: AccountRepository) -> None:
         self.account_repository = account_repository
 
     def execute(self, cmd: UpdateProfileCommand) -> UserDTO:

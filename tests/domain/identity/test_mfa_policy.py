@@ -19,6 +19,22 @@ def test_mfa_policy_issues_expiring_challenge():
     assert challenge.max_attempts == 5
 
 
+def test_mfa_policy_default_setup_challenge_configuration():
+    policy = MfaPolicy()
+    now = SystemClock().now()
+    challenge = policy.issue_challenge(user_id=uuid.uuid4(), method=MfaMethod.TOTP, now=now)
+
+    assert MfaPolicy.default_challenge_ttl() == timedelta(seconds=600)
+    assert MfaPolicy.default_max_attempts() == 5
+    assert policy.challenge_ttl_seconds() == 600
+    assert challenge.expires_at == now + timedelta(seconds=600)
+    assert challenge.max_attempts == 5
+    assert policy.remaining_challenge_ttl_seconds(
+        challenge,
+        now=now + timedelta(seconds=100),
+    ) == 500
+
+
 def test_mfa_policy_accepts_valid_totp_and_consumes_challenge():
     now = SystemClock().now()
     secret = TOTPSecret(pyotp.random_base32())
@@ -30,6 +46,25 @@ def test_mfa_policy_accepts_valid_totp_and_consumes_challenge():
 
     assert result.accepted is True
     assert result.challenge.consumed_at == now
+
+
+def test_mfa_policy_verify_challenge_records_state_transition_from_external_totp_result():
+    now = SystemClock().now()
+    policy = MfaPolicy(challenge_ttl=timedelta(minutes=3), max_attempts=2)
+    challenge = policy.issue_challenge(user_id=uuid.uuid4(), method=MfaMethod.TOTP, now=now)
+
+    failed = policy.verify_challenge(challenge=challenge, accepted=False, now=now)
+    accepted = policy.verify_challenge(
+        challenge=failed.challenge,
+        accepted=True,
+        now=now + timedelta(seconds=1),
+    )
+
+    assert failed.accepted is False
+    assert failed.challenge.attempt_count == 1
+    assert accepted.accepted is True
+    assert accepted.challenge.consumed_at == now + timedelta(seconds=1)
+    assert accepted.challenge.attempt_count == 2
 
 
 def test_mfa_policy_rejects_expired_challenge():

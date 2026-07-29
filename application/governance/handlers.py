@@ -12,7 +12,7 @@ from domain.governance.interfaces import (
 from domain.governance.events import AdminActionPerformed
 
 from domain.vendors.profile.interfaces import IVendorProfileRepository
-from application.identity.shared.ports import IUserRepository
+from application.identity.shared.ports import AccountRepository
 
 from .commands import *
 from .dtos import *
@@ -25,7 +25,7 @@ class GovernanceCommandHandlers:
         flag_repo: IContentFlagRepository,
         metric_repo: IPlatformMetricRepository,
         vendor_repo: IVendorProfileRepository,
-        user_repo: IUserRepository,
+        user_repo: AccountRepository,
         event_dispatcher,
     ):
         self.audit_repo = audit_repo

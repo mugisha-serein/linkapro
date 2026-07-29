@@ -20,13 +20,17 @@ class UserTokenState:
     is_active: bool
 
 
-def revoke_user_sessions(user_id, *, reason: str) -> None:
+def revoke_user_sessions(user_id, *, reason: str, bump_auth_token_version: bool = True) -> None:
     """Invalidate tokens issued before this moment for a single identity user."""
     if not user_id:
         return
     revoked_at = int(datetime.now(timezone.utc).timestamp())
     ttl = _session_revocation_ttl_seconds()
-    new_version = bump_user_auth_token_version(user_id)
+    new_version = (
+        bump_user_auth_token_version(user_id)
+        if bump_auth_token_version
+        else get_user_auth_token_version(user_id)
+    )
     cache.set(_session_revocation_key(user_id), revoked_at, timeout=ttl)
     logger.info(
         "identity_user_sessions_revoked",

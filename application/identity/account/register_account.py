@@ -1,45 +1,38 @@
 """Register a new identity account."""
 
-from typing import Protocol
-
-from application.identity.commands import RegisterUserCommand
+from application.identity.account.register_account_command import RegisterUserCommand
 from application.identity.dtos import UserDTO
 from application.identity.errors import DuplicateUserError
 from application.identity.shared.mappers import to_user_dto
 from application.identity.shared.ports import (
     Clock,
+    EventOutbox,
     IdGenerator,
     IdentityUnitOfWork,
-    IUserRepository,
-    NullIdentityUnitOfWork,
+    AccountRepository,
     PasswordHasher,
 )
 from domain.identity.account import User
 from domain.identity.credentials import PasswordHash
 
 
-class EventOutbox(Protocol):
-    def dispatch(self, event) -> None:
-        ...
-
-
 class RegisterAccountUseCase:
     def __init__(
         self,
         *,
-        account_repository: IUserRepository,
+        account_repository: AccountRepository,
         password_hasher: PasswordHasher,
         event_outbox: EventOutbox,
         clock: Clock,
         id_generator: IdGenerator,
-        unit_of_work: IdentityUnitOfWork | None = None,
+        unit_of_work: IdentityUnitOfWork,
     ) -> None:
         self.account_repository = account_repository
         self.password_hasher = password_hasher
         self.event_outbox = event_outbox
         self.clock = clock
         self.id_generator = id_generator
-        self.unit_of_work = unit_of_work or NullIdentityUnitOfWork()
+        self.unit_of_work = unit_of_work
 
     def execute(self, cmd: RegisterUserCommand) -> UserDTO:
         with self.unit_of_work as unit_of_work:

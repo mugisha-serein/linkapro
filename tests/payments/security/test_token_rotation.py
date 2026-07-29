@@ -1,7 +1,7 @@
 import uuid
 import pytest
-from unittest.mock import MagicMock, ANY
-from application.identity.token_handlers import TokenCommandHandlers
+from unittest.mock import MagicMock
+from application.identity.sessions import RefreshSessionUseCase, RevokeSessionUseCase
 from domain.identity.sessions import MalformedRefreshToken
 from infrastructure.identity.jwt_token_service import JWTTokenService
 
@@ -51,7 +51,27 @@ class TestTokenRotation:
 
     @pytest.fixture
     def handler(self, blacklist, session_store):
-        return TokenCommandHandlers(blacklist, session_store=session_store, token_service=JWTTokenService())
+        token_service = JWTTokenService()
+        return {
+            "refresh": RefreshSessionUseCase(
+                blacklist=blacklist,
+                session_repository=session_store,
+                session_security_state_reader=session_store,
+                session_bootstrap_reader=session_store,
+                token_service=token_service,
+            ),
+            "revoke": RevokeSessionUseCase(
+                blacklist=blacklist,
+                session_repository=session_store,
+                token_service=token_service,
+            ),
+        }
+
+    def _refresh_session(self, handler, refresh_token):
+        return handler["refresh"].execute(refresh_token)
+
+    def _revoke_session(self, handler, refresh_token):
+        return handler["revoke"].execute(refresh_token)
 
     def _create_refresh_token_str(self, user_id=None, jti=None, family=None, step_up=False, scope="", env="test"):
         from rest_framework_simplejwt.tokens import RefreshToken
@@ -71,7 +91,7 @@ class TestTokenRotation:
         blacklist.is_blacklisted.return_value = False
         old_refresh_str, _ = self._create_refresh_token_str()
 
-        new_access, new_refresh, _ = handler.refresh_access_token(old_refresh_str)
+        new_access, new_refresh, _ = self._refresh_session(handler, old_refresh_str)
 
         # Tokens must differ from the old one
         assert new_access != old_refresh_str
@@ -88,7 +108,7 @@ class TestTokenRotation:
         blacklist.is_blacklisted.return_value = False
         user_id = str(uuid.uuid4())
         old_refresh_str, payload = self._create_refresh_token_str(user_id=user_id)
-        new_access, _, _ = handler.refresh_access_token(old_refresh_str)
+        new_access, _, _ = self._refresh_session(handler, old_refresh_str)
 
         from rest_framework_simplejwt.tokens import AccessToken
         decoded = AccessToken(new_access)
@@ -98,13 +118,13 @@ class TestTokenRotation:
 
     def test_invalid_refresh_token_raises(self, handler, blacklist):
         with pytest.raises(MalformedRefreshToken, match="Invalid refresh token"):
-            handler.refresh_access_token("invalid_token_string")
+            self._refresh_session(handler, "invalid_token_string")
         blacklist.blacklist.assert_not_called()
 
     def test_revoke_refresh_token_blacklists_jti_and_family(self, handler, blacklist):
         refresh_str, payload = self._create_refresh_token_str()
 
-        handler.revoke_refresh_token(refresh_str)
+        self._revoke_session(handler, refresh_str)
 
         blacklist.blacklist.assert_called_once()
         blacklist.blacklist_family.assert_called_once_with(payload["family"])
@@ -118,7 +138,7 @@ class TestTokenRotation:
 
         refresh_str, _ = self._create_refresh_token_str(env="test")
 
-        new_access, new_refresh, _ = handler.refresh_access_token(refresh_str)
+        new_access, new_refresh, _ = self._refresh_session(handler, refresh_str)
 
         from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
         assert AccessToken(new_access)["env"] == "production"
@@ -134,7 +154,7 @@ class TestTokenRotation:
         refresh_str, _ = self._create_refresh_token_str(env="test")
 
         with pytest.raises(MalformedRefreshToken, match="Token environment mismatch"):
-            handler.refresh_access_token(refresh_str)
+            self._refresh_session(handler, refresh_str)
         blacklist.blacklist.assert_not_called()
 
     def test_missing_family_rejected(self, handler, blacklist):
@@ -145,5 +165,5 @@ class TestTokenRotation:
         token["env"] = "test"
 
         with pytest.raises(MalformedRefreshToken, match="family"):
-            handler.refresh_access_token(str(token))
+            self._refresh_session(handler, str(token))
         blacklist.blacklist.assert_not_called()

@@ -1,7 +1,7 @@
 import time
 from unittest.mock import Mock
 
-from application.identity.sessions import RefreshSessionUseCase, RevokeSessionUseCase
+from application.identity.sessions import RefreshSessionUseCase, RevokeCurrentSessionUseCase
 from application.identity.shared.dtos import IssuedTokenPair, RefreshTokenClaims, TokenBootstrapClaims
 
 
@@ -42,7 +42,9 @@ def test_refresh_session_rotates_token_family_with_typed_claims():
 
     access_token, refresh_token, bootstrap = RefreshSessionUseCase(
         blacklist=blacklist,
-        session_store=session_store,
+        session_repository=session_store,
+        session_security_state_reader=session_store,
+        session_bootstrap_reader=session_store,
         token_service=token_service,
     ).execute("raw-refresh-token")
 
@@ -66,9 +68,9 @@ def test_revoke_session_revokes_presented_token_family():
     token_service = Mock()
     token_service.inspect_refresh_token.return_value = claims
 
-    RevokeSessionUseCase(
+    RevokeCurrentSessionUseCase(
         blacklist=blacklist,
-        session_store=session_store,
+        session_repository=session_store,
         token_service=token_service,
     ).execute("raw-refresh-token")
 
