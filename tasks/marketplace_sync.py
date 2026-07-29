@@ -2,11 +2,11 @@ import logging
 
 from celery import shared_task
 
-from django_app.governance.marketplace_outbox import (
+from interface.governance.marketplace_outbox import (
     deliver_marketplace_projection_outbox_event,
     retry_due_marketplace_projection_outbox_events,
 )
-from django_app.governance.marketplace_reconciliation import reconcile_marketplace_projection
+from interface.governance.marketplace_reconciliation import reconcile_marketplace_projection
 from infrastructure.adapters.marketplace_projection import (
     delete_vendor_from_marketplace,
     sync_vendor_payload_to_marketplace,
@@ -43,7 +43,7 @@ def retry_due_marketplace_projection_outbox_events_task(batch_size: int | None =
 def reconcile_marketplace_projection_task() -> dict:
     result = reconcile_marketplace_projection()
     return {
-        "django_approved_complete_count": result.django_approved_complete_count,
+        "interfaceroved_complete_count": result.interfaceroved_complete_count,
         "fastapi_projection_count": result.fastapi_projection_count,
         "stale_projection_count": result.stale_projection_count,
         "deleted_stale_count": result.deleted_stale_count,

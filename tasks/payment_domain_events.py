@@ -11,7 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from application.notifications.event_map import PAYMENT_EVENT_TO_TEMPLATE, payment_notification_context
-from django_app.payments.models import Payment, PaymentDomainEventOutbox
+from interface.payments.models import Payment, PaymentDomainEventOutbox
 
 
 logger = logging.getLogger(__name__)

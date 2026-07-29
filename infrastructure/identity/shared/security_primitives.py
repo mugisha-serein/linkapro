@@ -1,13 +1,20 @@
+import ssl
+from urllib.parse import urlparse
+
 from django.contrib.auth.hashers import check_password, make_password
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
+from redis import Redis
 
 from application.identity.shared.dtos import MfaLoginGrant
 from application.identity.shared.ports import TokenRevocationStore, PasswordHasher
-from django_app.common.redis_config import get_redis_client
 from domain.identity.credentials import PasswordHash, PlainPassword
 
 
 _DUMMY_PASSWORD_HASH = make_password("LinkaproDummyPassword1!")
+_VALID_REDIS_SCHEMES = {"redis", "rediss"}
+_REDIS_SCHEME_ERROR = "REDIS_URL must start with redis:// or rediss://"
 
 
 class DjangoPasswordHasher(PasswordHasher):
@@ -25,7 +32,7 @@ class DjangoPasswordHasher(PasswordHasher):
 
 class RedisTokenBlacklist(TokenRevocationStore):
     def __init__(self):
-        self.client = get_redis_client()
+        self.client = _get_redis_client()
 
     def is_blacklisted(self, jti: str) -> bool:
         return bool(self.client.exists(f"bl:{jti}"))
@@ -48,3 +55,23 @@ class RedisTokenBlacklist(TokenRevocationStore):
             grant.grant_id,
             ttl=grant.remaining_ttl_seconds(now=timezone.now()),
         )
+
+
+def _get_redis_client() -> Redis:
+    redis_url = _validate_redis_url(getattr(settings, "REDIS_URL", ""))
+    return Redis.from_url(redis_url, **_redis_ssl_options(redis_url))
+
+
+def _validate_redis_url(url: str | None) -> str:
+    redis_url = (url or "").strip()
+    if not redis_url:
+        raise ImproperlyConfigured(_REDIS_SCHEME_ERROR)
+
+    parsed = urlparse(redis_url)
+    if parsed.scheme not in _VALID_REDIS_SCHEMES or not parsed.netloc:
+        raise ImproperlyConfigured(_REDIS_SCHEME_ERROR)
+    return redis_url
+
+
+def _redis_ssl_options(url: str | None) -> dict[str, ssl.VerifyMode]:
+    return {"ssl_cert_reqs": ssl.CERT_REQUIRED} if urlparse(url or "").scheme == "rediss" else {}

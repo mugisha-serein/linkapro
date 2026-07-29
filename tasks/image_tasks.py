@@ -5,7 +5,7 @@ from celery import shared_task
 from django.core.files.storage import default_storage
 from django.db import transaction
 
-from django_app.vendors.models import PortfolioImage
+from interface.vendors.models import PortfolioImage
 from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
 from infrastructure.adapters.media_quality_analyzer import MediaQualityAnalyzer
 

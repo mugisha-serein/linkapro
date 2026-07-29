@@ -8,7 +8,7 @@ from typing import Optional
 from django.http import HttpResponse, JsonResponse
 from django.core.cache import cache
 
-from django_app.common.redis_config import get_redis_client
+from interface.common.redis_config import get_redis_client
 from payments.application.ports import IApiKeyRepository
 from payments.infrastructure.repositories import DjangoApiKeyRepository
 

@@ -15,13 +15,13 @@ from payments.application.ports import IApiKeyRepository, IKeyProvider, IPayment
 from payments.domain.entities import Payment as DomainPayment, AuditEvent
 from payments.domain.value_objects import EncryptedField, Money, Currency
 from payments.domain.enums import PaymentStatus, PaymentMethod, PaymentEnv
-from django_app.payments.models import Payment as DjangoPayment, WebhookEvent, AuditLog
-from django_app.identity.models import User
-from django_app.payments.models import ApiKey
+from interface.payments.models import Payment as DjangoPayment, WebhookEvent, AuditLog
+from interface.identity.models import User
+from interface.payments.models import ApiKey
 from payments.domain.velocity import VelocityContext
 from payments.helpers.encryption import encrypted_field_from_json, encrypted_field_to_json
 from payments.infrastructure.crypto import decrypt_field, encrypt_field
-from django_app.common.redis_config import get_redis_client
+from interface.common.redis_config import get_redis_client
 
 
 class DjangoPaymentRepository(IPaymentRepository):
@@ -148,7 +148,7 @@ class DjangoPaymentRepository(IPaymentRepository):
         ).values('provider_reference').distinct().count()
 
         # Account age – fetch user creation date
-        from django_app.identity.models import User
+        from interface.identity.models import User
         try:
             user = User.objects.get(id=user_id)
             account_age_hours = (now - user.created_at).total_seconds() / 3600

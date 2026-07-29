@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 import secrets
 from typing import Optional
@@ -5,19 +7,20 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from domain.identity.oauth import OAuthToken as DomainToken
 from domain.identity.oauth import OAuthAccessToken, OAuthProvider, OAuthRefreshToken
-from application.identity.shared.ports import IOAuthTokenRepository
-from django_app.identity.models import OAuthToken as DjangoToken, User as DjangoUser
+from application.identity.shared.ports import OAuthIdentityRepository
+from infrastructure.identity.django_models import oauth_token_model, user_model
 from payments.application.ports import IKeyProvider
 from payments.helpers.encryption import encrypted_field_from_json, encrypted_field_to_json
 from payments.infrastructure.crypto import decrypt_field, encrypt_field
 from payments.infrastructure.vault_key_provider import VaultKeyProvider
 
 
-class DjangoOAuthTokenRepository(IOAuthTokenRepository):
+class DjangoOAuthTokenRepository(OAuthIdentityRepository):
     def __init__(self, key_provider: Optional[IKeyProvider] = None):
         self.key_provider = key_provider or VaultKeyProvider()
 
     def get_by_provider_and_user(self, provider: OAuthProvider, provider_user_id: str) -> Optional[DomainToken]:
+        DjangoToken = oauth_token_model()
         try:
             token = DjangoToken.objects.get(
                 provider=provider.value,
@@ -28,12 +31,13 @@ class DjangoOAuthTokenRepository(IOAuthTokenRepository):
             return None
 
     def save(self, domain_token: DomainToken) -> DomainToken:
+        DjangoToken = oauth_token_model()
         try:
             django_token = DjangoToken.objects.get(id=domain_token.id)
         except DjangoToken.DoesNotExist:
             django_token = DjangoToken(id=domain_token.id)
 
-        django_token.user = DjangoUser.objects.get(id=domain_token.user_id)
+        django_token.user = user_model().objects.get(id=domain_token.user_id)
         django_token.provider = domain_token.provider.value
         django_token.provider_user_id = domain_token.provider_user_id
         dek = secrets.token_bytes(32)
@@ -56,7 +60,7 @@ class DjangoOAuthTokenRepository(IOAuthTokenRepository):
 
     def get_by_user_and_provider(self, user_id: uuid.UUID, provider: OAuthProvider) -> Optional[DomainToken]:
         token = (
-            DjangoToken.objects.filter(user_id=user_id, provider=provider.value)
+            oauth_token_model().objects.filter(user_id=user_id, provider=provider.value)
             .order_by("created_at")
             .first()
         )
@@ -65,11 +69,11 @@ class DjangoOAuthTokenRepository(IOAuthTokenRepository):
         return self._to_domain(token)
 
     def list_by_user(self, user_id: uuid.UUID) -> tuple[DomainToken, ...]:
-        tokens = DjangoToken.objects.filter(user_id=user_id).order_by("provider", "created_at")
+        tokens = oauth_token_model().objects.filter(user_id=user_id).order_by("provider", "created_at")
         return tuple(self._to_domain(token) for token in tokens)
 
     def delete_for_user(self, user_id: uuid.UUID, provider: OAuthProvider) -> None:
-        DjangoToken.objects.filter(user_id=user_id, provider=provider.value).delete()
+        oauth_token_model().objects.filter(user_id=user_id, provider=provider.value).delete()
 
     def _to_domain(self, model: DjangoToken) -> DomainToken:
         return DomainToken(

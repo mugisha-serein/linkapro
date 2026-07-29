@@ -4,8 +4,8 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from domain.events.entities import Event as DomainEvent, EventType
 from domain.events.interfaces import IEventRepository
-from django_app.events.models import Event as DjangoEvent
-from django_app.identity.models import User as DjangoUser
+from interface.events.models import Event as DjangoEvent
+from interface.identity.models import User as DjangoUser
 
 
 class DjangoEventRepository(IEventRepository):

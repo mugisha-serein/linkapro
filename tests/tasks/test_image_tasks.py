@@ -1,6 +1,6 @@
 import pytest
 
-from django_app.vendors.models import PortfolioImage
+from interface.vendors.models import PortfolioImage
 from tasks.image_tasks import process_vendor_portfolio_media_task
 from tests.factories import create_vendor_profile
 

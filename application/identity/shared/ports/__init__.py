@@ -10,7 +10,7 @@ from .mfa_challenge_repository import MfaChallengeRepository
 from .mfa_challenge_store import MfaReplayStore
 from .mfa_enrollment_repository import MfaEnrollmentRepository, MfaEnrollmentState
 from .mfa_recovery_code_repository import MfaRecoveryCodeRepository
-from .oauth_identity_repository import IOAuthTokenRepository
+from .oauth_identity_repository import OAuthIdentityRepository
 from .password_history_repository import PasswordHistoryRepository
 from .password_hasher import PasswordHasher
 from .password_reset_repository import PasswordResetRepository, PasswordResetVerification
@@ -48,7 +48,7 @@ __all__ = [
     "IdGenerator",
     "IdentityTokenService",
     "IdentityUnitOfWork",
-    "IOAuthTokenRepository",
+    "OAuthIdentityRepository",
     "SessionRepository",
     "TotpSecretRepository",
     "TokenRevocationStore",

@@ -2,8 +2,8 @@ from django.utils import timezone
 from datetime import date
 import uuid
 
-from django_app.identity.models import User
-from django_app.events.models import (
+from interface.identity.models import User
+from interface.events.models import (
     Event,
     EventVendorAssignment,
     Checklist,
@@ -12,8 +12,8 @@ from django_app.events.models import (
     GuestEntry,
     TimelineBlock,
 )
-from django_app.vendors.models import VendorProfile, PortfolioImage, ServicePackage, Inquiry
-from django_app.documents.models import ExportJob
+from interface.vendors.models import VendorProfile, PortfolioImage, ServicePackage, Inquiry
+from interface.documents.models import ExportJob
 
 
 def create_user(**kwargs):

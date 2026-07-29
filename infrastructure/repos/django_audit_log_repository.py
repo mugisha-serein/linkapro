@@ -2,8 +2,8 @@ import uuid
 from typing import List
 from domain.governance.entities import AuditLog as DomainLog, AdminActionType
 from domain.governance.interfaces import IAuditLogRepository
-from django_app.governance.models import AuditLog as DjangoLog
-from django_app.identity.models import User
+from interface.governance.models import AuditLog as DjangoLog
+from interface.identity.models import User
 
 
 class DjangoAuditLogRepository(IAuditLogRepository):

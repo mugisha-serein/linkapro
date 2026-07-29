@@ -5,8 +5,8 @@ import pytest
 from datetime import timedelta
 from django.utils import timezone
 
-from django_app.identity.models import User
-from django_app.payments.models import WebhookEvent
+from interface.identity.models import User
+from interface.payments.models import WebhookEvent
 from payments.domain.enums import PaymentEnv, PaymentMethod, PaymentStatus
 from payments.domain.entities import Payment as DomainPayment
 from payments.domain.value_objects import Currency, Money

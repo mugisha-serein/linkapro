@@ -11,7 +11,7 @@ from domain.vendors.packages.entity import ServicePackage as DomainPackage
 from domain.vendors.shared.aggregate import ConcurrentVendorUpdate, VendorDomainError
 from domain.vendors.packages.interfaces import IServicePackageRepository
 from domain.vendors.shared.pagination import Page, PageRequest
-from django_app.vendors.models import ServicePackage as DjangoPackage, VendorProfile as DjangoVendor
+from interface.vendors.models import ServicePackage as DjangoPackage, VendorProfile as DjangoVendor
 from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 logger = logging.getLogger(__name__)

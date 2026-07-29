@@ -4,8 +4,8 @@ import pytest
 
 from django.utils import timezone
 
-from django_app.governance.models import AuditLog
-from django_app.vendors.models import ServicePackage, VendorProfileViewed
+from interface.governance.models import AuditLog
+from interface.vendors.models import ServicePackage, VendorProfileViewed
 from infrastructure.repos.analytics import metrics
 from infrastructure.repos.analytics.metrics import (
     active_packages_count,

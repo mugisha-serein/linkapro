@@ -10,9 +10,11 @@ from application.identity.shared.ports import (
 )
 from domain.identity.credentials import PasswordHash, PasswordHistory
 from domain.identity.recovery import PasswordResetToken, PasswordResetTokenStatus
-from django_app.identity.models import PasswordHistoryEntry as DjangoPasswordHistoryEntry
-from django_app.identity.models import PasswordResetToken as DjangoPasswordResetToken
-from django_app.identity.models import User
+from infrastructure.identity.django_models import (
+    password_history_entry_model,
+    password_reset_token_model,
+    user_model,
+)
 from infrastructure.identity.jwt_token_service import (
     JWTTokenService,
     password_reset_token_hash,
@@ -31,6 +33,7 @@ class DjangoPasswordResetGateway(PasswordResetRepository, PasswordHistoryReposit
         payload = self.token_service.decode_password_reset_token_payload(raw_token)
         if not payload:
             return None
+        DjangoPasswordResetToken = password_reset_token_model()
         token_record = (
             DjangoPasswordResetToken.objects.select_for_update()
             .filter(
@@ -48,15 +51,17 @@ class DjangoPasswordResetGateway(PasswordResetRepository, PasswordHistoryReposit
         )
 
     def mark_token_expired(self, token: PasswordResetToken, *, now) -> None:
+        DjangoPasswordResetToken = password_reset_token_model()
         DjangoPasswordResetToken.objects.filter(id=token.id).update(
             status=DjangoPasswordResetToken.Status.EXPIRED,
             updated_at=now,
         )
 
     def get_active_user_for_update(self, user_id):
-        return User.objects.select_for_update().filter(id=user_id, is_active=True).first()
+        return user_model().objects.select_for_update().filter(id=user_id, is_active=True).first()
 
     def get_password_history(self, user) -> PasswordHistory:
+        DjangoPasswordHistoryEntry = password_history_entry_model()
         limit = self._history_limit()
         hashes = []
         current_password_hash = getattr(user, "password_hash", None)
@@ -71,7 +76,7 @@ class DjangoPasswordResetGateway(PasswordResetRepository, PasswordHistoryReposit
         return PasswordHistory(hashes, max_entries=limit)
 
     def remember_password_hash(self, *, user, password_hash: PasswordHash, now) -> None:
-        DjangoPasswordHistoryEntry.objects.create(
+        password_history_entry_model().objects.create(
             user_id=user.id,
             password_hash=password_hash.reveal_for_password_verification(),
             created_at=now,
@@ -79,6 +84,7 @@ class DjangoPasswordResetGateway(PasswordResetRepository, PasswordHistoryReposit
         self._prune_password_history(user)
 
     def persist_used_token(self, token: PasswordResetToken) -> None:
+        DjangoPasswordResetToken = password_reset_token_model()
         DjangoPasswordResetToken.objects.filter(id=token.id).update(
             status=DjangoPasswordResetToken.Status.USED,
             used_at=token.used_at,
@@ -88,6 +94,7 @@ class DjangoPasswordResetGateway(PasswordResetRepository, PasswordHistoryReposit
         )
 
     def revoke_other_active_tokens(self, *, user, exclude_token_id, now) -> None:
+        DjangoPasswordResetToken = password_reset_token_model()
         DjangoPasswordResetToken.objects.filter(
             user_id=user.id,
             status=DjangoPasswordResetToken.Status.ACTIVE,
@@ -100,6 +107,7 @@ class DjangoPasswordResetGateway(PasswordResetRepository, PasswordHistoryReposit
         return int(getattr(settings, "PASSWORD_HISTORY_LIMIT", 5))
 
     def _prune_password_history(self, user) -> None:
+        DjangoPasswordHistoryEntry = password_history_entry_model()
         keep_ids = list(
             DjangoPasswordHistoryEntry.objects.filter(user_id=user.id)
             .order_by("-created_at")
@@ -108,7 +116,7 @@ class DjangoPasswordResetGateway(PasswordResetRepository, PasswordHistoryReposit
         DjangoPasswordHistoryEntry.objects.filter(user_id=user.id).exclude(id__in=keep_ids).delete()
 
     @staticmethod
-    def _to_domain(record: DjangoPasswordResetToken) -> PasswordResetToken:
+    def _to_domain(record) -> PasswordResetToken:
         return PasswordResetToken(
             id=record.id,
             user_id=record.user_id,

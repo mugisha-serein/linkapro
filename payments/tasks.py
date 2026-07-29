@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 from celery import shared_task
 from django.utils import timezone
 
-from django_app.payments.models import WebhookEvent
+from interface.payments.models import WebhookEvent
 from payments.application.commands import ExpireStalePaymentsCommand, ProcessWebhookCommand
 from payments.helpers.encryption import encrypted_field_from_json
 from payments.infrastructure.crypto import decrypt_field

@@ -7,8 +7,8 @@ from unittest.mock import Mock
 import pytest
 from django.db import transaction
 
-from django_app.identity.models import User
-from django_app.payments.models import Payment as DjangoPayment, WebhookEvent
+from interface.identity.models import User
+from interface.payments.models import Payment as DjangoPayment, WebhookEvent
 from payments.application.handlers import PaymentCommandHandlers
 from payments.application.ports import VerifiedTransactionDTO
 from payments.domain.entities import Payment as DomainPayment

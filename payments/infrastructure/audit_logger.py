@@ -5,7 +5,7 @@ import uuid
 from django.db import transaction
 from payments.application.ports import IAuditLogger, IKeyProvider
 from payments.domain.entities import AuditEvent
-from django_app.payments.models import AuditLog, Payment as DjangoPayment
+from interface.payments.models import AuditLog, Payment as DjangoPayment
 from payments.domain.value_objects import EncryptedField
 from payments.helpers.encryption import encrypted_field_to_json
 from payments.infrastructure.crypto import encrypt_field

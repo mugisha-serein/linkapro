@@ -9,7 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from application.notifications.event_map import DOCUMENT_EVENT_TO_TEMPLATE, export_notification_context
-from django_app.documents.models import DocumentDomainEventOutbox, ExportJob
+from interface.documents.models import DocumentDomainEventOutbox, ExportJob
 
 
 logger = logging.getLogger(__name__)

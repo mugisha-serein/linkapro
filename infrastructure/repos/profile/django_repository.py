@@ -11,9 +11,9 @@ from domain.vendors.shared.aggregate import ConcurrentVendorUpdate, VendorDomain
 from domain.vendors.profile.entity import VendorProfile as DomainProfile, VendorStatus, ServiceCategory
 from domain.vendors.profile.interfaces import IVendorProfileRepository
 from domain.vendors.shared.pagination import Page, PageRequest
-from django_app.vendors.models import VendorProfile as DjangoProfile
-from django_app.identity.models import User
-from django_app.governance.marketplace_outbox import enqueue_vendor_delete_projection, enqueue_vendor_projection
+from interface.vendors.models import VendorProfile as DjangoProfile
+from interface.identity.models import User
+from interface.governance.marketplace_outbox import enqueue_vendor_delete_projection, enqueue_vendor_projection
 from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 logger = logging.getLogger(__name__)

@@ -13,7 +13,7 @@ except ImportError:
     pass
 
 def main():
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django_app.settings.development')
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'interface.settings.development')
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

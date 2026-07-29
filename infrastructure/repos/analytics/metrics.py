@@ -10,8 +10,8 @@ from django.utils import timezone
 
 from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
 from domain.vendors.profile.rules import get_profile_completion_errors
-from django_app.governance.models import AuditLog
-from django_app.vendors.models import (
+from interface.governance.models import AuditLog
+from interface.vendors.models import (
     Inquiry,
     PortfolioImage,
     ServicePackage,

@@ -36,7 +36,7 @@ repository, or persistence concerns for these flows.
 
 ## Django-Native Flows
 
-These flows intentionally remain in `django_app/identity/` unless a separate
+These flows intentionally remain in `interface/identity/` unless a separate
 migration plan is written first:
 
 - Forgot-password and reset-password HTTP flow, including throttles, token

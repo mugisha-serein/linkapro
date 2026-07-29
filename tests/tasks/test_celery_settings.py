@@ -13,8 +13,8 @@ def test_local_fallback_uses_development_settings_when_no_production_indicators(
 
 def test_existing_django_settings_module_is_respected():
     assert (
-        resolve_celery_settings_module({"DJANGO_SETTINGS_MODULE": "django_app.settings.test"})
-        == "django_app.settings.test"
+        resolve_celery_settings_module({"DJANGO_SETTINGS_MODULE": "interface.settings.test"})
+        == "interface.settings.test"
     )
 
 
@@ -40,8 +40,8 @@ def test_production_like_env_with_django_settings_passes():
         resolve_celery_settings_module(
             {
                 "RENDER": "true",
-                "DJANGO_SETTINGS_MODULE": "django_app.settings.production",
+                "DJANGO_SETTINGS_MODULE": "interface.settings.production",
             }
         )
-        == "django_app.settings.production"
+        == "interface.settings.production"
     )

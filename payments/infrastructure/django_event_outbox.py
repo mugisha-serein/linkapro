@@ -7,7 +7,7 @@ import uuid
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import IntegrityError, transaction
 
-from django_app.payments.models import PaymentDomainEventOutbox
+from interface.payments.models import PaymentDomainEventOutbox
 
 
 class DjangoPaymentEventOutboxDispatcher:

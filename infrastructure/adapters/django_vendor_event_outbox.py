@@ -8,7 +8,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.db import IntegrityError, transaction
 
 from application.vendors.errors import VendorApplicationConfigurationError
-from django_app.vendors.models import VendorDomainEventOutbox
+from interface.vendors.models import VendorDomainEventOutbox
 
 
 class DjangoVendorEventOutboxDispatcher:

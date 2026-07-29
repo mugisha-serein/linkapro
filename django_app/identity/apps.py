@@ -1,8 +1,0 @@
-from django.apps import AppConfig
-
-
-class IdentityConfig(AppConfig):
-    default_auto_field = "django.db.models.BigAutoField"
-    name = "django_app.identity"
-    label = "identity"
-    # Identity side effects are wired through tasks.identity_domain_events via the durable outbox.

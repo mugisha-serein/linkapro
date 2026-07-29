@@ -12,7 +12,7 @@ from domain.vendors.inquiries.entity import Inquiry as DomainInquiry
 from domain.vendors.inquiries.interfaces import InquiryDateRange
 from domain.vendors.inquiries.interfaces import IInquiryRepository
 from domain.vendors.shared.pagination import Page, PageRequest
-from django_app.vendors.models import Inquiry as DjangoInquiry, VendorProfile as DjangoVendor
+from interface.vendors.models import Inquiry as DjangoInquiry, VendorProfile as DjangoVendor
 from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 

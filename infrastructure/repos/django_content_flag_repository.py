@@ -4,8 +4,8 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from domain.governance.entities import ContentFlag as DomainFlag, FlagStatus, ContentType
 from domain.governance.interfaces import IContentFlagRepository
-from django_app.governance.models import ContentFlag as DjangoFlag
-from django_app.identity.models import User
+from interface.governance.models import ContentFlag as DjangoFlag
+from interface.identity.models import User
 
 
 class DjangoContentFlagRepository(IContentFlagRepository):

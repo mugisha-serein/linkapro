@@ -4,7 +4,7 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from domain.events.entities import BudgetLine as DomainLine, BudgetCategory
 from domain.events.interfaces import IBudgetLineRepository
-from django_app.events.models import BudgetLine as DjangoLine, Event as DjangoEvent
+from interface.events.models import BudgetLine as DjangoLine, Event as DjangoEvent
 
 
 class DjangoBudgetLineRepository(IBudgetLineRepository):

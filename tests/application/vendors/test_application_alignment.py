@@ -1939,7 +1939,7 @@ def test_cooldown_compatibility_alias_is_removed():
 
 def test_application_vendor_source_has_no_forbidden_imports_private_domain_calls_or_manual_events():
     root = Path("application/vendors")
-    forbidden_import_roots = {"django", "django_app", "rest_framework", "infrastructure", "sqlalchemy", "celery", "tasks"}
+    forbidden_import_roots = {"django", "interface", "rest_framework", "infrastructure", "sqlalchemy", "celery", "tasks"}
     manual_event_names = {
         "VendorProfileUpdated",
         "VendorSubmittedForReview",

@@ -7,7 +7,7 @@ from domain.identity.credentials import Email, PasswordHash
 from domain.identity.mfa import TOTPSecret
 from domain.identity.verification import VerificationCode, VerificationPolicy, VerificationPurpose
 from infrastructure.identity.django_user_repository import DjangoUserRepository
-from django_app.identity.models import User as DjangoUser
+from interface.identity.models import User as DjangoUser
 
 
 class _KeyProvider:

@@ -7,7 +7,7 @@ import uuid
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import IntegrityError, transaction
 
-from django_app.documents.models import DocumentDomainEventOutbox
+from interface.documents.models import DocumentDomainEventOutbox
 
 
 class DjangoDocumentEventOutboxDispatcher:

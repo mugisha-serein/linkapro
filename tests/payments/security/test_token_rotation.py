@@ -1,7 +1,7 @@
 import uuid
 import pytest
 from unittest.mock import MagicMock
-from application.identity.sessions import RefreshSessionUseCase, RevokeSessionUseCase
+from application.identity.sessions import RefreshSessionUseCase, RevokeCurrentSessionUseCase
 from domain.identity.sessions import MalformedRefreshToken
 from infrastructure.identity.jwt_token_service import JWTTokenService
 
@@ -60,7 +60,7 @@ class TestTokenRotation:
                 session_bootstrap_reader=session_store,
                 token_service=token_service,
             ),
-            "revoke": RevokeSessionUseCase(
+            "revoke": RevokeCurrentSessionUseCase(
                 blacklist=blacklist,
                 session_repository=session_store,
                 token_service=token_service,

@@ -11,8 +11,8 @@ from application.identity.shared.ports import (
     Clock,
     EventOutbox,
     IdentityUnitOfWork,
-    IOAuthTokenRepository,
     NullIdentityUnitOfWork,
+    OAuthIdentityRepository,
     StepUpGrantVerifier,
 )
 from domain.identity.oauth import OAuthLinkingAction, OAuthLinkingPolicy, OAuthProvider
@@ -35,7 +35,7 @@ class ConfirmOAuthRelinkUseCase:
         self,
         *,
         account_repository: AccountRepository,
-        oauth_repository: IOAuthTokenRepository,
+        oauth_repository: OAuthIdentityRepository,
         step_up_grant_verifier: StepUpGrantVerifier,
         event_outbox: EventOutbox,
         clock: Clock,

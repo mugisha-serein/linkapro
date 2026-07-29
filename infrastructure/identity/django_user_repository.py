@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 import secrets
 from typing import Optional
@@ -9,8 +11,7 @@ from domain.identity.account import AccountStatus, User as DomainUser, UserRole 
 from domain.identity.credentials import Email, PasswordHash, PasswordHistory
 from domain.identity.mfa import TOTPSecret
 from application.identity.shared.ports import TotpSecretRepository, AccountRepository
-from django_app.identity.models import PasswordHistoryEntry as DjangoPasswordHistoryEntry
-from django_app.identity.models import User as DjangoUser
+from infrastructure.identity.django_models import password_history_entry_model, user_model
 from payments.application.ports import IKeyProvider
 from payments.domain.value_objects import EncryptedField
 from payments.helpers.encryption import encrypted_field_from_json, encrypted_field_to_json
@@ -23,6 +24,7 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
         self.key_provider = key_provider or VaultKeyProvider()
 
     def get_by_id(self, user_id: uuid.UUID) -> Optional[DomainUser]:
+        DjangoUser = user_model()
         try:
             user = DjangoUser.objects.get(id=user_id)
             return self._to_domain(user)
@@ -30,6 +32,7 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
             return None
 
     def get_by_email(self, email: Email) -> Optional[DomainUser]:
+        DjangoUser = user_model()
         try:
             user = DjangoUser.objects.get(email=str(email))
             return self._to_domain(user)
@@ -37,6 +40,7 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
             return None
 
     def save(self, domain_user: DomainUser) -> DomainUser:
+        DjangoUser = user_model()
         previous_password = None
         try:
             django_user = DjangoUser.objects.get(id=domain_user.id)
@@ -65,6 +69,8 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
         return self._to_domain(django_user)
 
     def get_password_history(self, user_id: uuid.UUID) -> PasswordHistory:
+        DjangoUser = user_model()
+        DjangoPasswordHistoryEntry = password_history_entry_model()
         try:
             user = DjangoUser.objects.get(id=user_id)
         except DjangoUser.DoesNotExist:
@@ -82,10 +88,10 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
         return PasswordHistory(hashes, max_entries=self._password_history_limit())
 
     def delete(self, user_id: uuid.UUID) -> None:
-        DjangoUser.objects.filter(id=user_id).delete()
+        user_model().objects.filter(id=user_id).delete()
 
     def deactivate(self, user_id: uuid.UUID) -> None:
-        DjangoUser.objects.filter(id=user_id).update(is_active=False)
+        user_model().objects.filter(id=user_id).update(is_active=False)
 
     def _to_domain(self, model: DjangoUser) -> DomainUser:
         return DomainUser(
@@ -108,7 +114,7 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
     def set_totp_secret(self, user_id: uuid.UUID, secret: TOTPSecret) -> None:
         dek = secrets.token_bytes(32)
         wrapped_dek = self.key_provider.wrap_dek(dek)
-        DjangoUser.objects.filter(id=user_id).update(
+        user_model().objects.filter(id=user_id).update(
             totp_secret=self._encrypt_secret(secret, dek, wrapped_dek),
             two_factor_enabled=True,
         )
@@ -123,6 +129,7 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
         return AccountStatus.DEACTIVATED_PENDING_VERIFICATION
 
     def get_totp_secret(self, user_id: uuid.UUID) -> Optional[TOTPSecret]:
+        DjangoUser = user_model()
         try:
             user = DjangoUser.objects.get(id=user_id)
             if user.two_factor_enabled and user.totp_secret:
@@ -132,7 +139,7 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
             return None
 
     def clear_totp_secret(self, user_id: uuid.UUID) -> None:
-        DjangoUser.objects.filter(id=user_id).update(
+        user_model().objects.filter(id=user_id).update(
             totp_secret=None,
             two_factor_enabled=False,
         )
@@ -153,6 +160,7 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
         return decrypt_field(encrypted, dek).decode("utf-8")
 
     def _remember_password_hash(self, user: DjangoUser, password_hash: str) -> None:
+        DjangoPasswordHistoryEntry = password_history_entry_model()
         DjangoPasswordHistoryEntry.objects.create(user=user, password_hash=password_hash)
         keep_ids = list(
             DjangoPasswordHistoryEntry.objects.filter(user=user)

@@ -4,7 +4,7 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from domain.events.entities import GuestEntry as DomainGuest, RSVPStatus, DietaryRestriction
 from domain.events.interfaces import IGuestEntryRepository
-from django_app.events.models import GuestEntry as DjangoGuest, Event as DjangoEvent
+from interface.events.models import GuestEntry as DjangoGuest, Event as DjangoEvent
 
 
 class DjangoGuestEntryRepository(IGuestEntryRepository):

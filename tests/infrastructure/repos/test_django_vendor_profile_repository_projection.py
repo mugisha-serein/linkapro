@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from domain.vendors.profile.entity import ServiceCategory, VendorProfile, VendorStatus
-from django_app.identity.models import User
+from interface.identity.models import User
 from infrastructure.repos.profile.django_repository import DjangoVendorProfileRepository
 
 

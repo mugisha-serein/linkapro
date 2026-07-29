@@ -10,7 +10,7 @@ from domain.vendors.shared.aggregate import ConcurrentVendorUpdate
 from domain.vendors.portfolio.entity import PortfolioImage as DomainImage
 from domain.vendors.portfolio.interfaces import IPortfolioImageRepository
 from domain.vendors.shared.pagination import Page, PageRequest
-from django_app.vendors.models import PortfolioImage as DjangoImage, VendorProfile as DjangoVendor
+from interface.vendors.models import PortfolioImage as DjangoImage, VendorProfile as DjangoVendor
 from infrastructure.repos.exceptions import RepositoryNotFoundError
 
 

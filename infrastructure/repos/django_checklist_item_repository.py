@@ -4,7 +4,7 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from domain.events.entities import ChecklistItem as DomainItem, ChecklistItemStatus
 from domain.events.interfaces import IChecklistItemRepository
-from django_app.events.models import ChecklistItem as DjangoItem, Checklist as DjangoChecklist
+from interface.events.models import ChecklistItem as DjangoItem, Checklist as DjangoChecklist
 
 
 class DjangoChecklistItemRepository(IChecklistItemRepository):
