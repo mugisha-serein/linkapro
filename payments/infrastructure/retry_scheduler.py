@@ -3,7 +3,7 @@ import logging
 from celery import current_app
 import redis
 
-from django_app.common.redis_config import get_redis_client
+from interface.common.redis_config import get_redis_client
 from payments.application.ports import IRetryScheduler
 
 logger = logging.getLogger(__name__)

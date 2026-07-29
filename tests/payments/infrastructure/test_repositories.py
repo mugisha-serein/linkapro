@@ -10,8 +10,8 @@ from payments.application.ports import IPaymentRepository, IKeyProvider
 from payments.domain.entities import Payment as DomainPayment, AuditEvent
 from payments.domain.value_objects import Money, Currency, EncryptedField
 from payments.domain.enums import PaymentStatus, PaymentMethod, PaymentEnv
-from django_app.payments.models import Payment as DjangoPayment, WebhookEvent, AuditLog
-from django_app.identity.models import User
+from interface.payments.models import Payment as DjangoPayment, WebhookEvent, AuditLog
+from interface.identity.models import User
 from payments.infrastructure.crypto import encrypt_field, decrypt_field
 from payments.helpers.encryption import encrypted_field_to_json, encrypted_field_from_json
 

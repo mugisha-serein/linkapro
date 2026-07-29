@@ -4,7 +4,7 @@ import django
 from django.apps import apps
 
 PRODUCTION_SETTINGS_ERROR = "DJANGO_SETTINGS_MODULE must be set for Celery worker/beat in production."
-LOCAL_SETTINGS_MODULE = "django_app.settings.development"
+LOCAL_SETTINGS_MODULE = "interface.settings.development"
 
 
 def resolve_celery_settings_module(environ=os.environ) -> str:

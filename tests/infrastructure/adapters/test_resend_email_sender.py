@@ -18,7 +18,7 @@ def test_resend_email_sender_renders_template_and_calls_sdk(monkeypatch):
     monkeypatch.setitem(__import__("sys").modules, "resend", fake_resend)
     monkeypatch.setenv("RESEND_API_KEY", "test-api-key")
     monkeypatch.setenv("RESEND_FROM_EMAIL", "LinkaPro <no-reply@example.com>")
-    monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "django_app.settings.development")
+    monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "interface.settings.development")
 
     ResendEmailSender().send(
         to="planner@example.com",
@@ -45,7 +45,7 @@ def test_resend_email_sender_renders_template_and_calls_sdk(monkeypatch):
 def test_resend_email_sender_fails_fast_when_production_config_is_missing(monkeypatch):
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
     monkeypatch.delenv("RESEND_FROM_EMAIL", raising=False)
-    monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "django_app.settings.production")
+    monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "interface.settings.production")
 
     with pytest.raises(ImproperlyConfigured, match="RESEND_API_KEY, RESEND_FROM_EMAIL"):
         ResendEmailSender()

@@ -2,7 +2,7 @@ import logging
 
 from celery import shared_task
 
-from django_app.identity.password_reset_email import send_password_reset_email
+from interface.identity.password_reset_email import send_password_reset_email
 
 logger = logging.getLogger(__name__)
 

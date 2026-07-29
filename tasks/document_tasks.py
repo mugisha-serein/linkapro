@@ -16,9 +16,9 @@ from infrastructure.adapters.django_document_event_outbox import DjangoDocumentE
 from infrastructure.adapters.cloudinary_adapter import CloudinaryAdapter
 from infrastructure.adapters.document_verification import DocumentVerificationAdapter
 from infrastructure.repos.django_export_job_repository import DjangoExportJobRepository
-from django_app.events.models import Event
-from django_app.events.models import BudgetLine, GuestEntry, TimelineBlock
-from django_app.vendors.models import VerificationDocument
+from interface.events.models import Event
+from interface.events.models import BudgetLine, GuestEntry, TimelineBlock
+from interface.vendors.models import VerificationDocument
 
 logger = logging.getLogger(__name__)
 

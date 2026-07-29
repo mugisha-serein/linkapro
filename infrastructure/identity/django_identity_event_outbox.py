@@ -8,7 +8,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.db import IntegrityError, transaction
 
 from domain.identity.shared import SecurityReason
-from django_app.identity.models import IdentityDomainEventOutbox
+from infrastructure.identity.django_models import identity_domain_event_outbox_model
 
 
 class DjangoIdentityEventOutboxDispatcher:
@@ -17,6 +17,7 @@ class DjangoIdentityEventOutboxDispatcher:
     def dispatch(self, event) -> None:
         self._validate_event(event)
         payload = self._event_payload(event)
+        IdentityDomainEventOutbox = identity_domain_event_outbox_model()
 
         try:
             # A nested atomic block gives this insert its own savepoint. A duplicate

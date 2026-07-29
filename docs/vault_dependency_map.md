@@ -122,7 +122,7 @@ The central port is `payments.application.ports.IKeyProvider`. It exposes only `
 
 ## Identity Data Migrations
 
-`django_app/identity/migrations/0010_encrypt_oauth_tokens.py`
+`interface/identity/migrations/0010_encrypt_oauth_tokens.py`
 
 - Adds `encrypted_access_token`, `encrypted_refresh_token`, and `dek_encrypted`.
 - If any row has `encrypted_access_token__isnull=True`, imports and constructs `VaultKeyProvider`.
@@ -134,7 +134,7 @@ The central port is `payments.application.ports.IKeyProvider`. It exposes only `
 - Removes old plaintext `access_token` and `refresh_token` columns.
 - If there are no plaintext rows to migrate, it returns before constructing Vault.
 
-`django_app/identity/migrations/0011_encrypt_totp_secret.py`
+`interface/identity/migrations/0011_encrypt_totp_secret.py`
 
 - Adds temporary `encrypted_totp_secret`.
 - If any user has a non-null, non-empty `totp_secret`, imports and constructs `VaultKeyProvider`.
@@ -148,7 +148,7 @@ The central port is `payments.application.ports.IKeyProvider`. It exposes only `
 
 ## Settings
 
-`django_app/settings/base.py`
+`interface/settings/base.py`
 
 - Reads:
   - `VAULT_ADDR = os.environ.get("VAULT_ADDR")`
@@ -158,13 +158,13 @@ The central port is `payments.application.ports.IKeyProvider`. It exposes only `
 - Does not validate that Vault settings are present.
 - Because `VAULT_ADDR` defaults to `None`, constructing `VaultKeyProvider` without an env value will fail before any network call.
 
-`django_app/settings/production.py`
+`interface/settings/production.py`
 
 - Fails at import time if any of `VAULT_ADDR`, `VAULT_ROLE_ID`, `VAULT_SECRET_ID`, or `VAULT_TRANSIT_KEY_NAME` is blank.
 - Error text states they are required for production field encryption.
 - This protects Django web and Celery processes configured with production settings from starting without Vault config.
 
-`django_app/settings/test.py`
+`interface/settings/test.py`
 
 - Defaults `VAULT_ADDR` to `http://localhost:8200`.
 - Defaults `VAULT_TRANSIT_KEY_NAME` to `linkapro-payments-kek`.
@@ -212,7 +212,7 @@ The central port is `payments.application.ports.IKeyProvider`. It exposes only `
 
 ## Test Coverage And Assumptions
 
-`tests/django_app/identity/test_email_settings.py`
+`tests/interface/identity/test_email_settings.py`
 
 - Production settings tests include Vault env in the happy-path environment.
 - `test_production_settings_raise_if_vault_addr_missing` verifies production import fails when `VAULT_ADDR` is absent.
@@ -256,7 +256,7 @@ The central port is `payments.application.ports.IKeyProvider`. It exposes only `
 - Uses `DjangoOAuthTokenRepository(key_provider=_KeyProvider())`.
 - Verifies Google OAuth access and refresh tokens are not stored as raw plaintext.
 
-`tests/django_app/identity/test_views.py` and `tests/django_app/identity/test_2fa.py`
+`tests/interface/identity/test_views.py` and `tests/interface/identity/test_2fa.py`
 
 - Patch identity service construction to use `DjangoUserRepository(key_provider=_KeyProvider())`.
 - Cover MFA flows with encrypted TOTP storage without live Vault.

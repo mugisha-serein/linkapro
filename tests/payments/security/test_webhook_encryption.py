@@ -64,7 +64,7 @@ class TestWebhookEncryption:
         settings.FLW_ENCRYPTION_KEY = encryption_key.decode()
 
         # Mock the handler to avoid real processing
-        from django_app.payments import views
+        from interface.payments import views
         monkeypatch.setattr(views, "get_command_handlers", lambda: MagicMock())
 
         payload = {"id": "evt_enc", "event": "charge.completed", "data": {"tx_ref": "flw_ref"}}

@@ -10,7 +10,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from application.notifications.event_map import VENDOR_EVENT_TO_TEMPLATE, vendor_notification_context
-from django_app.vendors.models import Inquiry, VendorDomainEventOutbox, VendorProfile
+from interface.vendors.models import Inquiry, VendorDomainEventOutbox, VendorProfile
 
 
 logger = logging.getLogger(__name__)

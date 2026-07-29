@@ -9,7 +9,7 @@ description = "Event Planning & Vendor Marketplace Platform"
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "django_app.settings.test"
+DJANGO_SETTINGS_MODULE = "interface.settings.test"
 asyncio_mode = "auto"
 markers = [
     "asyncio: mark test as async",

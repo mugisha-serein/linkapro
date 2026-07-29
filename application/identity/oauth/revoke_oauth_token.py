@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import uuid
 
 from application.identity.errors import UserNotFoundError
-from application.identity.shared.ports import AccountRepository, IOAuthTokenRepository
+from application.identity.shared.ports import AccountRepository, OAuthIdentityRepository
 from domain.identity.oauth import OAuthProvider
 
 
@@ -19,7 +19,7 @@ class RevokeOAuthTokenUseCase:
         self,
         *,
         account_repository: AccountRepository,
-        oauth_repository: IOAuthTokenRepository,
+        oauth_repository: OAuthIdentityRepository,
     ) -> None:
         self.account_repository = account_repository
         self.oauth_repository = oauth_repository

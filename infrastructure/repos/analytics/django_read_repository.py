@@ -19,7 +19,7 @@ from application.vendors.errors import VendorResourceNotFound
 from domain.vendors.profile.entity import VendorProfile as DomainVendorProfile
 from domain.vendors.profile.entity import profile_completion_errors_for
 from domain.vendors.shared.pagination import PageRequest
-from django_app.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile as DjangoVendorProfile
+from interface.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfile as DjangoVendorProfile
 from infrastructure.repos.analytics.metrics import (
     inquiry_response_metrics,
     portfolio_quality_trend as load_portfolio_quality_trend,

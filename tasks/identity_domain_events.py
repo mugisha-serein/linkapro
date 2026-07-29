@@ -10,8 +10,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from application.notifications.event_map import IDENTITY_EVENT_TO_TEMPLATE, identity_notification_context
-from django_app.identity.models import IdentityDomainEventOutbox, User
-from django_app.identity.session_revocation import revoke_user_sessions
+from interface.identity.models import IdentityDomainEventOutbox, User
+from infrastructure.identity.django_session_revocation import revoke_user_sessions
 
 
 logger = logging.getLogger(__name__)

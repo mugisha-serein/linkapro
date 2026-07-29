@@ -31,9 +31,11 @@ class ResendEmailVerificationUseCase:
         self.event_outbox = event_outbox
         self.resend_policy = resend_policy or VerificationResendPolicy()
 
-    def execute(self, *, challenge_id: uuid.UUID) -> EmailVerificationToken:
+    def execute(self, *, challenge_id: uuid.UUID, user_id: uuid.UUID | None = None) -> EmailVerificationToken:
         challenge = self.verification_challenge_repository.get(challenge_id)
         if not challenge:
+            raise UserNotFoundError("Verification challenge not found")
+        if user_id is not None and str(challenge.user_id) != str(user_id):
             raise UserNotFoundError("Verification challenge not found")
         user = self.account_repository.get_by_id(challenge.user_id)
         if not user:

@@ -1,11 +1,12 @@
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken
-from django_app.identity.session_revocation import (
+from application.identity.shared.ports import SESSION_ID_CLAIM
+from infrastructure.identity.django_session_revocation import (
     AUTH_TOKEN_VERSION_CLAIM,
     is_token_revoked_for_user,
     token_version_matches_user,
 )
-from django_app.identity.session_tracking import SESSION_ID_CLAIM, identity_session_is_active
+from infrastructure.identity.django_session_tracking import identity_session_is_active
 from infrastructure.identity.jwt_token_service import accepted_identity_token_env
 from infrastructure.identity.shared.security_primitives import RedisTokenBlacklist
 

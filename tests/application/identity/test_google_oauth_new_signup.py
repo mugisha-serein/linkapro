@@ -12,7 +12,7 @@ from infrastructure.identity.django_identity_session_store import DjangoIdentity
 from infrastructure.identity.jwt_token_service import JWTTokenService
 from infrastructure.identity.django_oauth_token_repository import DjangoOAuthTokenRepository
 from infrastructure.identity.django_user_repository import DjangoUserRepository
-from django_app.identity.models import OAuthToken as DjangoOAuthToken, User as DjangoUser
+from interface.identity.models import OAuthToken as DjangoOAuthToken, User as DjangoUser
 
 
 pytestmark = pytest.mark.django_db(transaction=True)

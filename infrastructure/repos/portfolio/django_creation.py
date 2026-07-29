@@ -9,8 +9,8 @@ from django.db.models import Max
 from application.vendors.errors import VendorConflict, VendorResourceNotFound
 from application.vendors.portfolio.ports import PortfolioImageCreationPort
 from domain.vendors.portfolio.entity import PortfolioImage
-from django_app.vendors.models import PortfolioImage as DjangoImage
-from django_app.vendors.models import VendorProfile as DjangoVendor
+from interface.vendors.models import PortfolioImage as DjangoImage
+from interface.vendors.models import VendorProfile as DjangoVendor
 
 from infrastructure.repos.profile.django_aggregate_uow import DjangoVendorAggregateUnitOfWork
 

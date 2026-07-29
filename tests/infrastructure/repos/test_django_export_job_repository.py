@@ -4,8 +4,8 @@ from django.utils import timezone
 
 from domain.documents.entities import ExportJob as DomainJob, ExportType, ExportStatus
 from infrastructure.repos.django_export_job_repository import DjangoExportJobRepository
-from django_app.identity.models import User
-from django_app.events.models import Event
+from interface.identity.models import User
+from interface.events.models import Event
 
 pytestmark = pytest.mark.django_db
 

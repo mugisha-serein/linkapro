@@ -4,7 +4,7 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from domain.events.entities import TimelineBlock as DomainBlock
 from domain.events.interfaces import ITimelineBlockRepository
-from django_app.events.models import TimelineBlock as DjangoBlock, Event as DjangoEvent
+from interface.events.models import TimelineBlock as DjangoBlock, Event as DjangoEvent
 
 
 class DjangoTimelineBlockRepository(ITimelineBlockRepository):

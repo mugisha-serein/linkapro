@@ -16,7 +16,7 @@ from application.vendors.packages.dtos import ServicePackageDTO
 from application.vendors.portfolio.dtos import PortfolioImageDTO
 from application.vendors.profile.dtos import VendorProfileDTO
 from application.vendors.errors import VendorConflict, VendorIdempotencyConflict
-from django_app.vendors.models import VendorIdempotencyRecord
+from interface.vendors.models import VendorIdempotencyRecord
 
 T = TypeVar("T")
 

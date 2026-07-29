@@ -281,7 +281,7 @@ linkapro/
 │   ├── helpers/                    #   - Payload structures, cryptographic utilities
 │   └── tasks.py                    #   - Celery tasks for expiration and webhook retries
 │
-├── django_app/                     # Layer 3: Django Web Framework Interface (Commands & Operations)
+├── interface/                     # Layer 3: Django Web Framework Interface (Commands & Operations)
 │   ├── settings/                   #   - Settings configurations (base.py, test.py, production.py)
 │   ├── identity/                   #   - Models, views, DRF serializers, custom cookies & OAuth state
 │   ├── events/                     #   - Event dashboard views, Django serializers, model definitions
@@ -319,7 +319,7 @@ linkapro/
 │   ├── domain/                     #   - Pure unit tests of core domain entities and invariants
 │   ├── application/                #   - Mock-based unit tests of use cases and command handlers
 │   ├── infrastructure/             #   - Tests for repositories and adapters
-│   ├── django_app/                 #   - Django client views, endpoint, and serializer tests
+│   ├── interface/                 #   - Django client views, endpoint, and serializer tests
 │   ├── fastapi_app/                #   - FastAPI async router and database repos tests
 │   ├── payments/                   #   - Self-contained security, token rotation, and payment handler tests
 │   └── tasks/                      #   - Celery async worker logic tests
@@ -356,12 +356,12 @@ The Application Layer implements the use cases of the platform, orchestrating Do
 - **Data Transfer Objects (DTOs)**: Simple dataclasses representing response models returning data across the layer boundaries.
 - **Constraint**: *No direct database access.* The Application layer depends entirely on Domain repository interfaces and fires events.
 
-#### 🔌 3. The Infrastructure & Interface Layer (`/infrastructure`, `/django_app`, `/fastapi_app`, `/tasks`)
+#### 🔌 3. The Infrastructure & Interface Layer (`/infrastructure`, `/interface`, `/fastapi_app`, `/tasks`)
 Everything that interacts with filesystems, networks, databases, or frameworks:
 - **Repositories (`infrastructure/repos/`)**: Implement the interfaces defined in the Domain layer using Django models or SQLAlchemy (e.g., [DjangoUserRepository](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/repos/django_user_repository.py) maps between Django models and Domain entities).
 - **Adapters (`infrastructure/adapters/`)**: Concrete wrappers around external services (e.g., [CloudinaryAdapter](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/adapters/cloudinary_adapter.py) for uploads, [GoogleOAuthAdapter](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/adapters/google_oauth_adapter.py) for OAuth authentication, [JWTTokenService](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/adapters/jwt_token_service.py) for token generation, [DjangoPasswordHasher](file:///c:/Users/jules/Desktop/LinkaPro/linkapro/infrastructure/adapters/password_hasher.py) for password hashes).
 - **Interface Adapters**:
-  - **Django (`django_app/`)**: Exposes REST API views, Django REST Framework serializers, routes, signals, and the administrative console (`django_app/governance/admin.py`).
+  - **Django (`interface/`)**: Exposes REST API views, Django REST Framework serializers, routes, signals, and the administrative console (`interface/governance/admin.py`).
   - **FastAPI (`fastapi_app/`)**: High-performance, async API endpoints optimized for read-heavy operations, including the public vendor search, ratings/reviews, and CAPTCHA checking.
   - **Celery Tasks (`tasks/`)**: Offloaded async processing for WeasyPrint PDFs, OpenPyXL spreadsheets, Cloudinary uploads, and webhook retries.
 
@@ -453,12 +453,12 @@ Normal planners do not need to ask an administrator to prepare a wedding workspa
 ---
 ### Render Celery Worker and Beat
 
-Render Celery Worker and Celery Beat services must set `DJANGO_SETTINGS_MODULE=django_app.settings.production`. Celery intentionally fails at startup in Render/production-like environments when this variable is missing.
+Render Celery Worker and Celery Beat services must set `DJANGO_SETTINGS_MODULE=interface.settings.production`. Celery intentionally fails at startup in Render/production-like environments when this variable is missing.
 
 Required worker/beat environment variables:
 
 ```env
-DJANGO_SETTINGS_MODULE=django_app.settings.production
+DJANGO_SETTINGS_MODULE=interface.settings.production
 DJANGO_SECRET_KEY=<production-secret>
 TOKEN_ENV=production
 PASSWORD_RESET_HASH_KEY=<strong-dedicated-hmac-key>
@@ -721,11 +721,11 @@ pytest tests/ -v
 ## 🌐 Interface Layer (Framework Boundaries)
 ```bash
 Django Application Tests
-- pytest tests/django_app/identity -v
-- pytest tests/django_app/events -v
-- pytest tests/django_app/vendors -v
-- pytest tests/django_app/documents -v
-- pytest tests/django_app/governance -v
+- pytest tests/interface/identity -v
+- pytest tests/interface/events -v
+- pytest tests/interface/vendors -v
+- pytest tests/interface/documents -v
+- pytest tests/interface/governance -v
 ```
 
 FastAPI Application Tests
@@ -778,13 +778,13 @@ If you attempt to run the document or task tests (`pytest tests/tasks/`) directl
 > - **Option B**: Download and install the GTK+ libraries for Windows by following the [WeasyPrint installation guide](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows). Add the GTK installation path (e.g., `C:\Program Files\GTK3-Runtime\bin`) to your Windows User or System `PATH` variable, and restart your IDE or terminal.
 > - **Option C**: Run only specific non-task layers locally (e.g., domain, application, or web routers) to bypass loading WeasyPrint:
 >   ```bash
->   pytest tests/domain/ tests/application/ tests/django_app/ tests/fastapi_app/
+>   pytest tests/domain/ tests/application/ tests/interface/ tests/fastapi_app/
 >   ```
 
 ---
 
 ### 🔗 3. `ImportError: cannot import name 'export_requested'`
-Previously, `django_app/documents/signals.py` attempted to load `export_requested` from `infrastructure/adapters/django_event_dispatcher.py` which had not been defined, leading to application crashes during start-up.
+Previously, `interface/documents/signals.py` attempted to load `export_requested` from `infrastructure/adapters/django_event_dispatcher.py` which had not been defined, leading to application crashes during start-up.
 
 > [!NOTE]
 > **Status**: **RESOLVED**.

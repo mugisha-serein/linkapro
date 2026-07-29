@@ -145,7 +145,7 @@ class TestHmacMiddlewareUnit:
         get_client.assert_not_called()
 
     def test_init_does_not_call_redis_from_url(self, mock_repo):
-        with patch("django_app.common.redis_config.Redis.from_url") as from_url:
+        with patch("interface.common.redis_config.Redis.from_url") as from_url:
             with patch("payments.infrastructure.middleware.DjangoApiKeyRepository") as RepoClass:
                 RepoClass.return_value = mock_repo
                 HmacRequestValidator(lambda r: None)

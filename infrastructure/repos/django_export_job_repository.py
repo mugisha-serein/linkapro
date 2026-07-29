@@ -4,9 +4,9 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from domain.documents.entities import ExportJob as DomainJob, ExportType, ExportStatus
 from domain.documents.interfaces import IExportJobRepository
-from django_app.documents.models import ExportJob as DjangoJob
-from django_app.events.models import Event as DjangoEvent
-from django_app.identity.models import User as DjangoUser
+from interface.documents.models import ExportJob as DjangoJob
+from interface.events.models import Event as DjangoEvent
+from interface.identity.models import User as DjangoUser
 
 
 class DjangoExportJobRepository(IExportJobRepository):

@@ -9,8 +9,8 @@ from infrastructure.repos.inquiries.django_repository import DjangoInquiryReposi
 from infrastructure.repos.packages.django_repository import DjangoServicePackageRepository
 from infrastructure.repos.portfolio.django_repository import DjangoPortfolioImageRepository
 from infrastructure.repos.profile.django_repository import DjangoVendorProfileRepository
-from django_app.identity.models import User
-from django_app.vendors.models import VendorProfile as DjangoProfile
+from interface.identity.models import User
+from interface.vendors.models import VendorProfile as DjangoProfile
 
 pytestmark = pytest.mark.django_db
 

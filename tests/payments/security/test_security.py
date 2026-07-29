@@ -20,7 +20,7 @@ def test_webhook_rejects_wrong_hash(settings):
     assert response.status_code == 401
 
 
-@patch("django_app.payments.views.FlutterwaveWebhookView.post")
+@patch("interface.payments.views.FlutterwaveWebhookView.post")
 def test_webhook_accepts_correct_hash(mock_post, settings):
     settings.FLW_SECRET_HASH = "correct_secret"
     # Simulate a successful view execution
@@ -38,5 +38,5 @@ def test_webhook_accepts_correct_hash(mock_post, settings):
 
 
 def test_constant_time_comparison_used():
-    from django_app.payments.views import secrets as sec
+    from interface.payments.views import secrets as sec
     assert hasattr(sec, "compare_digest")

@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from django_app.identity.models import User
-from django_app.payments.models import ApiKey, Payment as DjangoPayment
+from interface.identity.models import User
+from interface.payments.models import ApiKey, Payment as DjangoPayment
 from payments.domain.entities import Payment as DomainPayment
 from payments.domain.enums import PaymentEnv, PaymentMethod, PaymentStatus
 from payments.domain.value_objects import Currency, Money

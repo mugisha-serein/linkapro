@@ -6,9 +6,9 @@ import pytest
 
 from application.vendors.errors import VendorApplicationConfigurationError
 from domain.vendors.profile.entity import ServiceCategory, VendorProfile
-from django_app.identity.models import User
-from django_app.vendors.models import VendorDomainEventOutbox
-from django_app.vendors.models import VendorProfile as DjangoVendorProfile
+from interface.identity.models import User
+from interface.vendors.models import VendorDomainEventOutbox
+from interface.vendors.models import VendorProfile as DjangoVendorProfile
 from infrastructure.adapters.django_vendor_event_outbox import DjangoVendorEventOutboxDispatcher
 from infrastructure.repos.profile.django_aggregate_uow import DjangoVendorAggregateUnitOfWork
 

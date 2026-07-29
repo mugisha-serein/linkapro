@@ -23,5 +23,5 @@ def _load_env_file(env_path: Path) -> None:
 
 _load_env_file(Path(__file__).resolve().parent / ".env")
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django_app.settings.test")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "interface.settings.test")
 django.setup()

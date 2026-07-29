@@ -9,8 +9,8 @@ LinkaPro uses envelope encryption for sensitive application fields. The database
 Vault is required for:
 
 - Payment encrypted fields that already depend on `payments.infrastructure.crypto` and `VaultKeyProvider`.
-- Identity OAuth token encryption in `django_app/identity/migrations/0010_encrypt_oauth_tokens.py`.
-- Identity TOTP secret encryption in `django_app/identity/migrations/0011_encrypt_totp_secret.py`.
+- Identity OAuth token encryption in `interface/identity/migrations/0010_encrypt_oauth_tokens.py`.
+- Identity TOTP secret encryption in `interface/identity/migrations/0011_encrypt_totp_secret.py`.
 - Any future Django/Celery code path that reads or writes those encrypted fields.
 
 If Vault is sealed, unreachable, misconfigured, or missing Transit permissions, encrypted-field reads/writes fail by design.
@@ -148,9 +148,9 @@ Use this order for the Vault rollout and identity encryption migrations:
 
 ## Migration Logging Check
 
-`django_app/identity/migrations/0010_encrypt_oauth_tokens.py` contains no logging or print calls. It reads plaintext `access_token` and optional `refresh_token` only to encrypt them into the new encrypted fields before removing the plaintext columns.
+`interface/identity/migrations/0010_encrypt_oauth_tokens.py` contains no logging or print calls. It reads plaintext `access_token` and optional `refresh_token` only to encrypt them into the new encrypted fields before removing the plaintext columns.
 
-`django_app/identity/migrations/0011_encrypt_totp_secret.py` contains no logging or print calls. It reads plaintext `totp_secret` only to encrypt it into the replacement encrypted JSON field before renaming that field back to `totp_secret`.
+`interface/identity/migrations/0011_encrypt_totp_secret.py` contains no logging or print calls. It reads plaintext `totp_secret` only to encrypt it into the replacement encrypted JSON field before renaming that field back to `totp_secret`.
 
 Both migrations rely on `VaultKeyProvider.wrap_dek()` for the wrapped DEK and fail the migration if Vault configuration/auth/connectivity is not ready. That is intentional: run `vault_preflight` before `migrate`.
 

@@ -8,7 +8,7 @@ import httpx
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
-from django_app.vendors.models import VendorProfile
+from interface.vendors.models import VendorProfile
 from infrastructure.security.service_auth import build_service_headers, utc_timestamp
 
 logger = logging.getLogger(__name__)

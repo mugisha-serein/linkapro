@@ -1,8 +1,8 @@
 import secrets
 import uuid
 from django.contrib.auth.hashers import make_password
-from django_app.payments.models import ApiKey
-from django_app.identity.models import User
+from interface.payments.models import ApiKey
+from interface.identity.models import User
 
 def create_api_key(user: User, scopes: list, expires_at=None) -> tuple[str, str]:
     """Generate a new API key. Returns (key_id, secret)."""

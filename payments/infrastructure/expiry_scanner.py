@@ -5,7 +5,7 @@ from django.db.models import Q
 from payments.application.ports import IExpiryScanner
 from payments.domain.entities import Payment as DomainPayment
 from payments.application.ports import IKeyProvider
-from django_app.payments.models import Payment as DjangoPayment
+from interface.payments.models import Payment as DjangoPayment
 from .repositories import DjangoPaymentRepository
 
 

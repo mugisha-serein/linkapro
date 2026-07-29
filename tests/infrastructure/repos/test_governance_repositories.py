@@ -9,8 +9,8 @@ from domain.governance.entities import (
 from infrastructure.repos.django_audit_log_repository import DjangoAuditLogRepository
 from infrastructure.repos.django_content_flag_repository import DjangoContentFlagRepository
 from infrastructure.repos.django_platform_metric_repository import DjangoPlatformMetricRepository
-from django_app.identity.models import User
-from django_app.vendors.models import VendorProfile
+from interface.identity.models import User
+from interface.vendors.models import VendorProfile
 
 pytestmark = pytest.mark.django_db
 

@@ -1,6 +1,6 @@
 import pytest
 
-from django_app.identity.models import IdentitySession, User
+from interface.identity.models import IdentitySession, User
 from infrastructure.identity.django_identity_session_store import DjangoIdentitySessionStore
 
 

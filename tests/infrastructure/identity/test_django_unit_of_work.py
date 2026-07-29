@@ -1,6 +1,6 @@
 import pytest
 
-from django_app.identity.models import User
+from interface.identity.models import User
 from infrastructure.identity.django_unit_of_work import DjangoIdentityUnitOfWork
 
 

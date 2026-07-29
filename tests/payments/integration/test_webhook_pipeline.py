@@ -5,8 +5,8 @@ from django.urls import reverse
 from unittest.mock import MagicMock, patch
 from datetime import timedelta
 
-from django_app.identity.models import User
-from django_app.payments.models import Payment as DjangoPayment, WebhookEvent
+from interface.identity.models import User
+from interface.payments.models import Payment as DjangoPayment, WebhookEvent
 from payments.infrastructure.repositories import DjangoPaymentRepository
 from payments.application.handlers import PaymentCommandHandlers
 from payments.domain.entities import Payment as DomainPayment
@@ -18,7 +18,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 class TestWebhookE2E:
-    @patch("django_app.payments.views.get_command_handlers")
+    @patch("interface.payments.views.get_command_handlers")
     def test_full_webhook_success_flow(
         self,
         mock_get_handlers,

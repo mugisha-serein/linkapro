@@ -26,6 +26,7 @@ from application.identity.shared.dtos.token_claims import (
 )
 from application.identity.shared.ports import SESSION_ID_CLAIM
 from domain.identity.sessions import MalformedRefreshToken, TokenFamily
+from infrastructure.identity.django_models import password_reset_token_model
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +245,8 @@ class JWTTokenService:
 
     def issue_password_reset_token(self, user) -> str:
         from django.db import transaction
-        from django_app.identity.models import PasswordResetToken
+
+        PasswordResetToken = password_reset_token_model()
 
         token = self.create_password_reset_token(str(user.id))
         payload = self.decode_password_reset_token_payload(token)
@@ -291,7 +293,7 @@ class JWTTokenService:
             return None
 
     def verify_password_reset_token_once(self, token_str: str):
-        from django_app.identity.models import PasswordResetToken
+        PasswordResetToken = password_reset_token_model()
 
         payload = self.decode_password_reset_token_payload(token_str)
         if not payload:

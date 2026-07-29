@@ -9,7 +9,7 @@ FORBIDDEN_IMPORT_ROOTS = {
     "celery",
     "cloudinary",
     "django",
-    "django_app",
+    "interface",
     "infrastructure",
     "rest_framework",
     "sqlalchemy",
@@ -93,7 +93,7 @@ def test_vendor_domain_modules_import_and_public_exports_exist():
 
 
 def test_django_setup_smoke_for_admin_autodiscovery():
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django_app.settings.test")
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "interface.settings.test")
     os.environ["DATABASE_URL"] = "sqlite:///:memory:"
     os.environ["FASTAPI_DATABASE_URL"] = "postgresql+asyncpg://user:pass@localhost/linkapro_test"
 

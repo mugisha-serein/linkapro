@@ -12,8 +12,8 @@ from infrastructure.repos.django_checklist_item_repository import DjangoChecklis
 from infrastructure.repos.django_budget_line_repository import DjangoBudgetLineRepository
 from infrastructure.repos.django_guest_entry_repository import DjangoGuestEntryRepository
 from infrastructure.repos.django_timeline_block_repository import DjangoTimelineBlockRepository
-from django_app.identity.models import User
-from django_app.events.models import Event as DjangoEvent
+from interface.identity.models import User
+from interface.events.models import Event as DjangoEvent
 
 pytestmark = pytest.mark.django_db
 
@@ -126,7 +126,7 @@ class TestDjangoChecklistItemRepository:
         event = DjangoEvent.objects.create(
             planner=user, name="Event", event_type="wedding", event_date="2025-01-01"
         )
-        from django_app.events.models import Checklist as DjangoChecklist
+        from interface.events.models import Checklist as DjangoChecklist
         checklist = DjangoChecklist.objects.create(event=event, name="Checklist")
         repo = DjangoChecklistItemRepository()
         item = ChecklistItem(
@@ -149,7 +149,7 @@ class TestDjangoChecklistItemRepository:
         event = DjangoEvent.objects.create(
             planner=user, name="Event", event_type="wedding", event_date="2025-01-01"
         )
-        from django_app.events.models import Checklist as DjangoChecklist
+        from interface.events.models import Checklist as DjangoChecklist
         checklist = DjangoChecklist.objects.create(event=event, name="Checklist")
         repo = DjangoChecklistItemRepository()
         repo.save(ChecklistItem(id=uuid.uuid4(), checklist_id=checklist.id, description="First", order=0))

@@ -7,7 +7,7 @@ import uuid
 from domain.identity.oauth import OAuthProvider, OAuthToken
 
 
-class IOAuthTokenRepository(ABC):
+class OAuthIdentityRepository(ABC):
     @abstractmethod
     def get_by_provider_and_user(
         self, provider: OAuthProvider, provider_user_id: str
@@ -33,4 +33,4 @@ class IOAuthTokenRepository(ABC):
         """Remove linked provider for user."""
 
 
-__all__ = ["IOAuthTokenRepository"]
+__all__ = ["OAuthIdentityRepository"]

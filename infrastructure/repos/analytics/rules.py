@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from domain.vendors.profile.rules import get_profile_completion_errors
-from django_app.vendors.models import VendorProfile as DjangoVendorProfile
+from interface.vendors.models import VendorProfile as DjangoVendorProfile
 from infrastructure.repos.analytics import metrics
 
 PROFILE_STRENGTH_LOW = "profile_strength_low"

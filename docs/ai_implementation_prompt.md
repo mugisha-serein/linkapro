@@ -83,7 +83,7 @@ Every module is implemented across exactly three layers. Do not mix concerns bet
 - Everything that touches the outside world.
 - Contains: **Concrete Repository Implementations** (Django ORM-based, implementing domain ABCs), **Django DRF Views and Serializers**, **FastAPI Routers and Pydantic Schemas**, **Celery Tasks**, **External Service Adapters** (Cloudinary, SendGrid, WeasyPrint, OpenPyXL, reCAPTCHA).
 - No business logic. No domain rule enforcement.
-- Lives in: `evplan/django_app/`, `evplan/fastapi_app/`, `evplan/infrastructure/`, `evplan/tasks/`
+- Lives in: `evplan/interface/`, `evplan/fastapi_app/`, `evplan/infrastructure/`, `evplan/tasks/`
 
 ---
 
@@ -158,7 +158,7 @@ evplan/
 │   ├── vendors/         # SubmitVendorProfile, UploadImage commands
 │   ├── marketplace/     # SearchVendors query, PostReview command
 │   └── governance/      # ApproveVendor, BanUser commands
-├── django_app/
+├── interface/
 │   ├── settings/        # base.py, development.py, production.py
 │   ├── identity/        # Django app: models, serializers, views, urls, admin
 │   ├── events/          # Django app

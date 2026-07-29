@@ -6,11 +6,11 @@ from django.db.models import Count, Q
 
 from domain.governance.entities import PlatformMetric as DomainMetric
 from domain.governance.interfaces import IPlatformMetricRepository
-from django_app.governance.models import PlatformMetric as DjangoMetric
-from django_app.identity.models import User
-from django_app.vendors.models import VendorProfile
-from django_app.events.models import Event
-from django_app.vendors.models import Inquiry
+from interface.governance.models import PlatformMetric as DjangoMetric
+from interface.identity.models import User
+from interface.vendors.models import VendorProfile
+from interface.events.models import Event
+from interface.vendors.models import Inquiry
 from fastapi_app.marketplace.models import ReviewModel  # adjust import as needed
 
 
