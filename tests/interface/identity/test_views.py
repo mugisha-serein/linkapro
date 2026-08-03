@@ -199,6 +199,8 @@ class TestIdentityViews:
         assert login_response.data["data"]["user"]["display_name"] == "Fresh User"
         assert login_response.data["data"]["user"]["requires_password_setup"] is False
         assert "refresh_token" in login_response.cookies
+        assert login_response.cookies["refresh_token"]["httponly"] is True
+        assert login_response.cookies["refresh_token"]["path"] == "/"
 
     def test_login_success(self):
         plain = PlainPassword("StrongPass1!")
@@ -809,7 +811,7 @@ class TestIdentityViews:
 
         self.client.credentials()
         response = self.client.post(
-            reverse("token-refresh"),
+            reverse("refresh"),
             {"refresh": refresh_token},
             format="json",
             HTTP_ORIGIN=COOKIE_AUTH_ORIGIN,
@@ -839,7 +841,7 @@ class TestIdentityViews:
         refresh_token = login_response.cookies["refresh_token"].value
 
         self.client.cookies["refresh_token"] = refresh_token
-        response = self.client.post(reverse("token-refresh"), format="json", HTTP_ORIGIN=COOKIE_AUTH_ORIGIN)
+        response = self.client.post(reverse("refresh"), format="json", HTTP_ORIGIN=COOKIE_AUTH_ORIGIN)
         assert response.status_code == 200
         assert response.data["success"] is True
         assert response.data["code"] == "token_refreshed"
@@ -864,7 +866,7 @@ class TestIdentityViews:
         refresh_token = login_response.cookies["refresh_token"].value
 
         response = self.client.post(
-            reverse("token-revoke"),
+            reverse("revoke"),
             {"refresh": refresh_token},
             format="json",
             HTTP_ORIGIN=COOKIE_AUTH_ORIGIN,

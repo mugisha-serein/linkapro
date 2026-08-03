@@ -75,6 +75,8 @@ urlpatterns = [
         ResendEmailVerificationView.as_view(),
         name="resend-email-verification",
     ),
+    path("refresh/", ThrottledTokenRefreshView.as_view(), name="refresh"),
+    path("revoke/", ThrottledTokenRevokeView.as_view(), name="revoke"),
     path("token/refresh/", ThrottledTokenRefreshView.as_view(), name="token-refresh"),
     path("token/revoke/", ThrottledTokenRevokeView.as_view(), name="token-revoke"),
     path("sessions/", ActiveSessionsView.as_view(), name="active-sessions"),
