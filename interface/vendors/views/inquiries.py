@@ -38,9 +38,8 @@ class InquiryListView(APIView):
 
 
 class PublicInquiryView(APIView):
-    """Public endpoint for clients to send inquiries to a vendor (no auth required)."""
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    """Endpoint for authenticated clients to send inquiries to a vendor."""
+    permission_classes = [IsAuthenticated]
     throttle_classes = [PublicVendorInquiryThrottle]
     throttle_scope = "public_vendor_inquiry"
 
