@@ -29,6 +29,7 @@ class InquiryCommandHandlersMixin:
                     vendor_id=cmd.vendor_id,
                     client_name=cmd.client_name,
                     client_email=cmd.client_email,
+                    requester_user_id=cmd.actor.user_id if cmd.actor else None,
                     client_phone=cmd.client_phone,
                     message=cmd.message,
                     event_date=cmd.event_date,

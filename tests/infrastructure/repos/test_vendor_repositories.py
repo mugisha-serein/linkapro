@@ -10,7 +10,7 @@ from infrastructure.repos.packages.django_repository import DjangoServicePackage
 from infrastructure.repos.portfolio.django_repository import DjangoPortfolioImageRepository
 from infrastructure.repos.profile.django_repository import DjangoVendorProfileRepository
 from interface.identity.models import User
-from interface.vendors.models import VendorProfile as DjangoProfile
+from interface.vendors.models import Inquiry as DjangoInquiry, VendorProfile as DjangoProfile
 
 pytestmark = pytest.mark.django_db
 
@@ -151,6 +151,36 @@ class TestDjangoServicePackageRepository:
 
 
 class TestDjangoInquiryRepository:
+    def test_add_persists_requester_user_id_when_present_and_leaves_legacy_null(self):
+        user = User.objects.create_user(email="v@test.com", password="p", role="vendor")
+        vendor = DjangoProfile.objects.create(
+            user=user, business_name="V", category="photography", description="d",
+            service_area="a", contact_email="e@t.com", contact_phone="1"
+        )
+        repo = DjangoInquiryRepository()
+        requester_user_id = uuid.uuid4()
+
+        authenticated = repo.add(Inquiry(
+            id=uuid.uuid4(),
+            vendor_id=vendor.id,
+            client_name="Client",
+            client_email="c@test.com",
+            message="Can you support our event?",
+            requester_user_id=requester_user_id,
+        ))
+        legacy = repo.add(Inquiry(
+            id=uuid.uuid4(),
+            vendor_id=vendor.id,
+            client_name="Legacy",
+            client_email="legacy@test.com",
+            message="Can you support our event?",
+        ))
+
+        assert authenticated.requester_user_id == requester_user_id
+        assert legacy.requester_user_id is None
+        assert DjangoInquiry.objects.get(id=authenticated.id).requester_user_id == requester_user_id
+        assert DjangoInquiry.objects.get(id=legacy.id).requester_user_id is None
+
     def test_save_and_list(self):
         user = User.objects.create_user(email="v@test.com", password="p", role="vendor")
         vendor = DjangoProfile.objects.create(

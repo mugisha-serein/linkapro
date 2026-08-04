@@ -345,6 +345,7 @@ class Inquiry(models.Model):
     vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="inquiries")
     client_name = models.CharField(max_length=200)
     client_email = models.EmailField()
+    requester_user_id = models.UUIDField(null=True, blank=True, db_index=True)
     client_phone = models.CharField(max_length=30, blank=True, null=True)
     message = models.TextField()
     event_date = models.DateField(null=True, blank=True)

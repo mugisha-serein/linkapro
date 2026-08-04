@@ -229,6 +229,7 @@ def test_send_inquiry_uses_authenticated_actor_as_effective_requester_identity()
     assert received_requester == actor.user_id
     assert received_requester != legacy_requester_id
     assert received_vendor == vendor_id
+    assert aggregate_uow.add_calls[0].requester_user_id == actor.user_id
     assert (("vendor_inquiry.send", actor.user_id, "actor-key")) in idempotency_port.records
 
 

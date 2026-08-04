@@ -40,6 +40,7 @@ class Inquiry(DomainAggregate):
     is_read: bool = False
     version: int = 0
     created_at: datetime = field(default_factory=utc_now)
+    requester_user_id: Optional[uuid.UUID] = None
     _events: list = field(default_factory=list, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -55,6 +56,7 @@ class Inquiry(DomainAggregate):
         client_name: str,
         client_email: str,
         message: str,
+        requester_user_id: Optional[uuid.UUID] = None,
         client_phone: Optional[str] = None,
         event_date: Optional[date] = None,
     ) -> "Inquiry":
@@ -68,6 +70,7 @@ class Inquiry(DomainAggregate):
             client_name=client_name,
             client_email=client_email,
             message=message,
+            requester_user_id=requester_user_id,
             client_phone=client_phone,
             event_date=checked_event_date,
         )
@@ -86,6 +89,8 @@ class Inquiry(DomainAggregate):
         errors: dict[str, list[str]] = {}
         self.id = _normalize_uuid(self.id, "id", errors)
         self.vendor_id = _normalize_uuid(self.vendor_id, "vendor_id", errors)
+        if self.requester_user_id is not None:
+            self.requester_user_id = _normalize_uuid(self.requester_user_id, "requester_user_id", errors)
         self.client_name = _normalize_text(
             self.client_name,
             "client_name",
