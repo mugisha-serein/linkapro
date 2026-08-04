@@ -91,6 +91,8 @@ class Inquiry(DomainAggregate):
         self.vendor_id = _normalize_uuid(self.vendor_id, "vendor_id", errors)
         if self.requester_user_id is not None:
             self.requester_user_id = _normalize_uuid(self.requester_user_id, "requester_user_id", errors)
+            if self.requester_user_id == uuid.UUID(int=0):
+                errors.setdefault("requester_user_id", []).append("Enter a valid UUID.")
         self.client_name = _normalize_text(
             self.client_name,
             "client_name",
