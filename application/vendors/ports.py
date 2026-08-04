@@ -2,19 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Callable, Generic, Literal, Protocol, Sequence, TypeAlias, TypeVar
+from typing import Callable, Generic, Literal, Mapping, Protocol, Sequence, TypeAlias, TypeVar
 import uuid
 
 from domain.vendors.entities import Inquiry, PortfolioImage, ServicePackage, VendorProfile
-from domain.vendors.events import VendorDomainEvent
-from domain.vendors.interfaces import Page, PageRequest
+from domain.vendors.interfaces import PageRequest
 
 from .commands import AuthenticatedActor, ModeratorActor
-from .dtos import PageDTO, PortfolioImageDTO, ServicePackageDTO
+from .dtos import (
+    PageDTO,
+    PortfolioImageDTO,
+    ServicePackageDTO,
+    VendorActivityDTO,
+    VendorAnalyticsDTO,
+    VendorDashboardSummaryDTO,
+)
 
 T = TypeVar("T")
 VendorAggregateT = TypeVar("VendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
-CreatedVendorAggregateT = TypeVar("CreatedVendorAggregateT", VendorProfile, PortfolioImage, ServicePackage, Inquiry)
+ProfileCompletionErrors: TypeAlias = Mapping[str, Sequence[str]]
 
 VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER = timedelta(hours=24)
 
@@ -74,6 +80,20 @@ class VendorIdempotencyPort(Protocol):
     ) -> T: ...
 
 
+class InquiryAbuseProtectionPort(Protocol):
+    def assert_inquiry_allowed(
+        self,
+        *,
+        requester_identity: uuid.UUID,
+        vendor_id: uuid.UUID,
+        payload_digest: str,
+    ) -> None: ...
+
+
+class VendorProfileCompletionProvider(Protocol):
+    def get_profile_completion_errors(self, profile: object) -> ProfileCompletionErrors: ...
+
+
 class VendorAuthorizationPort(Protocol):
     def assert_actor_owns_vendor(self, actor: AuthenticatedActor, vendor_id: uuid.UUID) -> None: ...
 
@@ -85,17 +105,11 @@ class VendorAuthorizationPort(Protocol):
 class VendorReadPort(Protocol):
     def list_service_packages(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[ServicePackageDTO]: ...
 
-    def dashboard_summary(self, vendor_id: uuid.UUID) -> dict: ...
+    def dashboard_summary(self, vendor_id: uuid.UUID) -> VendorDashboardSummaryDTO: ...
 
-    def analytics(self, vendor_id: uuid.UUID) -> dict: ...
+    def analytics(self, vendor_id: uuid.UUID) -> VendorAnalyticsDTO: ...
 
-    def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[dict]: ...
-
-
-class VendorEventDispatcher(Protocol):
-    """Persists a vendor domain event for publication."""
-
-    def dispatch(self, event: VendorDomainEvent) -> None: ...
+    def recent_activity(self, vendor_id: uuid.UUID, page: PageRequest) -> PageDTO[VendorActivityDTO]: ...
 
 
 class VendorAggregateUnitOfWork(Protocol):
@@ -111,16 +125,10 @@ class VendorAggregateUnitOfWork(Protocol):
     ) -> VendorAggregateT: ...
 
 
-class VendorCreationUnitOfWork(Protocol):
-    """Atomically adds one newly created vendor aggregate with its pending creation events."""
-
-    def add_with_pending_events(self, aggregate: CreatedVendorAggregateT) -> CreatedVendorAggregateT: ...
-
-
 class PortfolioReorderUnitOfWork(Protocol):
-    """Atomically persists reordered portfolio images with their pending domain events."""
+    """Loads and atomically persists the complete active portfolio set for one vendor."""
 
-    def list_vendor_images(self, vendor_id: uuid.UUID, page: PageRequest) -> Page[PortfolioImage]: ...
+    def load_active_vendor_images(self, vendor_id: uuid.UUID) -> Sequence[PortfolioImage]: ...
 
     def persist_reorder(
         self,

@@ -42,13 +42,12 @@ from application.vendors.errors import (
     VendorOperationForbidden,
     VendorResourceNotFound,
 )
+from application.vendors import ports as vendor_ports
 from application.vendors.handlers import VendorCommandHandlers, VendorQueryHandlers
 from application.vendors.ports import (
     PortfolioReorderUnitOfWork,
     VENDOR_IDEMPOTENCY_RECORD_EXPIRES_AFTER,
     VendorAggregateUnitOfWork,
-    VendorCreationUnitOfWork,
-    VendorEventDispatcher,
     VendorIdempotencyCompleted,
     VendorIdempotencyExpired,
     VendorIdempotencyInProgress,
@@ -80,7 +79,6 @@ from domain.vendors.events import (
     PortfolioMediaReordered,
     ServicePackageCreated,
     VendorApproved,
-    VendorDomainEvent,
     VendorProfileUpdated,
 )
 from domain.vendors.interfaces import Page, PageRequest
@@ -177,29 +175,21 @@ class EventDispatcher:
         self.events.append(event)
 
 
-class CreationUow:
-    def __init__(self):
-        self.add_calls = []
-        self.events = []
-        self.fail_on_add = False
-
-    def add_with_pending_events(self, aggregate):
-        self.add_calls.append(aggregate)
-        if self.fail_on_add:
-            raise RuntimeError("creation transaction failed")
-        self.events.extend(aggregate.pull_events())
-        return aggregate
-
-
 class AggregateUow:
     def __init__(self):
         self.add_calls = []
         self.save_calls = []
         self.events = []
+        self.fail_on_add = False
+        self.fail_duplicate_on_add = False
         self.fail_on_save = False
 
     def add_with_pending_events(self, aggregate):
         self.add_calls.append(aggregate)
+        if self.fail_duplicate_on_add:
+            raise DuplicateVendorProfile()
+        if self.fail_on_add:
+            raise RuntimeError("creation transaction failed")
         self.events.extend(aggregate.pull_events())
         return aggregate
 
@@ -280,6 +270,26 @@ class ImageRepo:
     def allocate_next_order(self, vendor_id):
         self.allocate_next_order_calls.append(vendor_id)
         return len([image for image in self.images.values() if image.vendor_id == vendor_id])
+
+
+class StrictPortfolioImageCreationPort:
+    def __init__(self, order_allocator, aggregate_uow):
+        self.order_allocator = order_allocator
+        self.aggregate_uow = aggregate_uow
+        self.calls = []
+
+    def create_at_next_order(self, *, vendor_id, image_factory):
+        if self.aggregate_uow is None:
+            raise VendorApplicationConfigurationError(
+                field_errors={"aggregate_uow": ["Vendor aggregate unit of work is required."]}
+            )
+        allocate_next_order = getattr(self.order_allocator, "allocate_next_order", None)
+        if not callable(allocate_next_order):
+            raise AssertionError("Strict portfolio creation fake requires an order allocator.")
+        next_order = allocate_next_order(vendor_id)
+        image = image_factory(next_order)
+        self.calls.append((vendor_id, image))
+        return self.aggregate_uow.add_with_pending_events(image)
 
 
 class PackageRepo:
@@ -378,6 +388,14 @@ class IdempotencyPort:
         return result
 
 
+class InquiryAbuseProtectionPort:
+    def __init__(self):
+        self.calls = []
+
+    def assert_inquiry_allowed(self, *, requester_identity, vendor_id, payload_digest):
+        self.calls.append((requester_identity, vendor_id, payload_digest))
+
+
 class AuthorizationPort:
     def __init__(self, denied_vendor_ids=()):
         self.denied_vendor_ids = set(denied_vendor_ids)
@@ -407,6 +425,10 @@ class ReorderUow:
         self.events = []
         self.fail = False
 
+    def load_active_vendor_images(self, vendor_id):
+        self.list_calls.append(vendor_id)
+        return tuple(image for image in self.images if image.vendor_id == vendor_id)
+
     def list_vendor_images(self, vendor_id, page):
         self.list_calls.append((vendor_id, page))
         items = [image for image in self.images if image.vendor_id == vendor_id]
@@ -422,16 +444,21 @@ class ReorderUow:
 
 
 def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_repo=None, dispatcher=None, **kwargs):
+    image_repo = image_repo or ImageRepo()
     kwargs.setdefault("authorization_port", AuthorizationPort())
     kwargs.setdefault("aggregate_uow", AggregateUow())
-    kwargs.setdefault("creation_uow", CreationUow())
+    kwargs.setdefault("idempotency_port", IdempotencyPort())
+    kwargs.setdefault("inquiry_abuse_protection_port", InquiryAbuseProtectionPort())
     kwargs.setdefault("reorder_uow", ReorderUow(()))
+    kwargs.setdefault(
+        "portfolio_creation_port",
+        StrictPortfolioImageCreationPort(image_repo, kwargs["aggregate_uow"]),
+    )
     return VendorCommandHandlers(
         vendor_repo=vendor_repo or VendorRepo(),
-        image_repo=image_repo or ImageRepo(),
+        image_repo=image_repo,
         package_repo=package_repo or PackageRepo(),
         inquiry_repo=inquiry_repo or InquiryRepo(),
-        event_dispatcher=dispatcher or EventDispatcher(),
         **kwargs,
     )
 
@@ -439,8 +466,14 @@ def _handlers(*, vendor_repo=None, image_repo=None, package_repo=None, inquiry_r
 def test_profile_creation_uses_creation_unit_of_work_and_idempotency_replays_result():
     idem = IdempotencyPort()
     vendor_repo = VendorRepo()
-    creation_uow = CreationUow()
-    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=idem, creation_uow=creation_uow)
+    aggregate_uow = AggregateUow()
+    dispatcher = EventDispatcher()
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        dispatcher=dispatcher,
+        idempotency_port=idem,
+        aggregate_uow=aggregate_uow,
+    )
     actor = _actor()
     cmd = CreateVendorProfileCommand(
         actor=actor,
@@ -457,12 +490,81 @@ def test_profile_creation_uses_creation_unit_of_work_and_idempotency_replays_res
     second = handler.create_profile(cmd)
 
     assert first is second
-    assert len(creation_uow.add_calls) == 1
+    assert len(aggregate_uow.add_calls) == 1
     assert vendor_repo.add_calls == []
     assert vendor_repo.save_calls == []
+    assert dispatcher.events == []
     fingerprint = idem.executions[0][3]
     assert len(fingerprint) == 64
     assert set(fingerprint) <= set("0123456789abcdef")
+
+
+def test_profile_creation_translates_duplicate_conflict_from_creation_unit_of_work():
+    vendor_repo = VendorRepo()
+    aggregate_uow = AggregateUow()
+    aggregate_uow.fail_duplicate_on_add = True
+    dispatcher = EventDispatcher()
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        dispatcher=dispatcher,
+        idempotency_port=IdempotencyPort(),
+        aggregate_uow=aggregate_uow,
+    )
+
+    with pytest.raises(VendorConflict) as exc_info:
+        handler.create_profile(
+            CreateVendorProfileCommand(
+                actor=_actor(),
+                business_name="Duplicate Vendor",
+                category="catering",
+                description="Reliable event catering and planning support.",
+                service_area="Kigali",
+                contact_email="duplicate@example.com",
+                contact_phone="+250700000000",
+                idempotency_key="duplicate-profile",
+            )
+        )
+
+    assert exc_info.value.code == "vendor_profile_exists"
+    assert len(aggregate_uow.add_calls) == 1
+    assert vendor_repo.add_calls == []
+    assert vendor_repo.profiles == {}
+    assert dispatcher.events == []
+
+
+def test_profile_aggregate_uow_failure_leaves_no_partial_profile_or_dispatched_events():
+    vendor_repo = VendorRepo()
+    aggregate_uow = AggregateUow()
+    aggregate_uow.fail_on_add = True
+    dispatcher = EventDispatcher()
+    idempotency_port = IdempotencyPort()
+    handler = _handlers(
+        vendor_repo=vendor_repo,
+        dispatcher=dispatcher,
+        idempotency_port=idempotency_port,
+        aggregate_uow=aggregate_uow,
+    )
+
+    with pytest.raises(RuntimeError, match="creation transaction failed"):
+        handler.create_profile(
+            CreateVendorProfileCommand(
+                actor=_actor(),
+                business_name="Atomic Vendor",
+                category="catering",
+                description="Reliable event catering and planning support.",
+                service_area="Kigali",
+                contact_email="atomic@example.com",
+                contact_phone="+250700000000",
+                idempotency_key="failed-profile",
+            )
+        )
+
+    assert len(aggregate_uow.add_calls) == 1
+    assert aggregate_uow.events == []
+    assert vendor_repo.add_calls == []
+    assert vendor_repo.profiles == {}
+    assert dispatcher.events == []
+    assert idempotency_port.executions == []
 
 
 def test_idempotency_payload_fingerprint_is_stable_sha256_hex_digest():
@@ -541,10 +643,6 @@ def test_vendor_aggregate_unit_of_work_contract_persists_one_aggregate_with_pend
     assert hasattr(VendorAggregateUnitOfWork, "save_with_pending_events")
 
 
-def test_vendor_creation_unit_of_work_contract_adds_one_created_aggregate_with_pending_events():
-    assert hasattr(VendorCreationUnitOfWork, "add_with_pending_events")
-
-
 def test_vendor_idempotency_contract_defines_expiration_and_typed_record_outcomes():
     completed = VendorIdempotencyCompleted(payload_fingerprint="fingerprint", result={"id": "created"})
     in_progress = VendorIdempotencyInProgress(payload_fingerprint="fingerprint")
@@ -598,19 +696,14 @@ def test_vendor_idempotency_port_contract_exposes_outcome_lookup_with_applicatio
     assert type(None) in return_args
 
 
-def test_vendor_event_dispatcher_contract_persists_one_vendor_domain_event_for_publication():
-    signature = inspect.signature(VendorEventDispatcher.dispatch)
-    hints = get_type_hints(VendorEventDispatcher.dispatch)
-
-    assert tuple(signature.parameters) == ("self", "event")
-    assert hints["event"] is VendorDomainEvent
-    assert hints["return"] is type(None)
+def test_vendor_event_dispatcher_application_port_is_removed():
+    assert not hasattr(vendor_ports, "VendorEventDispatcher")
 
 
-def test_vendor_command_handlers_constructor_types_event_dispatcher_port():
-    hints = get_type_hints(VendorCommandHandlers.__init__)
+def test_vendor_command_handlers_constructor_has_no_event_dispatcher_dependency():
+    signature = inspect.signature(VendorCommandHandlers.__init__)
 
-    assert hints["event_dispatcher"] is VendorEventDispatcher
+    assert "event_dispatcher" not in signature.parameters
 
 
 def test_vendor_command_handlers_constructor_requires_reorder_unit_of_work_port():
@@ -619,41 +712,62 @@ def test_vendor_command_handlers_constructor_requires_reorder_unit_of_work_port(
     assert hints["reorder_uow"] is PortfolioReorderUnitOfWork
 
 
+@pytest.mark.parametrize(
+    "dependency_name",
+    (
+        "aggregate_uow",
+        "authorization_port",
+        "idempotency_port",
+        "inquiry_abuse_protection_port",
+        "reorder_uow",
+        "portfolio_creation_port",
+    ),
+)
+def test_vendor_command_handler_required_ports_fail_composition_when_missing(dependency_name):
+    with pytest.raises(VendorApplicationConfigurationError) as exc_info:
+        _handlers(**{dependency_name: None})
+
+    assert dependency_name in exc_info.value.field_errors
+
+
+@pytest.mark.parametrize(
+    "dependency_name",
+    (
+        "aggregate_uow",
+        "idempotency_port",
+        "inquiry_abuse_protection_port",
+        "reorder_uow",
+        "portfolio_creation_port",
+    ),
+)
+def test_vendor_command_handler_dependencies_fail_composition_for_invalid_protocol_shape(dependency_name):
+    with pytest.raises(VendorApplicationConfigurationError) as exc_info:
+        _handlers(**{dependency_name: object()})
+
+    assert dependency_name in exc_info.value.field_errors
+    assert "Required callable methods are missing:" in exc_info.value.field_errors[dependency_name][0]
+
+
+def test_vendor_command_handler_required_ports_have_no_constructor_defaults():
+    signature = inspect.signature(VendorCommandHandlers.__init__)
+
+    for dependency_name in (
+        "aggregate_uow",
+        "authorization_port",
+        "idempotency_port",
+        "inquiry_abuse_protection_port",
+        "reorder_uow",
+        "portfolio_creation_port",
+    ):
+        assert signature.parameters[dependency_name].default is inspect.Parameter.empty
+
+
 def test_vendor_application_configuration_error_has_dedicated_code():
     error = VendorApplicationConfigurationError()
 
     assert error.code == "vendor_application_configuration_error"
     assert error.message == "Vendor application dependency is not configured."
 
-
-def test_profile_creation_requires_creation_unit_of_work():
-    vendor_repo = VendorRepo()
-    dispatcher = EventDispatcher()
-    handler = _handlers(
-        vendor_repo=vendor_repo,
-        dispatcher=dispatcher,
-        creation_uow=None,
-        idempotency_port=IdempotencyPort(),
-    )
-
-    with pytest.raises(VendorApplicationConfigurationError) as exc_info:
-        handler.create_profile(
-            CreateVendorProfileCommand(
-                actor=_actor(),
-                business_name="New Vendor",
-                category="catering",
-                description="Reliable event catering and planning support.",
-                service_area="Kigali",
-                contact_email="new@example.com",
-                contact_phone="+250700000000",
-                idempotency_key="missing-creation-uow",
-            )
-        )
-
-    assert exc_info.value.field_errors == {"creation_uow": ["Vendor creation unit of work is required."]}
-    assert vendor_repo.add_calls == []
-    assert vendor_repo.save_calls == []
-    assert dispatcher.events == []
 
 
 def test_profile_creation_command_requires_nonblank_idempotency_key():
@@ -700,28 +814,6 @@ def test_profile_creation_command_requires_nonblank_idempotency_key():
     assert blank_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
 
 
-def test_profile_creation_always_requires_idempotency_storage():
-    vendor_repo = VendorRepo()
-    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=None)
-
-    with pytest.raises(VendorApplicationConfigurationError) as exc_info:
-        handler.create_profile(
-            CreateVendorProfileCommand(
-                actor=_actor(),
-                business_name="New Vendor",
-                category="catering",
-                description="Reliable event catering and planning support.",
-                service_area="Kigali",
-                contact_email="new@example.com",
-                contact_phone="+250700000000",
-                idempotency_key="missing-storage",
-            )
-        )
-
-    assert exc_info.value.field_errors == {"idempotency_key": ["Idempotency storage is required."]}
-    assert vendor_repo.get_by_user_id_calls == []
-    assert vendor_repo.add_calls == []
-
 
 def test_add_portfolio_image_command_requires_nonblank_idempotency_key():
     idempotency_field = next(field for field in fields(AddPortfolioImageCommand) if field.name == "idempotency_key")
@@ -758,102 +850,31 @@ def test_add_portfolio_image_command_requires_nonblank_idempotency_key():
     assert blank_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
 
 
-def test_add_portfolio_image_always_requires_idempotency_storage():
-    vendor_id = uuid.uuid4()
-    profile = _profile(status=VendorStatus.APPROVED)
-    profile.id = vendor_id
-    vendor_repo = VendorRepo([profile])
-    image_repo = ImageRepo()
-    handler = _handlers(vendor_repo=vendor_repo, image_repo=image_repo, idempotency_port=None)
-
-    with pytest.raises(VendorApplicationConfigurationError) as exc_info:
-        handler.add_portfolio_image(
-            AddPortfolioImageCommand(
-                actor=_actor(),
-                vendor_id=vendor_id,
-                public_id="asset",
-                secure_url="https://example.com/image.jpg",
-                idempotency_key="missing-storage",
-            )
-        )
-
-    assert exc_info.value.field_errors == {"idempotency_key": ["Idempotency storage is required."]}
-    assert vendor_repo.get_by_id_calls == []
-    assert image_repo.allocate_next_order_calls == []
-    assert image_repo.add_calls == []
 
 
-def test_missing_aggregate_unit_of_work_raises_configuration_error_for_create_and_update_paths():
-    vendor_id = uuid.uuid4()
-    actor = _actor()
-    approved = _profile(status=VendorStatus.APPROVED, version=2)
-    approved.id = vendor_id
-    vendor_repo = VendorRepo([approved])
-    image_repo = ImageRepo()
-    handler = _handlers(
-        vendor_repo=vendor_repo,
-        image_repo=image_repo,
-        aggregate_uow=None,
-        idempotency_port=IdempotencyPort(),
-    )
-
-    with pytest.raises(VendorApplicationConfigurationError) as create_exc:
-        handler.add_portfolio_image(
-            AddPortfolioImageCommand(
-                actor=actor,
-                vendor_id=vendor_id,
-                public_id="asset",
-                secure_url="https://example.com/image.jpg",
-                idempotency_key="missing-aggregate-uow",
-            )
-        )
-
-    with pytest.raises(VendorApplicationConfigurationError) as update_exc:
-        handler.update_profile(
-            UpdateVendorProfileCommand(actor=actor, vendor_id=vendor_id, expected_version=2, business_name="Updated")
-        )
-
-    assert create_exc.value.field_errors == {"aggregate_uow": ["Vendor aggregate unit of work is required."]}
-    assert update_exc.value.field_errors == {"aggregate_uow": ["Vendor aggregate unit of work is required."]}
-    assert image_repo.add_calls == []
-    assert vendor_repo.save_calls == []
-
-
-def test_portfolio_dependencies_raise_configuration_error_when_missing_or_misconfigured():
-    vendor_id = uuid.uuid4()
-    profile = _profile(status=VendorStatus.APPROVED)
-    profile.id = vendor_id
-    vendor_repo = VendorRepo([profile])
-
+def test_portfolio_dependencies_require_reorder_uow_and_injected_creation_port():
     with pytest.raises(VendorApplicationConfigurationError) as reorder_exc:
         _handlers(reorder_uow=None)
 
-    with pytest.raises(VendorApplicationConfigurationError) as order_exc:
-        _handlers(vendor_repo=vendor_repo, order_allocator=object(), idempotency_port=IdempotencyPort()).add_portfolio_image(
-            AddPortfolioImageCommand(
-                actor=_actor(),
-                vendor_id=vendor_id,
-                public_id="asset",
-                secure_url="https://example.com/image.jpg",
-                idempotency_key="misconfigured-order-allocation",
-            )
-        )
+    signature = inspect.signature(VendorCommandHandlers.__init__)
 
     assert reorder_exc.value.code == "vendor_application_configuration_error"
     assert str(reorder_exc.value) == "Portfolio reorder requires a unit of work."
-    assert order_exc.value.field_errors == {"order": ["Portfolio order allocation is not configured."]}
+    assert signature.parameters["portfolio_creation_port"].default is inspect.Parameter.empty
+    assert "order_allocator" not in signature.parameters
+    assert not Path("application/vendors/portfolio_image_creation.py").exists()
 
 
 def test_profile_creation_unit_of_work_failure_is_not_cached_or_dispatched():
     idem = IdempotencyPort()
     vendor_repo = VendorRepo()
     dispatcher = EventDispatcher()
-    creation_uow = CreationUow()
-    creation_uow.fail_on_add = True
+    aggregate_uow = AggregateUow()
+    aggregate_uow.fail_on_add = True
     handler = _handlers(
         vendor_repo=vendor_repo,
         dispatcher=dispatcher,
-        creation_uow=creation_uow,
+        aggregate_uow=aggregate_uow,
         idempotency_port=idem,
     )
     cmd = CreateVendorProfileCommand(
@@ -870,8 +891,8 @@ def test_profile_creation_unit_of_work_failure_is_not_cached_or_dispatched():
     with pytest.raises(RuntimeError):
         handler.create_profile(cmd)
 
-    assert len(creation_uow.add_calls) == 1
-    assert creation_uow.events == []
+    assert len(aggregate_uow.add_calls) == 1
+    assert aggregate_uow.events == []
     assert vendor_repo.add_calls == []
     assert vendor_repo.save_calls == []
     assert dispatcher.events == []
@@ -898,9 +919,14 @@ def test_create_profile_duplicate_precheck_and_concurrent_insert_use_same_stable
         precheck_handler.create_profile(cmd)
 
     concurrent_repo = VendorRepo()
-    concurrent_repo.fail_duplicate_on_add = True
+    concurrent_uow = AggregateUow()
+    concurrent_uow.fail_duplicate_on_add = True
     concurrent_dispatcher = EventDispatcher()
-    concurrent_handler = _handlers(vendor_repo=concurrent_repo, dispatcher=concurrent_dispatcher)
+    concurrent_handler = _handlers(
+        vendor_repo=concurrent_repo,
+        aggregate_uow=concurrent_uow,
+        dispatcher=concurrent_dispatcher,
+    )
 
     with pytest.raises(VendorConflict) as concurrent_error:
         concurrent_handler.create_profile(cmd)
@@ -909,7 +935,8 @@ def test_create_profile_duplicate_precheck_and_concurrent_insert_use_same_stable
     assert concurrent_error.value.code == "vendor_profile_exists"
     assert precheck_error.value.message == concurrent_error.value.message
     assert precheck_repo.add_calls == []
-    assert len(concurrent_repo.add_calls) == 1
+    assert concurrent_repo.add_calls == []
+    assert len(concurrent_uow.add_calls) == 1
     assert concurrent_dispatcher.events == []
 
 
@@ -1025,28 +1052,6 @@ def test_service_package_creation_command_requires_nonblank_idempotency_key():
     assert blank_exc.value.field_errors == {"idempotency_key": ["Must be a nonblank string."]}
 
 
-def test_service_package_creation_always_requires_idempotency_storage():
-    vendor_id = uuid.uuid4()
-    profile = _profile(status=VendorStatus.APPROVED)
-    profile.id = vendor_id
-    vendor_repo = VendorRepo([profile])
-    handler = _handlers(vendor_repo=vendor_repo, idempotency_port=None)
-
-    with pytest.raises(VendorApplicationConfigurationError) as exc_info:
-        handler.create_service_package(
-            CreateServicePackageCommand(
-                actor=_actor(),
-                vendor_id=vendor_id,
-                name="Standard",
-                description="Clear package details for a full event.",
-                price=Decimal("5000"),
-                idempotency_key="missing-storage",
-            )
-        )
-
-    assert exc_info.value.field_errors == {"idempotency_key": ["Idempotency storage is required."]}
-    assert vendor_repo.get_by_id_calls == []
-
 
 def test_send_inquiry_command_requires_nonblank_idempotency_key():
     idempotency_field = next(field for field in fields(SendInquiryCommand) if field.name == "idempotency_key")
@@ -1112,37 +1117,6 @@ def test_send_inquiry_command_requires_requester_identifier():
 
     assert exc_info.value.field_errors == {"requester_id": ["Must be a valid UUID."]}
 
-
-def test_send_inquiry_always_requires_idempotency_storage():
-    vendor_id = uuid.uuid4()
-    profile = _profile(status=VendorStatus.APPROVED)
-    profile.id = vendor_id
-    vendor_repo = VendorRepo([profile])
-    inquiry_repo = InquiryRepo()
-    aggregate_uow = AggregateUow()
-    handler = _handlers(
-        vendor_repo=vendor_repo,
-        inquiry_repo=inquiry_repo,
-        aggregate_uow=aggregate_uow,
-        idempotency_port=None,
-    )
-
-    with pytest.raises(VendorApplicationConfigurationError) as exc_info:
-        handler.send_inquiry(
-            SendInquiryCommand(
-                vendor_id=vendor_id,
-                requester_id=uuid.uuid4(),
-                client_name="Planner",
-                client_email="planner@example.com",
-                message="Can you support my event?",
-                idempotency_key="missing-storage",
-            )
-        )
-
-    assert exc_info.value.field_errors == {"idempotency_key": ["Idempotency storage is required."]}
-    assert vendor_repo.get_by_id_calls == []
-    assert inquiry_repo.add_calls == []
-    assert aggregate_uow.add_calls == []
 
 
 def test_oversized_idempotency_key_raises_stable_field_error_after_trimming():
@@ -1259,28 +1233,6 @@ def test_moderation_authorization_denial_happens_before_vendor_loads_or_transiti
     assert profile.status == VendorStatus.PENDING_REVIEW
     assert auth.calls == [(moderator, vendor_id)] * 4
 
-
-def test_command_authorization_dependencies_raise_configuration_error_before_loading_aggregates():
-    vendor_id = uuid.uuid4()
-    actor = _actor()
-    moderator = _moderator()
-    profile = _profile(status=VendorStatus.PENDING_REVIEW, version=1)
-    profile.id = vendor_id
-    repo = VendorRepo([profile])
-    handler = _handlers(vendor_repo=repo, authorization_port=None)
-
-    with pytest.raises(VendorApplicationConfigurationError) as owner_exc:
-        handler.update_profile(
-            UpdateVendorProfileCommand(actor=actor, vendor_id=vendor_id, expected_version=1, business_name="Blocked")
-        )
-
-    with pytest.raises(VendorApplicationConfigurationError) as moderator_exc:
-        handler.approve_vendor(ApproveVendorCommand(moderator=moderator, vendor_id=vendor_id, expected_version=1))
-
-    assert owner_exc.value.field_errors == {"authorization_port": ["Vendor authorization is required."]}
-    assert moderator_exc.value.field_errors == {"authorization_port": ["Vendor authorization is required."]}
-    assert repo.get_by_id_calls == []
-    assert repo.save_calls == []
 
 
 def test_authorization_denial_happens_before_vendor_owned_aggregate_loads_or_writes():
@@ -1423,7 +1375,7 @@ def test_add_portfolio_media_policy_forbids_suspended_vendor_before_order_alloca
     assert dispatcher.events == []
 
 
-def test_add_portfolio_media_allowed_statuses_keep_existing_order_allocation_path():
+def test_add_portfolio_media_allowed_statuses_use_injected_creation_port():
     allowed_statuses = (
         VendorStatus.DRAFT,
         VendorStatus.PENDING_REVIEW,

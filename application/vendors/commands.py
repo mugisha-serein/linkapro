@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional, TypeAlias, TypeVar
 import uuid
 
 from .errors import InvalidVendorCommand
@@ -13,6 +13,9 @@ class _Omitted:
     def __repr__(self) -> str:
         return "OMITTED"
 
+
+T = TypeVar("T")
+OmittedValue: TypeAlias = T | _Omitted
 
 OMITTED = _Omitted()
 MAX_IDEMPOTENCY_KEY_LENGTH = 200
@@ -100,6 +103,15 @@ def _coerce_resource_versions(value: Iterable[ResourceVersion] | Mapping[uuid.UU
         versions = tuple(value)
     if not versions:
         raise InvalidVendorCommand(field_errors={"expected_versions": ["At least one version is required."]})
+    if any(not isinstance(version, ResourceVersion) for version in versions):
+        raise InvalidVendorCommand(
+            field_errors={"expected_versions": ["Every item must be a ResourceVersion."]}
+        )
+    resource_ids = tuple(version.resource_id for version in versions)
+    if len(resource_ids) != len(set(resource_ids)):
+        raise InvalidVendorCommand(
+            field_errors={"expected_versions": ["Duplicate resource IDs are not allowed."]}
+        )
     return versions
 
 
@@ -126,14 +138,14 @@ class UpdateVendorProfileCommand:
     actor: AuthenticatedActor
     vendor_id: uuid.UUID
     expected_version: int
-    business_name: object = OMITTED
-    category: object = OMITTED
-    description: object = OMITTED
-    service_area: object = OMITTED
-    contact_email: object = OMITTED
-    contact_phone: object = OMITTED
-    custom_category: object = OMITTED
-    website: object = OMITTED
+    business_name: OmittedValue[str] = OMITTED
+    category: OmittedValue[str] = OMITTED
+    description: OmittedValue[str] = OMITTED
+    service_area: OmittedValue[str] = OMITTED
+    contact_email: OmittedValue[str] = OMITTED
+    contact_phone: OmittedValue[str] = OMITTED
+    custom_category: OmittedValue[str | None] = OMITTED
+    website: OmittedValue[str | None] = OMITTED
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "actor", _coerce_actor(self.actor))
@@ -290,6 +302,63 @@ class UpdateServicePackageCommand:
 
 
 @dataclass(frozen=True)
+class SubmitServicePackageForApprovalCommand:
+    actor: AuthenticatedActor
+    vendor_id: uuid.UUID
+    package_id: uuid.UUID
+    expected_version: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
+        object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
+        object.__setattr__(self, "package_id", _coerce_uuid(self.package_id, "package_id"))
+        object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
+
+
+@dataclass(frozen=True)
+class ApproveServicePackageCommand:
+    moderator: ModeratorActor
+    vendor_id: uuid.UUID
+    package_id: uuid.UUID
+    expected_version: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "moderator", _coerce_moderator(self.moderator))
+        object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
+        object.__setattr__(self, "package_id", _coerce_uuid(self.package_id, "package_id"))
+        object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
+
+
+@dataclass(frozen=True)
+class RejectServicePackageCommand:
+    moderator: ModeratorActor
+    vendor_id: uuid.UUID
+    package_id: uuid.UUID
+    expected_version: int
+    reason: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "moderator", _coerce_moderator(self.moderator))
+        object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
+        object.__setattr__(self, "package_id", _coerce_uuid(self.package_id, "package_id"))
+        object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
+
+
+@dataclass(frozen=True)
+class RestoreServicePackageForReviewCommand:
+    actor: AuthenticatedActor
+    vendor_id: uuid.UUID
+    package_id: uuid.UUID
+    expected_version: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", _coerce_actor(self.actor))
+        object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
+        object.__setattr__(self, "package_id", _coerce_uuid(self.package_id, "package_id"))
+        object.__setattr__(self, "expected_version", _coerce_expected_version(self.expected_version))
+
+
+@dataclass(frozen=True)
 class DeactivateServicePackageCommand:
     actor: AuthenticatedActor
     vendor_id: uuid.UUID
@@ -331,8 +400,8 @@ class SendInquiryCommand:
     def __post_init__(self) -> None:
         object.__setattr__(self, "vendor_id", _coerce_uuid(self.vendor_id, "vendor_id"))
         object.__setattr__(self, "requester_id", _coerce_uuid(self.requester_id, "requester_id"))
-        if isinstance(self.event_date, datetime):
-            raise InvalidVendorCommand(field_errors={"event_date": ["Use a date, not a datetime."]})
+        if self.event_date is not None and (isinstance(self.event_date, datetime) or type(self.event_date) is not date):
+            raise InvalidVendorCommand(field_errors={"event_date": ["Must be a date or null."]})
         object.__setattr__(self, "idempotency_key", _coerce_required_idempotency_key(self.idempotency_key))
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 
 class VendorApplicationError(Exception):
     default_code = "vendor_application_error"
@@ -29,6 +31,28 @@ class VendorConflict(VendorApplicationError):
     default_message = "Vendor resource has changed."
 
 
+class VendorIdempotencyConflict(VendorConflict):
+    default_code = "vendor_idempotency_conflict"
+    default_message = "Idempotency key was already used with a different payload."
+
+
+class VendorVersionConflict(VendorConflict):
+    default_code = "vendor_version_conflict"
+    default_message = "Vendor resource has changed."
+
+    def __init__(
+        self,
+        *,
+        resource_id: uuid.UUID,
+        expected_version: int,
+        actual_version: int,
+    ) -> None:
+        self.resource_id = resource_id
+        self.expected_version = expected_version
+        self.actual_version = actual_version
+        super().__init__()
+
+
 class DuplicateVendorProfile(VendorApplicationError):
     default_code = "duplicate_vendor_profile"
     default_message = "User already has a vendor profile."
@@ -47,3 +71,8 @@ class VendorApplicationConfigurationError(VendorApplicationError):
 class VendorOperationForbidden(VendorApplicationError):
     default_code = "vendor_operation_forbidden"
     default_message = "Vendor operation is not allowed."
+
+
+class InquiryAbuseDenied(VendorOperationForbidden):
+    default_code = "inquiry_abuse_denied"
+    default_message = "Inquiry request was denied."
