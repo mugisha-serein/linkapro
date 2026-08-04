@@ -52,10 +52,12 @@ class PublicInquiryView(APIView):
         serializer = InquirySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        actor = _actor(request)
 
         cmd = SendInquiryCommand(
+            actor=actor,
             vendor_id=uuid.UUID(str(vendor_id)),
-            requester_id=_public_inquiry_requester_id(data["client_email"]),
+            requester_id=actor.user_id,
             client_name=data["client_name"],
             client_email=data["client_email"],
             message=data["message"],
@@ -79,8 +81,3 @@ class PublicInquiryView(APIView):
             if mapped is not None:
                 return mapped
             raise
-
-
-def _public_inquiry_requester_id(client_email: str) -> uuid.UUID:
-    normalized = str(client_email).strip().lower()
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"linkapro:public-inquiry:{normalized}")
