@@ -213,6 +213,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
+    "EXCEPTION_HANDLER": "interface.common.exception_handler.api_exception_handler",
     "DEFAULT_THROTTLE_RATES": {
         "forgot_password_ip": os.environ.get("FORGOT_PASSWORD_IP_RATE", "5/min"),
         "forgot_password_email": os.environ.get("FORGOT_PASSWORD_EMAIL_RATE", "3/hour"),

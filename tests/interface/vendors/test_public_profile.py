@@ -5,7 +5,7 @@ from rest_framework.test import APIClient
 from django.utils import timezone
 
 from interface.vendors.models import Inquiry, PortfolioImage, ServicePackage, VendorProfileViewed, VerificationDocument
-from tests.factories import create_portfolio_image, create_service_package, create_vendor_profile
+from tests.factories import create_portfolio_image, create_service_package, create_user, create_vendor_profile
 
 pytestmark = pytest.mark.django_db
 
@@ -174,7 +174,12 @@ def test_public_profile_prefers_dedicated_branding_images(client):
 
 
 def test_public_inquiry_requires_approved_vendor(client):
-    vendor = create_vendor_profile(status="pending_review")
+    vendor = create_vendor_profile(
+        status="pending_review",
+        description="Reliable event photography services in Kigali.",
+        contact_phone="+250788000111",
+    )
+    client.force_authenticate(user=create_user())
 
     response = client.post(
         reverse("public-inquiries", args=[vendor.id]),
@@ -186,14 +191,42 @@ def test_public_inquiry_requires_approved_vendor(client):
     assert Inquiry.objects.count() == 0
 
 
-def test_public_inquiry_creates_record_for_approved_vendor(client):
+@pytest.mark.parametrize("route_name", ["public-inquiry", "public-inquiries"])
+def test_public_inquiry_requires_json_authentication_error(client, route_name):
     vendor = create_vendor_profile(status="approved")
+
+    response = client.post(
+        reverse(route_name, args=[vendor.id]),
+        {"client_name": "Impostor", "client_email": "impostor@example.com", "message": "Please share availability."},
+        format="json",
+    )
+
+    assert response.status_code == 401
+    assert response["content-type"].startswith("application/json")
+    assert response.data["success"] is False
+    assert response.data["code"] == "authentication_required"
+    assert "message" in response.data
+    assert Inquiry.objects.count() == 0
+
+
+def test_public_inquiry_creates_record_for_approved_vendor(client):
+    vendor = create_vendor_profile(
+        status="approved",
+        description="Reliable event photography services in Kigali.",
+        contact_phone="+250788000111",
+    )
+    user = create_user(
+        email="real.planner@example.com",
+        first_name="Real",
+        last_name="Planner",
+    )
+    client.force_authenticate(user=user)
 
     response = client.post(
         reverse("public-inquiries", args=[vendor.id]),
         {
-            "client_name": "Client",
-            "client_email": "client@example.com",
+            "client_name": "Impostor Name",
+            "client_email": "impostor@example.com",
             "client_phone": "+250788000000",
             "message": "Please share your availability for our wedding.",
             "event_date": "2027-08-20",
@@ -204,4 +237,7 @@ def test_public_inquiry_creates_record_for_approved_vendor(client):
     assert response.status_code == 201
     assert response.data["code"] == "vendor_inquiry_created"
     inquiry = Inquiry.objects.get(vendor=vendor)
-    assert inquiry.client_email == "client@example.com"
+    assert inquiry.client_name == "Real Planner"
+    assert inquiry.client_email == "real.planner@example.com"
+    assert inquiry.requester_user_id == user.id
+    assert inquiry.client_phone == "+250788000000"

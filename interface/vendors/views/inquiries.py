@@ -53,13 +53,14 @@ class PublicInquiryView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         actor = _actor(request)
+        sender_name = _request_user_display_name(request.user)
 
         cmd = SendInquiryCommand(
             actor=actor,
             vendor_id=uuid.UUID(str(vendor_id)),
             requester_id=actor.user_id,
-            client_name=data["client_name"],
-            client_email=data["client_email"],
+            client_name=sender_name,
+            client_email=request.user.email,
             message=data["message"],
             client_phone=data.get("client_phone"),
             event_date=data.get("event_date"),
@@ -81,3 +82,12 @@ class PublicInquiryView(APIView):
             if mapped is not None:
                 return mapped
             raise
+
+
+def _request_user_display_name(user) -> str:
+    get_full_name = getattr(user, "get_full_name", None)
+    if callable(get_full_name):
+        full_name = get_full_name()
+        if full_name:
+            return full_name
+    return f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or user.email
