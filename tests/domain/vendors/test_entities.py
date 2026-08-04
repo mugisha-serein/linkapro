@@ -441,6 +441,18 @@ class TestInquiry:
 
         assert "client_email" in exc_info.value.field_errors
 
+    def test_requester_user_id_must_be_a_valid_uuid_when_provided(self):
+        with pytest.raises(InquiryValidationError) as exc_info:
+            valid_inquiry(requester_user_id="not-a-uuid")
+
+        assert exc_info.value.field_errors == {"requester_user_id": ["Enter a valid UUID."]}
+
+    def test_requester_user_id_must_not_be_empty_uuid_when_provided(self):
+        with pytest.raises(InquiryValidationError) as exc_info:
+            valid_inquiry(requester_user_id=uuid.UUID(int=0))
+
+        assert exc_info.value.field_errors == {"requester_user_id": ["Enter a valid UUID."]}
+
     def test_historical_inquiry_remains_valid_after_event_date_passes(self):
         inquiry = valid_inquiry(event_date=(utc_now() - timedelta(days=365)).date())
 

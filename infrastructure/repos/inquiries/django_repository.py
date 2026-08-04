@@ -23,6 +23,7 @@ class DjangoInquiryRepository(IInquiryRepository):
             vendor=self._get_vendor(domain.vendor_id),
             client_name=domain.client_name,
             client_email=domain.client_email,
+            requester_user_id=domain.requester_user_id,
             client_phone=domain.client_phone,
             message=domain.message,
             event_date=domain.event_date,
@@ -94,6 +95,7 @@ class DjangoInquiryRepository(IInquiryRepository):
             ).update(
                 client_name=domain.client_name,
                 client_email=domain.client_email,
+                requester_user_id=domain.requester_user_id,
                 client_phone=domain.client_phone,
                 message=domain.message,
                 event_date=domain.event_date,
@@ -144,6 +146,7 @@ class DjangoInquiryRepository(IInquiryRepository):
             vendor_id=model.vendor_id,
             client_name=model.client_name,
             client_email=model.client_email,
+            requester_user_id=model.requester_user_id,
             client_phone=model.client_phone,
             message=model.message,
             event_date=model.event_date,

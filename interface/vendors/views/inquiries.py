@@ -38,9 +38,8 @@ class InquiryListView(APIView):
 
 
 class PublicInquiryView(APIView):
-    """Public endpoint for clients to send inquiries to a vendor (no auth required)."""
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    """Endpoint for authenticated clients to send inquiries to a vendor."""
+    permission_classes = [IsAuthenticated]
     throttle_classes = [PublicVendorInquiryThrottle]
     throttle_scope = "public_vendor_inquiry"
 
@@ -53,12 +52,15 @@ class PublicInquiryView(APIView):
         serializer = InquirySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        actor = _actor(request)
+        sender_name = _request_user_display_name(request.user)
 
         cmd = SendInquiryCommand(
+            actor=actor,
             vendor_id=uuid.UUID(str(vendor_id)),
-            requester_id=_public_inquiry_requester_id(data["client_email"]),
-            client_name=data["client_name"],
-            client_email=data["client_email"],
+            requester_id=actor.user_id,
+            client_name=sender_name,
+            client_email=request.user.email,
             message=data["message"],
             client_phone=data.get("client_phone"),
             event_date=data.get("event_date"),
@@ -82,6 +84,10 @@ class PublicInquiryView(APIView):
             raise
 
 
-def _public_inquiry_requester_id(client_email: str) -> uuid.UUID:
-    normalized = str(client_email).strip().lower()
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"linkapro:public-inquiry:{normalized}")
+def _request_user_display_name(user) -> str:
+    get_full_name = getattr(user, "get_full_name", None)
+    if callable(get_full_name):
+        full_name = get_full_name()
+        if full_name:
+            return full_name
+    return f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or user.email

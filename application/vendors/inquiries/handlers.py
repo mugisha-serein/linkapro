@@ -14,11 +14,12 @@ from application.vendors.shared.dtos import PageDTO
 
 class InquiryCommandHandlersMixin:
         def send_inquiry(self, cmd: SendInquiryCommand) -> InquiryDTO:
+            effective_requester_id = cmd.actor.user_id if cmd.actor else cmd.requester_id
             payload_digest = self._inquiry_payload_digest(cmd)
 
             def operation() -> InquiryDTO:
                 self._assert_inquiry_allowed(
-                    requester_identity=cmd.requester_id,
+                    requester_identity=effective_requester_id,
                     vendor_id=cmd.vendor_id,
                     payload_digest=payload_digest,
                 )
@@ -28,6 +29,7 @@ class InquiryCommandHandlersMixin:
                     vendor_id=cmd.vendor_id,
                     client_name=cmd.client_name,
                     client_email=cmd.client_email,
+                    requester_user_id=cmd.actor.user_id if cmd.actor else None,
                     client_phone=cmd.client_phone,
                     message=cmd.message,
                     event_date=cmd.event_date,
@@ -36,7 +38,7 @@ class InquiryCommandHandlersMixin:
                 return self._to_inquiry_dto(saved)
 
             return self._run_required_idempotent(
-                "vendor_inquiry.send", cmd.requester_id, cmd.idempotency_key, cmd, operation
+                "vendor_inquiry.send", effective_requester_id, cmd.idempotency_key, cmd, operation
             )
 
         def mark_inquiry_read(self, cmd: MarkInquiryReadCommand) -> InquiryDTO:

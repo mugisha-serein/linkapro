@@ -7,7 +7,7 @@ from typing import get_type_hints
 
 import pytest
 
-from application.vendors.inquiries.commands import SendInquiryCommand
+from application.vendors.inquiries.commands import AuthenticatedActor, SendInquiryCommand
 from application.vendors.errors import InquiryAbuseDenied, VendorApplicationConfigurationError
 from application.vendors.shared.handlers import VendorCommandHandlers
 from application.vendors.inquiries.ports import InquiryAbuseProtectionPort
@@ -194,6 +194,43 @@ def test_send_inquiry_calls_abuse_protection_before_loading_vendor_and_creating_
     assert received_vendor == vendor_id
     assert len(payload_digest) == 64
     assert set(payload_digest) <= set("0123456789abcdef")
+
+
+def test_send_inquiry_uses_authenticated_actor_as_effective_requester_identity():
+    trace = []
+    vendor_id = uuid.uuid4()
+    legacy_requester_id = uuid.uuid4()
+    actor = AuthenticatedActor(user_id=uuid.uuid4())
+    vendor_repo = VendorRepo(_approved_profile(vendor_id), trace)
+    aggregate_uow = AggregateUow(trace)
+    idempotency_port = IdempotencyPort()
+    abuse_port = AllowInquiryAbuseProtection(trace)
+    handler = _handler(
+        vendor_repo=vendor_repo,
+        aggregate_uow=aggregate_uow,
+        idempotency_port=idempotency_port,
+        abuse_port=abuse_port,
+    )
+
+    handler.send_inquiry(
+        SendInquiryCommand(
+            vendor_id=vendor_id,
+            requester_id=legacy_requester_id,
+            actor=actor,
+            client_name="Planner",
+            client_email="planner@example.com",
+            client_phone="+250788654321",
+            message="Can you support our event next month?",
+            idempotency_key="actor-key",
+        )
+    )
+
+    received_requester, received_vendor, _ = abuse_port.calls[0]
+    assert received_requester == actor.user_id
+    assert received_requester != legacy_requester_id
+    assert received_vendor == vendor_id
+    assert aggregate_uow.add_calls[0].requester_user_id == actor.user_id
+    assert (("vendor_inquiry.send", actor.user_id, "actor-key")) in idempotency_port.records
 
 
 def test_inquiry_payload_digest_is_stable_and_excludes_idempotency_key():
