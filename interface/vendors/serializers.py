@@ -88,6 +88,8 @@ class ServicePackageSerializer(serializers.Serializer):
     package_tier = serializers.ChoiceField(choices=["standard", "premier", "gold"])
 
 class InquirySerializer(serializers.Serializer):
+    # Legacy payload fields only. PublicInquiryView persists the contact
+    # snapshot from the authenticated user, not from these submitted values.
     client_name = serializers.CharField(max_length=200)
     client_email = serializers.EmailField()
     client_phone = serializers.CharField(max_length=30, required=False, allow_blank=True)

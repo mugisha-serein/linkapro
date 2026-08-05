@@ -123,10 +123,10 @@ def _approved_profile(vendor_id: uuid.UUID) -> VendorProfile:
     )
 
 
-def _command(vendor_id: uuid.UUID, requester_id: uuid.UUID, *, key: str = "send-inquiry") -> SendInquiryCommand:
+def _command(vendor_id: uuid.UUID, actor: AuthenticatedActor, *, key: str = "send-inquiry") -> SendInquiryCommand:
     return SendInquiryCommand(
+        actor=actor,
         vendor_id=vendor_id,
-        requester_id=requester_id,
         client_name="Planner",
         client_email="planner@example.com",
         client_phone="+250788654321",
@@ -170,7 +170,7 @@ def test_inquiry_abuse_protection_port_contract_receives_identity_vendor_and_dig
 def test_send_inquiry_calls_abuse_protection_before_loading_vendor_and_creating_inquiry():
     trace = []
     vendor_id = uuid.uuid4()
-    requester_id = uuid.uuid4()
+    actor = AuthenticatedActor(user_id=uuid.uuid4())
     profile = _approved_profile(vendor_id)
     vendor_repo = VendorRepo(profile, trace)
     aggregate_uow = AggregateUow(trace)
@@ -182,7 +182,7 @@ def test_send_inquiry_calls_abuse_protection_before_loading_vendor_and_creating_
         abuse_port=abuse_port,
     )
 
-    result = handler.send_inquiry(_command(vendor_id, requester_id))
+    result = handler.send_inquiry(_command(vendor_id, actor))
 
     assert trace == ["abuse-check", "vendor-load", "inquiry-add"]
     assert vendor_repo.get_by_id_calls == [vendor_id]
@@ -190,16 +190,15 @@ def test_send_inquiry_calls_abuse_protection_before_loading_vendor_and_creating_
     assert result.vendor_id == vendor_id
     assert len(abuse_port.calls) == 1
     received_requester, received_vendor, payload_digest = abuse_port.calls[0]
-    assert received_requester == requester_id
+    assert received_requester == actor.user_id
     assert received_vendor == vendor_id
     assert len(payload_digest) == 64
     assert set(payload_digest) <= set("0123456789abcdef")
 
 
-def test_send_inquiry_uses_authenticated_actor_as_effective_requester_identity():
+def test_send_inquiry_uses_authenticated_actor_as_requester_identity():
     trace = []
     vendor_id = uuid.uuid4()
-    legacy_requester_id = uuid.uuid4()
     actor = AuthenticatedActor(user_id=uuid.uuid4())
     vendor_repo = VendorRepo(_approved_profile(vendor_id), trace)
     aggregate_uow = AggregateUow(trace)
@@ -214,9 +213,8 @@ def test_send_inquiry_uses_authenticated_actor_as_effective_requester_identity()
 
     handler.send_inquiry(
         SendInquiryCommand(
-            vendor_id=vendor_id,
-            requester_id=legacy_requester_id,
             actor=actor,
+            vendor_id=vendor_id,
             client_name="Planner",
             client_email="planner@example.com",
             client_phone="+250788654321",
@@ -227,7 +225,6 @@ def test_send_inquiry_uses_authenticated_actor_as_effective_requester_identity()
 
     received_requester, received_vendor, _ = abuse_port.calls[0]
     assert received_requester == actor.user_id
-    assert received_requester != legacy_requester_id
     assert received_vendor == vendor_id
     assert aggregate_uow.add_calls[0].requester_user_id == actor.user_id
     assert (("vendor_inquiry.send", actor.user_id, "actor-key")) in idempotency_port.records
@@ -235,12 +232,12 @@ def test_send_inquiry_uses_authenticated_actor_as_effective_requester_identity()
 
 def test_inquiry_payload_digest_is_stable_and_excludes_idempotency_key():
     vendor_id = uuid.uuid4()
-    requester_id = uuid.uuid4()
-    first = _command(vendor_id, requester_id, key="first-key")
-    replay = _command(vendor_id, requester_id, key="second-key")
+    actor = AuthenticatedActor(user_id=uuid.uuid4())
+    first = _command(vendor_id, actor, key="first-key")
+    replay = _command(vendor_id, actor, key="second-key")
     changed = SendInquiryCommand(
+        actor=actor,
         vendor_id=vendor_id,
-        requester_id=requester_id,
         client_name="Planner",
         client_email="planner@example.com",
         client_phone="+250788654321",
@@ -255,7 +252,7 @@ def test_inquiry_payload_digest_is_stable_and_excludes_idempotency_key():
 def test_typed_abuse_denial_stops_before_vendor_load_and_inquiry_creation():
     trace = []
     vendor_id = uuid.uuid4()
-    requester_id = uuid.uuid4()
+    actor = AuthenticatedActor(user_id=uuid.uuid4())
     vendor_repo = VendorRepo(_approved_profile(vendor_id), trace)
     aggregate_uow = AggregateUow(trace)
     idempotency_port = IdempotencyPort()
@@ -268,7 +265,7 @@ def test_typed_abuse_denial_stops_before_vendor_load_and_inquiry_creation():
     )
 
     with pytest.raises(InquiryAbuseDenied) as exc_info:
-        handler.send_inquiry(_command(vendor_id, requester_id))
+        handler.send_inquiry(_command(vendor_id, actor))
 
     assert exc_info.value.code == "inquiry_abuse_denied"
     assert trace == ["abuse-check"]
@@ -283,18 +280,16 @@ def test_send_inquiry_requires_abuse_protection_port_before_vendor_load():
     vendor_id = uuid.uuid4()
     vendor_repo = VendorRepo(_approved_profile(vendor_id), trace)
     aggregate_uow = AggregateUow(trace)
-    handler = _handler(
-        vendor_repo=vendor_repo,
-        aggregate_uow=aggregate_uow,
-        idempotency_port=IdempotencyPort(),
-        abuse_port=None,
-    )
-
     with pytest.raises(VendorApplicationConfigurationError) as exc_info:
-        handler.send_inquiry(_command(vendor_id, uuid.uuid4()))
+        _handler(
+            vendor_repo=vendor_repo,
+            aggregate_uow=aggregate_uow,
+            idempotency_port=IdempotencyPort(),
+            abuse_port=None,
+        )
 
     assert exc_info.value.field_errors == {
-        "inquiry_abuse_protection_port": ["Inquiry abuse protection is required."]
+        "inquiry_abuse_protection_port": ["Required dependency is missing."]
     }
     assert trace == []
     assert vendor_repo.get_by_id_calls == []
