@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import logging
-
 from ..vendor_view_common import *
 from ..vendor_view_common import _get_current_vendor_profile
 from ..vendor_view_common import _actor
-
-logger = logging.getLogger(__name__)
 
 
 class InquiryListView(APIView):
@@ -46,7 +42,6 @@ class PublicInquiryView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [PublicVendorInquiryThrottle]
     throttle_scope = "public_vendor_inquiry"
-    deprecated_route_name: str | None = None
 
     def post(self, request, vendor_id):
         if not VendorProfileModel.objects.filter(
@@ -88,24 +83,6 @@ class PublicInquiryView(APIView):
             if mapped is not None:
                 return mapped
             raise
-
-    def finalize_response(self, request, response, *args, **kwargs):
-        response = super().finalize_response(request, response, *args, **kwargs)
-        if not self.deprecated_route_name:
-            return response
-        vendor_id = getattr(self, "kwargs", {}).get("vendor_id")
-        logger.warning(
-            "deprecated_public_vendor_inquiry_route_hit",
-            extra={
-                "route_name": self.deprecated_route_name,
-                "path": request.path,
-                "vendor_id": str(vendor_id),
-            },
-        )
-        response["Deprecation"] = "true"
-        response["Link"] = f'<{request.build_absolute_uri("../inquiry/")}>; rel="successor-version"'
-        response["X-Deprecated-Route"] = self.deprecated_route_name
-        return response
 
 
 def _request_user_display_name(user) -> str:

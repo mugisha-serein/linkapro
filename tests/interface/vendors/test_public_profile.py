@@ -1,7 +1,5 @@
-import logging
-
 import pytest
-from django.urls import reverse
+from django.urls import NoReverseMatch, reverse
 from rest_framework.test import APIClient
 
 from django.utils import timezone
@@ -184,7 +182,7 @@ def test_public_inquiry_requires_approved_vendor(client):
     client.force_authenticate(user=create_user())
 
     response = client.post(
-        reverse("public-inquiries", args=[vendor.id]),
+        reverse("public-inquiry", args=[vendor.id]),
         {"client_name": "Client", "client_email": "client@example.com", "message": "Please share your availability."},
         format="json",
     )
@@ -193,59 +191,30 @@ def test_public_inquiry_requires_approved_vendor(client):
     assert Inquiry.objects.count() == 0
 
 
-@pytest.mark.parametrize("route_name", ["public-inquiry", "public-inquiries"])
-def test_public_inquiry_requires_json_authentication_error(client, route_name):
+def test_public_inquiry_requires_json_authentication_error(client):
     vendor = create_vendor_profile(status="approved")
 
     response = client.post(
-        reverse(route_name, args=[vendor.id]),
+        reverse("public-inquiry", args=[vendor.id]),
         {"client_name": "Impostor", "client_email": "impostor@example.com", "message": "Please share availability."},
         format="json",
     )
 
     assert response.status_code == 401
     assert response["content-type"].startswith("application/json")
-    if route_name == "public-inquiries":
-        assert response["Deprecation"] == "true"
-        assert response["X-Deprecated-Route"] == "public-inquiries"
-    else:
-        assert "Deprecation" not in response
+    assert "Deprecation" not in response
     assert response.data["success"] is False
     assert response.data["code"] == "authentication_required"
     assert "message" in response.data
     assert Inquiry.objects.count() == 0
 
 
-def test_plural_public_inquiry_route_is_marked_deprecated_for_monitoring(client, caplog):
-    caplog.set_level(logging.WARNING, logger="interface.vendors.views.inquiries")
-    vendor = create_vendor_profile(
-        status="approved",
-        description="Reliable event photography services in Kigali.",
-        contact_phone="+250788000111",
-    )
-    user = create_user(email="real.planner@example.com", first_name="Real", last_name="Planner")
-    client.force_authenticate(user=user)
-
-    response = client.post(
-        reverse("public-inquiries", args=[vendor.id]),
-        {
-            "client_name": "Legacy Name",
-            "client_email": "legacy@example.com",
-            "client_phone": "+250788000000",
-            "message": "Please share your availability for our wedding.",
-        },
-        format="json",
-    )
-
-    assert response.status_code == 201
-    assert response["Deprecation"] == "true"
-    assert response["X-Deprecated-Route"] == "public-inquiries"
-    assert 'rel="successor-version"' in response["Link"]
-    assert any(record.message == "deprecated_public_vendor_inquiry_route_hit" for record in caplog.records)
+def test_public_inquiries_plural_route_name_is_removed():
+    with pytest.raises(NoReverseMatch):
+        reverse("public-inquiries", args=["00000000-0000-0000-0000-000000000001"])
 
 
-def test_singular_public_inquiry_route_is_not_marked_deprecated(client, caplog):
-    caplog.set_level(logging.WARNING, logger="interface.vendors.views.inquiries")
+def test_singular_public_inquiry_route_is_not_marked_deprecated(client):
     vendor = create_vendor_profile(
         status="approved",
         description="Reliable event photography services in Kigali.",
@@ -268,7 +237,6 @@ def test_singular_public_inquiry_route_is_not_marked_deprecated(client, caplog):
     assert response.status_code == 201
     assert "Deprecation" not in response
     assert "X-Deprecated-Route" not in response
-    assert not any(record.message == "deprecated_public_vendor_inquiry_route_hit" for record in caplog.records)
 
 
 def test_public_inquiry_creates_record_for_approved_vendor(client):
@@ -285,7 +253,7 @@ def test_public_inquiry_creates_record_for_approved_vendor(client):
     client.force_authenticate(user=user)
 
     response = client.post(
-        reverse("public-inquiries", args=[vendor.id]),
+        reverse("public-inquiry", args=[vendor.id]),
         {
             "client_name": "Impostor Name",
             "client_email": "impostor@example.com",
