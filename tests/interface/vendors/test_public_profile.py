@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -203,10 +205,70 @@ def test_public_inquiry_requires_json_authentication_error(client, route_name):
 
     assert response.status_code == 401
     assert response["content-type"].startswith("application/json")
+    if route_name == "public-inquiries":
+        assert response["Deprecation"] == "true"
+        assert response["X-Deprecated-Route"] == "public-inquiries"
+    else:
+        assert "Deprecation" not in response
     assert response.data["success"] is False
     assert response.data["code"] == "authentication_required"
     assert "message" in response.data
     assert Inquiry.objects.count() == 0
+
+
+def test_plural_public_inquiry_route_is_marked_deprecated_for_monitoring(client, caplog):
+    caplog.set_level(logging.WARNING, logger="interface.vendors.views.inquiries")
+    vendor = create_vendor_profile(
+        status="approved",
+        description="Reliable event photography services in Kigali.",
+        contact_phone="+250788000111",
+    )
+    user = create_user(email="real.planner@example.com", first_name="Real", last_name="Planner")
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        reverse("public-inquiries", args=[vendor.id]),
+        {
+            "client_name": "Legacy Name",
+            "client_email": "legacy@example.com",
+            "client_phone": "+250788000000",
+            "message": "Please share your availability for our wedding.",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    assert response["Deprecation"] == "true"
+    assert response["X-Deprecated-Route"] == "public-inquiries"
+    assert 'rel="successor-version"' in response["Link"]
+    assert any(record.message == "deprecated_public_vendor_inquiry_route_hit" for record in caplog.records)
+
+
+def test_singular_public_inquiry_route_is_not_marked_deprecated(client, caplog):
+    caplog.set_level(logging.WARNING, logger="interface.vendors.views.inquiries")
+    vendor = create_vendor_profile(
+        status="approved",
+        description="Reliable event photography services in Kigali.",
+        contact_phone="+250788000111",
+    )
+    user = create_user(email="real.planner@example.com", first_name="Real", last_name="Planner")
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        reverse("public-inquiry", args=[vendor.id]),
+        {
+            "client_name": "Legacy Name",
+            "client_email": "legacy@example.com",
+            "client_phone": "+250788000000",
+            "message": "Please share your availability for our wedding.",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    assert "Deprecation" not in response
+    assert "X-Deprecated-Route" not in response
+    assert not any(record.message == "deprecated_public_vendor_inquiry_route_hit" for record in caplog.records)
 
 
 def test_public_inquiry_creates_record_for_approved_vendor(client):
