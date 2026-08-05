@@ -16,6 +16,12 @@ from domain.events.entities import (
     RSVPStatus,
     TimelineBlock,
 )
+from domain.events.budget.errors import NegativeBudgetAmount
+from domain.events.checklists.errors import InvalidChecklistItem
+from domain.events.event.errors import InvalidEventDetails
+from domain.events.guests.errors import InvalidGuestEntry
+from domain.events.shared.money import Money
+from domain.events.timeline.errors import InvalidTimelineRange
 
 
 class TestEvent:
@@ -71,10 +77,31 @@ class TestEvent:
         assert event.event_date == original_date
         assert event.venue == "New Venue"
         assert event.expected_guests == 75
-        assert event.total_budget == 1000.0
+        assert event.total_budget == Money("1000.0")
         assert event.updated_at == frozen_time
 
-    def test_update_details_currently_accepts_blank_name_and_negative_numbers(self):
+    def test_constructor_rejects_blank_name(self):
+        with pytest.raises(InvalidEventDetails, match="Event name must not be blank"):
+            Event(
+                id=uuid.uuid4(),
+                planner_id=uuid.uuid4(),
+                name=" ",
+                event_type=EventType.OTHER,
+                event_date=date(2025, 3, 1),
+            )
+
+    def test_constructor_rejects_negative_expected_guests(self):
+        with pytest.raises(InvalidEventDetails, match="Expected guests must be greater than or equal to 0"):
+            Event(
+                id=uuid.uuid4(),
+                planner_id=uuid.uuid4(),
+                name="Original",
+                event_type=EventType.OTHER,
+                event_date=date(2025, 3, 1),
+                expected_guests=-1,
+            )
+
+    def test_update_details_rejects_blank_name_without_changing_event(self):
         event = Event(
             id=uuid.uuid4(),
             planner_id=uuid.uuid4(),
@@ -84,15 +111,29 @@ class TestEvent:
             expected_guests=10,
             total_budget=500.0,
         )
-        frozen_time = datetime(2025, 3, 1, 8, 30, 0, tzinfo=timezone.utc)
 
-        with freeze_time(frozen_time):
-            event.update_details(name="", expected_guests=-5, total_budget=-1.25)
+        with pytest.raises(InvalidEventDetails, match="Event name must not be blank"):
+            event.update_details(name="")
 
-        assert event.name == ""
-        assert event.expected_guests == -5
-        assert event.total_budget == -1.25
-        assert event.updated_at == frozen_time
+        assert event.name == "Original"
+        assert event.expected_guests == 10
+
+    def test_update_details_rejects_negative_expected_guests_without_changing_event(self):
+        event = Event(
+            id=uuid.uuid4(),
+            planner_id=uuid.uuid4(),
+            name="Original",
+            event_type=EventType.OTHER,
+            event_date=date(2025, 3, 1),
+            expected_guests=10,
+            total_budget=500.0,
+        )
+
+        with pytest.raises(InvalidEventDetails, match="Expected guests must be greater than or equal to 0"):
+            event.update_details(expected_guests=-5)
+
+        assert event.name == "Original"
+        assert event.expected_guests == 10
 
 
 class TestChecklist:
@@ -163,8 +204,119 @@ class TestChecklistItem:
 
         assert item.status == ChecklistItemStatus.IN_PROGRESS
 
+    def test_constructor_rejects_blank_description(self):
+        with pytest.raises(InvalidChecklistItem, match="Checklist item description must not be blank"):
+            ChecklistItem(
+                id=uuid.uuid4(),
+                checklist_id=uuid.uuid4(),
+                description=" ",
+            )
+
+    def test_update_sets_provided_fields_and_updated_at(self):
+        item = ChecklistItem(
+            id=uuid.uuid4(),
+            checklist_id=uuid.uuid4(),
+            description="Before",
+            due_date=date(2025, 5, 1),
+        )
+        frozen_time = datetime(2025, 5, 2, 9, 0, 0, tzinfo=timezone.utc)
+
+        with freeze_time(frozen_time):
+            item.update(description="After", due_date=date(2025, 5, 10))
+
+        assert item.description == "After"
+        assert item.due_date == date(2025, 5, 10)
+        assert item.updated_at == frozen_time
+
+    def test_update_preserves_omitted_fields(self):
+        original_due_date = date(2025, 5, 1)
+        item = ChecklistItem(
+            id=uuid.uuid4(),
+            checklist_id=uuid.uuid4(),
+            description="Before",
+            due_date=original_due_date,
+        )
+
+        item.update(description="After")
+
+        assert item.description == "After"
+        assert item.due_date == original_due_date
+
+    def test_update_rejects_invalid_description_without_changing_item(self):
+        item = ChecklistItem(
+            id=uuid.uuid4(),
+            checklist_id=uuid.uuid4(),
+            description="Before",
+        )
+
+        with pytest.raises(InvalidChecklistItem, match="Checklist item description must not be blank"):
+            item.update(description="")
+
+        assert item.description == "Before"
+
+    def test_update_rejects_datetime_due_date(self):
+        item = ChecklistItem(
+            id=uuid.uuid4(),
+            checklist_id=uuid.uuid4(),
+            description="Before",
+        )
+
+        with pytest.raises(ValueError, match="Due date must be a date"):
+            item.update(due_date=datetime(2025, 5, 1, tzinfo=timezone.utc))
+
 
 class TestBudgetLine:
+    def test_update_estimate_sets_amount_and_updated_at(self):
+        line = BudgetLine(
+            id=uuid.uuid4(),
+            event_id=uuid.uuid4(),
+            category=BudgetCategory.VENUE,
+            description="Venue",
+            estimated_cost=1000.0,
+        )
+        frozen_time = datetime(2025, 6, 1, 8, 0, 0, tzinfo=timezone.utc)
+
+        with freeze_time(frozen_time):
+            line.update_estimate(1250.5)
+
+        assert line.estimated_cost == Money("1250.5")
+        assert line.updated_at == frozen_time
+
+    def test_constructor_rejects_negative_estimated_cost(self):
+        with pytest.raises(NegativeBudgetAmount, match="Estimated cost must be greater than or equal to 0"):
+            BudgetLine(
+                id=uuid.uuid4(),
+                event_id=uuid.uuid4(),
+                category=BudgetCategory.OTHER,
+                description="Adjustment",
+                estimated_cost=-1.0,
+            )
+
+    def test_constructor_rejects_negative_actual_cost(self):
+        with pytest.raises(NegativeBudgetAmount, match="Actual cost must be greater than or equal to 0"):
+            BudgetLine(
+                id=uuid.uuid4(),
+                event_id=uuid.uuid4(),
+                category=BudgetCategory.OTHER,
+                description="Adjustment",
+                estimated_cost=100.0,
+                actual_cost=-1.0,
+            )
+
+    def test_update_estimate_rejects_negative_amount_without_changing_line(self):
+        line = BudgetLine(
+            id=uuid.uuid4(),
+            event_id=uuid.uuid4(),
+            category=BudgetCategory.OTHER,
+            description="Adjustment",
+            estimated_cost=100.0,
+        )
+
+        with pytest.raises(NegativeBudgetAmount, match="Estimated cost must be greater than or equal to 0"):
+            line.update_estimate(-10.0)
+
+        assert line.estimated_cost == Money("100.0")
+
     def test_set_actual_cost_sets_amount_and_updated_at(self):
         line = BudgetLine(
             id=uuid.uuid4(),
@@ -178,25 +330,35 @@ class TestBudgetLine:
         with freeze_time(frozen_time):
             line.set_actual_cost(1200.5)
 
-        assert line.actual_cost == 1200.5
+        assert line.actual_cost == Money("1200.5")
         assert line.updated_at == frozen_time
 
-    def test_set_actual_cost_currently_accepts_negative_amount(self):
+    def test_set_actual_cost_rejects_negative_amount_without_changing_line(self):
         line = BudgetLine(
             id=uuid.uuid4(),
             event_id=uuid.uuid4(),
             category=BudgetCategory.OTHER,
             description="Adjustment",
-            estimated_cost=-10.0,
+            estimated_cost=10.0,
+            actual_cost=5.0,
         )
 
-        line.set_actual_cost(-25.75)
+        with pytest.raises(NegativeBudgetAmount, match="Actual cost must be greater than or equal to 0"):
+            line.set_actual_cost(-25.75)
 
-        assert line.estimated_cost == -10.0
-        assert line.actual_cost == -25.75
+        assert line.estimated_cost == Money("10.0")
+        assert line.actual_cost == Money("5.0")
 
 
 class TestGuestEntry:
+    def test_constructor_rejects_blank_full_name(self):
+        with pytest.raises(InvalidGuestEntry, match="Guest full name must not be blank"):
+            GuestEntry(
+                id=uuid.uuid4(),
+                event_id=uuid.uuid4(),
+                full_name=" ",
+            )
+
     def test_update_rsvp_sets_status_and_updated_at(self):
         guest = GuestEntry(
             id=uuid.uuid4(),
@@ -248,8 +410,99 @@ class TestGuestEntry:
 
         assert guest.table_assignment == ""
 
+    def test_update_contact_sets_provided_fields_and_updated_at(self):
+        guest = GuestEntry(
+            id=uuid.uuid4(),
+            event_id=uuid.uuid4(),
+            full_name="Guest One",
+            email="old@example.com",
+            phone="+250788000000",
+        )
+        frozen_time = datetime(2025, 7, 2, 9, 0, 0, tzinfo=timezone.utc)
+
+        with freeze_time(frozen_time):
+            guest.update_contact(
+                full_name="Guest Two",
+                email="new@example.com",
+                phone="+250788111222",
+            )
+
+        assert guest.full_name == "Guest Two"
+        assert guest.email == "new@example.com"
+        assert guest.phone == "+250788111222"
+        assert guest.updated_at == frozen_time
+
+    def test_update_contact_preserves_omitted_fields(self):
+        guest = GuestEntry(
+            id=uuid.uuid4(),
+            event_id=uuid.uuid4(),
+            full_name="Guest One",
+            email="old@example.com",
+            phone="+250788000000",
+        )
+
+        guest.update_contact(email="new@example.com")
+
+        assert guest.full_name == "Guest One"
+        assert guest.email == "new@example.com"
+        assert guest.phone == "+250788000000"
+
+    def test_update_contact_rejects_blank_full_name_without_changing_guest(self):
+        guest = GuestEntry(
+            id=uuid.uuid4(),
+            event_id=uuid.uuid4(),
+            full_name="Guest One",
+            email="old@example.com",
+            phone="+250788000000",
+        )
+
+        with pytest.raises(InvalidGuestEntry, match="Guest full name must not be blank"):
+            guest.update_contact(full_name="", email="", phone="")
+
+        assert guest.full_name == "Guest One"
+        assert guest.email == "old@example.com"
+        assert guest.phone == "+250788000000"
+
+    def test_update_contact_currently_accepts_blank_email_and_phone(self):
+        guest = GuestEntry(
+            id=uuid.uuid4(),
+            event_id=uuid.uuid4(),
+            full_name="Guest One",
+            email="old@example.com",
+            phone="+250788000000",
+        )
+
+        guest.update_contact(email="", phone="")
+
+        assert guest.full_name == "Guest One"
+        assert guest.email == ""
+        assert guest.phone == ""
+
 
 class TestTimelineBlock:
+    @pytest.mark.parametrize(
+        ("start", "end"),
+        [
+            (
+                datetime(2025, 8, 1, 10, 0, 0, tzinfo=timezone.utc),
+                datetime(2025, 8, 1, 10, 0, 0, tzinfo=timezone.utc),
+            ),
+            (
+                datetime(2025, 8, 1, 11, 0, 0, tzinfo=timezone.utc),
+                datetime(2025, 8, 1, 10, 0, 0, tzinfo=timezone.utc),
+            ),
+        ],
+    )
+    def test_constructor_rejects_equal_or_reversed_times(self, start, end):
+        with pytest.raises(InvalidTimelineRange, match="End time must be after start time"):
+            TimelineBlock(
+                id=uuid.uuid4(),
+                event_id=uuid.uuid4(),
+                title="Ceremony",
+                start_time=start,
+                end_time=end,
+            )
+
     def test_reschedule_sets_start_end_and_updated_at(self):
         start = datetime(2025, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
         end = start + timedelta(hours=1)
@@ -297,7 +550,7 @@ class TestTimelineBlock:
             updated_at=original_updated_at,
         )
 
-        with pytest.raises(ValueError, match="End time must be after start time"):
+        with pytest.raises(InvalidTimelineRange, match="End time must be after start time"):
             block.reschedule(start, end)
 
         assert block.start_time == original_start

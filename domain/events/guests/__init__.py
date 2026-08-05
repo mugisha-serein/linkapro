@@ -1,5 +1,5 @@
+from domain.events.guests.errors import InvalidGuestEntry
 from domain.events.guests.entity import GuestEntry
 from domain.events.guests.value_objects import DietaryRestriction, RSVPStatus
 
-__all__ = ["DietaryRestriction", "GuestEntry", "RSVPStatus"]
-
+__all__ = ["DietaryRestriction", "GuestEntry", "InvalidGuestEntry", "RSVPStatus"]
