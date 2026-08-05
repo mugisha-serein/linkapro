@@ -25,14 +25,6 @@ def _mfa_enrollment_throttle_config(rate: str) -> dict:
     return config
 
 
-class _KeyProvider:
-    def wrap_dek(self, dek: bytes) -> bytes:
-        return dek
-
-    def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
-        return encrypted_dek
-
-
 class TestTwoFactor:
     @pytest.fixture(autouse=True)
     def setup(self, monkeypatch):
@@ -59,11 +51,11 @@ class TestTwoFactor:
                 self.blacklist(grant.grant_id, grant.remaining_ttl_seconds(now=timezone.now()))
 
         def django_user_repository_factory():
-            return DjangoUserRepository(key_provider=_KeyProvider())
+            return DjangoUserRepository()
 
         monkeypatch.setattr("interface.identity.services.DjangoUserRepository", django_user_repository_factory)
         monkeypatch.setattr("interface.identity.services.RedisTokenBlacklist", InMemoryTokenBlacklist)
-        self.repo = DjangoUserRepository(key_provider=_KeyProvider())
+        self.repo = DjangoUserRepository()
         self.client = APIClient()
 
     def test_enable_2fa_returns_secret_and_qr(self):

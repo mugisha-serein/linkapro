@@ -10,14 +10,6 @@ from infrastructure.identity.django_user_repository import DjangoUserRepository
 from interface.identity.models import User as DjangoUser
 
 
-class _KeyProvider:
-    def wrap_dek(self, dek: bytes) -> bytes:
-        return dek
-
-    def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
-        return encrypted_dek
-
-
 def _succeeded_email_challenge(user_id: uuid.UUID):
     code = VerificationCode("123456")
     challenge = VerificationPolicy().issue_challenge(
@@ -104,8 +96,8 @@ class TestDjangoUserRepository:
 
         assert repo.get_by_id(domain_user.id) is None
 
-    def test_totp_secret_is_encrypted_at_rest(self):
-        repo = DjangoUserRepository(key_provider=_KeyProvider())
+    def test_totp_secret_round_trips_through_repository(self):
+        repo = DjangoUserRepository()
         domain_user = User(
             id=uuid.uuid4(),
             email=Email("mfa@example.com"),
@@ -119,5 +111,5 @@ class TestDjangoUserRepository:
         repo.set_totp_secret(domain_user.id, TOTPSecret("JBSWY3DPEHPK3PXP"))
 
         stored_user = DjangoUser.objects.get(id=domain_user.id)
-        assert stored_user.totp_secret["ciphertext"] != "JBSWY3DPEHPK3PXP"
+        assert stored_user.totp_secret == "JBSWY3DPEHPK3PXP"
         assert repo.get_totp_secret(domain_user.id).reveal_for_totp_verification() == "JBSWY3DPEHPK3PXP"
