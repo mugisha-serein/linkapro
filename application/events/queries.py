@@ -1,28 +1,14 @@
-"""Queries for event planning read operations."""
-from dataclasses import dataclass
-import uuid
+"""Compatibility re-exports for event planning queries."""
 
+from application.events.budget.queries import GetBudgetSummaryQuery
+from application.events.checklists.queries import GetChecklistQuery, ListChecklistsByEventQuery
+from application.events.event.queries import GetEventQuery, ListEventsByPlannerQuery
 
-@dataclass(frozen=True)
-class GetEventQuery:
-    event_id: uuid.UUID
+__all__ = [
+    "GetBudgetSummaryQuery",
+    "GetChecklistQuery",
+    "GetEventQuery",
+    "ListChecklistsByEventQuery",
+    "ListEventsByPlannerQuery",
+]
 
-
-@dataclass(frozen=True)
-class ListEventsByPlannerQuery:
-    planner_id: uuid.UUID
-
-
-@dataclass(frozen=True)
-class GetChecklistQuery:
-    checklist_id: uuid.UUID
-
-
-@dataclass(frozen=True)
-class ListChecklistsByEventQuery:
-    event_id: uuid.UUID
-
-
-@dataclass(frozen=True)
-class GetBudgetSummaryQuery:
-    event_id: uuid.UUID

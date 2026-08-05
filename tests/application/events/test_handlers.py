@@ -38,6 +38,7 @@ from domain.events.events import (
     GuestAdded,
     TimelineBlockAdded,
 )
+from domain.events.shared.money import Money
 
 
 @pytest.fixture
@@ -168,7 +169,7 @@ def test_create_event_saves_new_event_and_dispatches_event_created(handlers, rep
     assert saved_event.event_date == date(2026, 6, 1)
     assert saved_event.venue == "Convention Center"
     assert saved_event.expected_guests == 120
-    assert saved_event.total_budget == 5000.0
+    assert saved_event.total_budget == Money("5000.0")
     assert result.id == saved_event.id
     assert result.event_type == "corporate"
 
@@ -203,7 +204,7 @@ def test_update_event_loads_saves_mutated_event_and_dispatches_no_event(handlers
     assert loaded.event_date == date(2026, 7, 2)
     assert loaded.venue == "New Venue"
     assert loaded.expected_guests == 80
-    assert loaded.total_budget == 7000.0
+    assert loaded.total_budget == Money("7000.0")
     assert result.name == "Updated"
     repos["dispatcher"].dispatch.assert_not_called()
 
@@ -331,8 +332,8 @@ def test_add_budget_line_saves_new_line_and_dispatches_budget_line_added(handler
     assert saved.event_id == event_id
     assert saved.category == BudgetCategory.CATERING
     assert saved.description == "Dinner"
-    assert saved.estimated_cost == 3000.0
-    assert saved.actual_cost == 3200.0
+    assert saved.estimated_cost == Money("3000.0")
+    assert saved.actual_cost == Money("3200.0")
     assert saved.notes == "Updated quote"
     assert result.category == "catering"
 
@@ -359,8 +360,8 @@ def test_update_budget_line_loads_saves_mutated_line_and_dispatches_no_event(han
     )
 
     assert repos["budget"].method_calls == [call.get_by_id(line_id), call.save(loaded)]
-    assert loaded.estimated_cost == 1500.0
-    assert loaded.actual_cost == 1400.0
+    assert loaded.estimated_cost == Money("1500.0")
+    assert loaded.actual_cost == Money("1400.0")
     assert loaded.notes == "Paid"
     assert result.actual_cost == 1400.0
     repos["dispatcher"].dispatch.assert_not_called()

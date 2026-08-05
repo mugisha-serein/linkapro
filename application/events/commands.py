@@ -1,6 +1,7 @@
 """Commands for event planning module."""
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional, List
 import uuid
 
@@ -15,7 +16,7 @@ class CreateEventCommand:
     event_date: date
     venue: Optional[str] = None
     expected_guests: int = 0
-    total_budget: float = 0.0
+    total_budget: Decimal = Decimal("0.0")
 
 
 @dataclass(frozen=True)
@@ -26,7 +27,7 @@ class UpdateEventCommand:
     event_date: Optional[date] = None
     venue: Optional[str] = None
     expected_guests: Optional[int] = None
-    total_budget: Optional[float] = None
+    total_budget: Optional[Decimal] = None
 
 
 @dataclass(frozen=True)
@@ -62,16 +63,16 @@ class AddBudgetLineCommand:
     event_id: uuid.UUID
     category: str
     description: str
-    estimated_cost: float
-    actual_cost: Optional[float] = None
+    estimated_cost: Decimal
+    actual_cost: Optional[Decimal] = None
     notes: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class UpdateBudgetLineCommand:
     line_id: uuid.UUID
-    estimated_cost: Optional[float] = None
-    actual_cost: Optional[float] = None
+    estimated_cost: Optional[Decimal] = None
+    actual_cost: Optional[Decimal] = None
     notes: Optional[str] = None
 
 
