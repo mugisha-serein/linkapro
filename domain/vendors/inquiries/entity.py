@@ -28,6 +28,13 @@ from domain.vendors.shared.validation import (
 
 @dataclass
 class Inquiry(DomainAggregate):
+    """Vendor inquiry aggregate.
+
+    ``client_name`` and ``client_email`` are a contact snapshot at the time of
+    inquiry. ``requester_user_id`` is the authoritative identity link when the
+    requester is an authenticated account.
+    """
+
     _protected_fields: ClassVar[frozenset[str]] = frozenset({"is_read", "version"})
 
     id: uuid.UUID

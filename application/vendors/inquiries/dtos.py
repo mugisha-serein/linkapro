@@ -7,6 +7,12 @@ import uuid
 
 @dataclass(frozen=True)
 class InquiryDTO:
+    """Inquiry data returned to vendors.
+
+    ``client_name`` and ``client_email`` are contact snapshots, not
+    authorization identity fields.
+    """
+
     id: uuid.UUID
     vendor_id: uuid.UUID
     client_name: str

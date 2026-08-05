@@ -16,6 +16,12 @@ from application.vendors.shared.commands import (
 
 @dataclass(frozen=True)
 class SendInquiryCommand:
+    """Send an inquiry from an authenticated actor.
+
+    ``client_name`` and ``client_email`` are the contact snapshot captured at
+    inquiry time; ``actor.user_id`` is the authoritative requester identity.
+    """
+
     actor: AuthenticatedActor
     vendor_id: uuid.UUID
     client_name: str

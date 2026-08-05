@@ -55,6 +55,8 @@ class PublicInquiryView(APIView):
         actor = _actor(request)
         sender_name = _request_user_display_name(request.user)
 
+        # Snapshot authenticated contact details at submit time. Authorization
+        # and requester identity are tied only to actor.user_id.
         cmd = SendInquiryCommand(
             actor=actor,
             vendor_id=uuid.UUID(str(vendor_id)),

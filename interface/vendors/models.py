@@ -343,6 +343,8 @@ class ServicePackage(SoftDeleteModel):
 class Inquiry(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name="inquiries")
+    # Contact snapshot captured when the inquiry was submitted. The
+    # authoritative account identity, when present, is requester_user_id.
     client_name = models.CharField(max_length=200)
     client_email = models.EmailField()
     requester_user_id = models.UUIDField(null=True, blank=True, db_index=True)
