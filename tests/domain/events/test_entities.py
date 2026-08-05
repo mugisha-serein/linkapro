@@ -19,12 +19,43 @@ from domain.events.entities import (
 from domain.events.budget.errors import NegativeBudgetAmount
 from domain.events.checklists.errors import InvalidChecklistItem
 from domain.events.event.errors import InvalidEventDetails
+from domain.events.event.events import EventCreated
 from domain.events.guests.errors import InvalidGuestEntry
 from domain.events.shared.money import Money
 from domain.events.timeline.errors import InvalidTimelineRange
 
 
 class TestEvent:
+    def test_constructor_records_no_events_for_hydration(self):
+        event = Event(
+            id=uuid.uuid4(),
+            planner_id=uuid.uuid4(),
+            name="Wedding",
+            event_type=EventType.WEDDING,
+            event_date=date(2025, 6, 15),
+        )
+
+        assert event.pull_events() == []
+
+    def test_create_records_event_created(self):
+        event_id = uuid.uuid4()
+        planner_id = uuid.uuid4()
+
+        event = Event.create(
+            id=event_id,
+            planner_id=planner_id,
+            name="Wedding",
+            event_type=EventType.WEDDING,
+            event_date=date(2025, 6, 15),
+        )
+
+        events = event.pull_events()
+        assert len(events) == 1
+        assert isinstance(events[0], EventCreated)
+        assert events[0].event_id == event_id
+        assert events[0].planner_id == planner_id
+        assert event.pull_events() == []
+
     def test_create_event(self):
         event = Event(
             id=uuid.uuid4(),

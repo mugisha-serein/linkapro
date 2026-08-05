@@ -1,5 +1,6 @@
 """Event-only command handlers for the event planning application layer."""
 
+import logging
 import uuid
 
 from domain.events.domain_events import EventCreated
@@ -12,6 +13,8 @@ from domain.shared.utils import utc_now
 from application.events.commands import CreateEventCommand, UpdateEventCommand
 from application.events.dtos import EventDTO
 
+logger = logging.getLogger(__name__)
+
 
 class EventCommandHandlers:
     def __init__(self, event_repo: IEventRepository, event_dispatcher):
@@ -19,7 +22,7 @@ class EventCommandHandlers:
         self.event_dispatcher = event_dispatcher
 
     def create_event(self, cmd: CreateEventCommand) -> EventDTO:
-        event = Event(
+        event = Event.create(
             id=uuid.uuid4(),
             planner_id=cmd.planner_id,
             name=cmd.name,
@@ -30,9 +33,10 @@ class EventCommandHandlers:
             total_budget=cmd.total_budget,
         )
         saved = self.event_repo.save(event)
-        self.event_dispatcher.dispatch(
-            EventCreated(event_id=saved.id, planner_id=saved.planner_id, occurred_at=utc_now())
-        )
+        recorded_events = event.pull_events()
+        manual_event = self._manual_event_created(saved, recorded_events)
+        self._log_recorded_event_comparison(manual_event, recorded_events)
+        self.event_dispatcher.dispatch(manual_event)
         return self._to_event_dto(saved)
 
     def update_event(self, cmd: UpdateEventCommand) -> EventDTO:
@@ -66,3 +70,21 @@ class EventCommandHandlers:
             vendors_count=vendors_count,
             progress_percent=progress_percent,
         )
+
+    @staticmethod
+    def _manual_event_created(saved: Event, recorded_events: list[object]) -> EventCreated:
+        recorded_event = recorded_events[0] if len(recorded_events) == 1 else None
+        occurred_at = recorded_event.occurred_at if isinstance(recorded_event, EventCreated) else utc_now()
+        return EventCreated(event_id=saved.id, planner_id=saved.planner_id, occurred_at=occurred_at)
+
+    @staticmethod
+    def _log_recorded_event_comparison(manual_event: EventCreated, recorded_events: list[object]) -> None:
+        if recorded_events != [manual_event]:
+            logger.warning(
+                "Event aggregate recorded events differ from manual dispatch event",
+                extra={
+                    "manual_event_type": type(manual_event).__name__,
+                    "recorded_event_types": [type(event).__name__ for event in recorded_events],
+                    "event_id": str(manual_event.event_id),
+                },
+            )

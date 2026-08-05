@@ -5,7 +5,9 @@ from datetime import date, datetime
 from typing import Optional, Union
 
 from domain.events.event.errors import InvalidEventDetails
+from domain.events.event.events import EventCreated
 from domain.events.event.value_objects import EventType
+from domain.events.shared.aggregate_root import AggregateRoot
 from domain.events.shared.money import Money
 from domain.shared.utils import utc_now
 
@@ -13,7 +15,7 @@ EventBudgetInput = Union[Money, Decimal, int, str, float]
 
 
 @dataclass
-class Event:
+class Event(AggregateRoot):
     """Main event entity owned by a planner."""
 
     id: uuid.UUID
@@ -31,6 +33,34 @@ class Event:
         self.total_budget = self._coerce_money(self.total_budget)
         self._validate_name(self.name)
         self._validate_expected_guests(self.expected_guests)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        id: uuid.UUID,
+        planner_id: uuid.UUID,
+        name: str,
+        event_type: EventType,
+        event_date: date,
+        venue: Optional[str] = None,
+        expected_guests: int = 0,
+        total_budget: EventBudgetInput = Money(0),
+    ) -> "Event":
+        event = cls(
+            id=id,
+            planner_id=planner_id,
+            name=name,
+            event_type=event_type,
+            event_date=event_date,
+            venue=venue,
+            expected_guests=expected_guests,
+            total_budget=total_budget,
+        )
+        event._record_event(
+            EventCreated(event_id=event.id, planner_id=event.planner_id, occurred_at=utc_now())
+        )
+        return event
 
     def update_details(
         self,
