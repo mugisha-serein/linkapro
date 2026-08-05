@@ -237,8 +237,8 @@ class BudgetLineDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         cmd = UpdateBudgetLineCommand(
             line_id=line.id,
-            estimated_cost=float(serializer.validated_data["estimated_cost"]) if "estimated_cost" in serializer.validated_data else None,
-            actual_cost=float(serializer.validated_data["actual_cost"]) if serializer.validated_data.get("actual_cost") is not None else None,
+            estimated_cost=serializer.validated_data["estimated_cost"] if "estimated_cost" in serializer.validated_data else None,
+            actual_cost=serializer.validated_data["actual_cost"] if serializer.validated_data.get("actual_cost") is not None else None,
             notes=serializer.validated_data.get("notes"),
         )
         command_handlers = get_command_handlers()

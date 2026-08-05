@@ -32,7 +32,7 @@ class DjangoEventRepository(IEventRepository):
         django_event.event_date = domain_event.event_date
         django_event.venue = domain_event.venue
         django_event.expected_guests = domain_event.expected_guests
-        django_event.total_budget = domain_event.total_budget
+        django_event.total_budget = domain_event.total_budget.amount
         django_event.save()
         return self._to_domain(django_event)
 
@@ -48,7 +48,7 @@ class DjangoEventRepository(IEventRepository):
             event_date=model.event_date,
             venue=model.venue,
             expected_guests=model.expected_guests,
-            total_budget=float(model.total_budget),
+            total_budget=model.total_budget,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

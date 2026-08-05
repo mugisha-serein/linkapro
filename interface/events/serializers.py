@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 from application.events.commands import (
     CreateEventCommand, UpdateEventCommand, CreateChecklistCommand,
@@ -35,7 +37,7 @@ class CreateEventSerializer(serializers.Serializer):
             event_date=self.validated_data["event_date"],
             venue=self.validated_data.get("venue"),
             expected_guests=self.validated_data.get("expected_guests", 0),
-            total_budget=float(self.validated_data.get("total_budget", 0.0)),
+            total_budget=self.validated_data.get("total_budget", Decimal("0.0")),
         )
 
 
@@ -56,7 +58,7 @@ class UpdateEventSerializer(serializers.Serializer):
             event_date=self.validated_data.get("event_date"),
             venue=self.validated_data.get("venue"),
             expected_guests=self.validated_data.get("expected_guests"),
-            total_budget=float(self.validated_data["total_budget"]) if "total_budget" in self.validated_data else None,
+            total_budget=self.validated_data["total_budget"] if "total_budget" in self.validated_data else None,
         )
 
 
@@ -105,8 +107,8 @@ class AddBudgetLineSerializer(serializers.Serializer):
             event_id=event_id,
             category=self.validated_data["category"],
             description=self.validated_data["description"],
-            estimated_cost=float(self.validated_data["estimated_cost"]),
-            actual_cost=float(self.validated_data["actual_cost"]) if self.validated_data.get("actual_cost") is not None else None,
+            estimated_cost=self.validated_data["estimated_cost"],
+            actual_cost=self.validated_data["actual_cost"] if self.validated_data.get("actual_cost") is not None else None,
             notes=self.validated_data.get("notes"),
         )
 
