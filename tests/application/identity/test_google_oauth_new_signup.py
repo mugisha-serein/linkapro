@@ -18,13 +18,6 @@ from interface.identity.models import OAuthToken as DjangoOAuthToken, User as Dj
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-class _KeyProvider:
-    def wrap_dek(self, dek: bytes) -> bytes:
-        return dek
-
-    def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
-        return encrypted_dek
-
 
 class _Dispatcher:
     def __init__(self):
@@ -53,7 +46,7 @@ def test_new_google_email_creates_user_and_returns_session_tokens():
     dispatcher = _Dispatcher()
     use_case = GoogleLoginUseCase(
         user_repo=DjangoUserRepository(),
-        oauth_repo=DjangoOAuthTokenRepository(key_provider=_KeyProvider()),
+        oauth_repo=DjangoOAuthTokenRepository(),
         token_service=JWTTokenService(),
         session_store=DjangoIdentitySessionStore(),
         clock=_Clock(),
@@ -88,5 +81,5 @@ def test_new_google_email_creates_user_and_returns_session_tokens():
     assert result.bootstrap_user["email"] == "google-new@example.com"
     assert created_user.role == "planner"
     assert created_user.is_verified is True
-    assert saved_oauth_token.encrypted_access_token["ciphertext"] != "google-access-token"
-    assert saved_oauth_token.encrypted_refresh_token["ciphertext"] != "google-refresh-token"
+    assert saved_oauth_token.access_token == "google-access-token"
+    assert saved_oauth_token.refresh_token == "google-refresh-token"

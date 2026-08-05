@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-import secrets
 from typing import Optional
 from django.core.exceptions import ObjectDoesNotExist
 
@@ -9,16 +8,9 @@ from domain.identity.oauth import OAuthToken as DomainToken
 from domain.identity.oauth import OAuthAccessToken, OAuthProvider, OAuthRefreshToken
 from application.identity.shared.ports import OAuthIdentityRepository
 from infrastructure.identity.django_models import oauth_token_model, user_model
-from payments.application.ports import IKeyProvider
-from payments.helpers.encryption import encrypted_field_from_json, encrypted_field_to_json
-from payments.infrastructure.crypto import decrypt_field, encrypt_field
-from payments.infrastructure.vault_key_provider import VaultKeyProvider
 
 
 class DjangoOAuthTokenRepository(OAuthIdentityRepository):
-    def __init__(self, key_provider: Optional[IKeyProvider] = None):
-        self.key_provider = key_provider or VaultKeyProvider()
-
     def get_by_provider_and_user(self, provider: OAuthProvider, provider_user_id: str) -> Optional[DomainToken]:
         DjangoToken = oauth_token_model()
         try:
@@ -40,19 +32,8 @@ class DjangoOAuthTokenRepository(OAuthIdentityRepository):
         django_token.user = user_model().objects.get(id=domain_token.user_id)
         django_token.provider = domain_token.provider.value
         django_token.provider_user_id = domain_token.provider_user_id
-        dek = secrets.token_bytes(32)
-        wrapped_dek = self.key_provider.wrap_dek(dek)
-        django_token.encrypted_access_token = self._encrypt_token(
-            domain_token.access_token.raw_value,
-            dek,
-            wrapped_dek,
-        )
-        django_token.encrypted_refresh_token = (
-            self._encrypt_token(domain_token.refresh_token.raw_value, dek, wrapped_dek)
-            if domain_token.refresh_token
-            else None
-        )
-        django_token.dek_encrypted = wrapped_dek
+        django_token.access_token = domain_token.access_token.raw_value
+        django_token.refresh_token = domain_token.refresh_token.raw_value if domain_token.refresh_token else None
         django_token.expires_at = domain_token.expires_at
         django_token.created_at = domain_token.created_at
         django_token.save()
@@ -81,27 +62,12 @@ class DjangoOAuthTokenRepository(OAuthIdentityRepository):
             user_id=model.user_id,
             provider=OAuthProvider(model.provider),
             provider_user_id=model.provider_user_id,
-            access_token=OAuthAccessToken(self._decrypt_token(model.encrypted_access_token, model.dek_encrypted)),
+            access_token=OAuthAccessToken(model.access_token),
             refresh_token=(
-                OAuthRefreshToken(self._decrypt_token(model.encrypted_refresh_token, model.dek_encrypted))
-                if model.encrypted_refresh_token
+                OAuthRefreshToken(model.refresh_token)
+                if model.refresh_token
                 else None
             ),
             expires_at=model.expires_at,
             created_at=model.created_at,
         )
-
-    def _encrypt_token(self, token: str, dek: bytes, wrapped_dek: bytes) -> dict:
-        encrypted = encrypt_field(token.encode("utf-8"), dek)
-        encrypted_with_dek = type(encrypted)(
-            ciphertext=encrypted.ciphertext,
-            iv=encrypted.iv,
-            tag=encrypted.tag,
-            dek_encrypted=wrapped_dek,
-        )
-        return encrypted_field_to_json(encrypted_with_dek)
-
-    def _decrypt_token(self, encrypted_token: dict, wrapped_dek: bytes) -> str:
-        encrypted = encrypted_field_from_json(encrypted_token)
-        dek = self.key_provider.unwrap_dek(wrapped_dek)
-        return decrypt_field(encrypted, dek).decode("utf-8")

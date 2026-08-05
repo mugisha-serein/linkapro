@@ -42,14 +42,6 @@ from infrastructure.identity.shared.security_primitives import DjangoPasswordHas
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-class _KeyProvider:
-    def wrap_dek(self, dek: bytes) -> bytes:
-        return dek
-
-    def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
-        return encrypted_dek
-
-
 class FailingEventOutbox:
     def dispatch(self, event) -> None:
         raise RuntimeError("outbox unavailable")
@@ -64,7 +56,7 @@ class RecordingTokenFamilyRepository:
 
 
 def _repo() -> DjangoUserRepository:
-    return DjangoUserRepository(key_provider=_KeyProvider())
+    return DjangoUserRepository()
 
 
 def _revoke_all_sessions_use_case(token_family_repository=None) -> RevokeAllSessionsUseCase:

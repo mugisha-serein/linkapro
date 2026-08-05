@@ -49,14 +49,6 @@ PASSWORD_RESET_TOKEN_INVALID_RESPONSE = {
 COOKIE_AUTH_ORIGIN = "http://localhost:3000"
 
 
-class _KeyProvider:
-    def wrap_dek(self, dek: bytes) -> bytes:
-        return dek
-
-    def unwrap_dek(self, encrypted_dek: bytes) -> bytes:
-        return encrypted_dek
-
-
 def _auth_throttle_rates(**overrides):
     rates = {
         "login_ip": "100/min",
@@ -110,12 +102,12 @@ class TestIdentityViews:
                 self.blacklist(grant.grant_id, grant.remaining_ttl_seconds(now=timezone.now()))
 
         def django_user_repository_factory():
-            return DjangoUserRepository(key_provider=_KeyProvider())
+            return DjangoUserRepository()
 
         monkeypatch.setattr("interface.identity.services.RedisTokenBlacklist", InMemoryTokenBlacklist)
         monkeypatch.setattr("interface.identity.services.DjangoUserRepository", django_user_repository_factory)
         cache.clear()
-        self.repo = DjangoUserRepository(key_provider=_KeyProvider())
+        self.repo = DjangoUserRepository()
         self.hasher = DjangoPasswordHasher()
         self.client = APIClient()
 
