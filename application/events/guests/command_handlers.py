@@ -4,6 +4,7 @@ import uuid
 
 from domain.events.domain_events import GuestAdded
 from domain.events.guests.entity import GuestEntry
+from domain.events.guests.errors import GuestNotFound
 from domain.events.guests.interfaces import IGuestEntryRepository
 from domain.events.guests.value_objects import DietaryRestriction, RSVPStatus
 from domain.shared.utils import utc_now
@@ -38,7 +39,7 @@ class GuestCommandHandlers:
     def update_guest(self, cmd: UpdateGuestCommand) -> GuestEntryDTO:
         guest = self.guest_repo.get_by_id(cmd.guest_id)
         if not guest:
-            raise ValueError("Guest not found")
+            raise GuestNotFound("Guest not found")
         guest.update_contact(full_name=cmd.full_name, email=cmd.email, phone=cmd.phone)
         if cmd.rsvp_status is not None:
             guest.rsvp_status = RSVPStatus(cmd.rsvp_status)

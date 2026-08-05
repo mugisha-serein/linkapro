@@ -31,6 +31,9 @@ from domain.events.entities import (
     RSVPStatus,
     TimelineBlock,
 )
+from domain.events.budget.errors import BudgetLineNotFound
+from domain.events.checklists.errors import ChecklistNotFound
+from domain.events.event.errors import EventNotFound
 from domain.events.events import (
     BudgetLineAdded,
     ChecklistCreated,
@@ -38,6 +41,7 @@ from domain.events.events import (
     GuestAdded,
     TimelineBlockAdded,
 )
+from domain.events.guests.errors import GuestNotFound
 from domain.events.shared.money import Money
 
 
@@ -213,7 +217,7 @@ def test_update_event_raises_without_save_or_dispatch_when_missing(handlers, rep
     event_id = uuid.uuid4()
     repos["event"].get_by_id.return_value = None
 
-    with pytest.raises(ValueError, match="Event not found"):
+    with pytest.raises(EventNotFound, match="Event not found"):
         handlers.update_event(UpdateEventCommand(event_id=event_id, name="Updated"))
 
     assert repos["event"].method_calls == [call.get_by_id(event_id)]
@@ -305,7 +309,7 @@ def test_update_checklist_item_raises_without_save_or_dispatch_when_missing(hand
     item_id = uuid.uuid4()
     repos["item"].get_by_id.return_value = None
 
-    with pytest.raises(ValueError, match="Checklist item not found"):
+    with pytest.raises(ChecklistNotFound, match="Checklist item not found"):
         handlers.update_checklist_item(UpdateChecklistItemCommand(item_id=item_id, status="completed"))
 
     assert repos["item"].method_calls == [call.get_by_id(item_id)]
@@ -371,7 +375,7 @@ def test_update_budget_line_raises_without_save_or_dispatch_when_missing(handler
     line_id = uuid.uuid4()
     repos["budget"].get_by_id.return_value = None
 
-    with pytest.raises(ValueError, match="Budget line not found"):
+    with pytest.raises(BudgetLineNotFound, match="Budget line not found"):
         handlers.update_budget_line(UpdateBudgetLineCommand(line_id=line_id, actual_cost=100.0))
 
     assert repos["budget"].method_calls == [call.get_by_id(line_id)]
@@ -449,7 +453,7 @@ def test_update_guest_raises_without_save_or_dispatch_when_missing(handlers, rep
     guest_id = uuid.uuid4()
     repos["guest"].get_by_id.return_value = None
 
-    with pytest.raises(ValueError, match="Guest not found"):
+    with pytest.raises(GuestNotFound, match="Guest not found"):
         handlers.update_guest(UpdateGuestCommand(guest_id=guest_id, full_name="Updated"))
 
     assert repos["guest"].method_calls == [call.get_by_id(guest_id)]

@@ -4,6 +4,7 @@ import uuid
 
 from domain.events.domain_events import EventCreated
 from domain.events.event.entity import Event
+from domain.events.event.errors import EventNotFound
 from domain.events.event.interfaces import IEventRepository
 from domain.events.event.value_objects import EventType
 from domain.shared.utils import utc_now
@@ -37,7 +38,7 @@ class EventCommandHandlers:
     def update_event(self, cmd: UpdateEventCommand) -> EventDTO:
         event = self.event_repo.get_by_id(cmd.event_id)
         if not event:
-            raise ValueError("Event not found")
+            raise EventNotFound("Event not found")
         event.update_details(
             name=cmd.name,
             event_type=EventType(cmd.event_type) if cmd.event_type is not None else None,

@@ -1,4 +1,4 @@
-from domain.events.timeline.errors import InvalidTimelineRange
+from domain.events.timeline.errors import InvalidTimelineRange, TimelineBlockNotFound
 from domain.events.timeline.entity import TimelineBlock
 
-__all__ = ["TimelineBlock", "InvalidTimelineRange"]
+__all__ = ["InvalidTimelineRange", "TimelineBlock", "TimelineBlockNotFound"]

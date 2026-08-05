@@ -3,6 +3,7 @@
 import uuid
 
 from domain.events.budget.entity import BudgetLine
+from domain.events.budget.errors import BudgetLineNotFound
 from domain.events.budget.interfaces import IBudgetLineRepository
 from domain.events.budget.value_objects import BudgetCategory
 from domain.events.domain_events import BudgetLineAdded
@@ -36,7 +37,7 @@ class BudgetCommandHandlers:
     def update_budget_line(self, cmd: UpdateBudgetLineCommand) -> BudgetLineDTO:
         line = self.budget_repo.get_by_id(cmd.line_id)
         if not line:
-            raise ValueError("Budget line not found")
+            raise BudgetLineNotFound("Budget line not found")
         if cmd.estimated_cost is not None:
             line.update_estimate(cmd.estimated_cost)
         if cmd.actual_cost is not None:

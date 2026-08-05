@@ -2,6 +2,7 @@
 
 import uuid
 
+from domain.events.checklists.errors import ChecklistNotFound
 from domain.events.checklists.entity import Checklist
 from domain.events.checklists.interfaces import IChecklistItemRepository, IChecklistRepository
 from domain.events.checklists.item import ChecklistItem
@@ -57,7 +58,7 @@ class ChecklistCommandHandlers:
     def update_checklist_item(self, cmd: UpdateChecklistItemCommand) -> ChecklistItemDTO:
         item = self.checklist_item_repo.get_by_id(cmd.item_id)
         if not item:
-            raise ValueError("Checklist item not found")
+            raise ChecklistNotFound("Checklist item not found")
         item.update(description=cmd.description, due_date=cmd.due_date)
         if cmd.status is not None:
             item.status = ChecklistItemStatus(cmd.status)
