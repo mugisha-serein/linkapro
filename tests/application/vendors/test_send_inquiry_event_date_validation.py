@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from application.vendors.inquiries.commands import SendInquiryCommand
+from application.vendors.inquiries.commands import AuthenticatedActor, SendInquiryCommand
 from application.vendors.errors import InvalidVendorCommand
 
 
@@ -15,8 +15,8 @@ class DateSubclass(date):
 
 def _command(*, event_date):
     return SendInquiryCommand(
+        actor=AuthenticatedActor(user_id=uuid.uuid4()),
         vendor_id=uuid.uuid4(),
-        requester_id=uuid.uuid4(),
         client_name="Planner",
         client_email="planner@example.com",
         message="Can you support our event?",

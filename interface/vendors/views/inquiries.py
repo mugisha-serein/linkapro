@@ -58,7 +58,6 @@ class PublicInquiryView(APIView):
         cmd = SendInquiryCommand(
             actor=actor,
             vendor_id=uuid.UUID(str(vendor_id)),
-            requester_id=actor.user_id,
             client_name=sender_name,
             client_email=request.user.email,
             message=data["message"],
