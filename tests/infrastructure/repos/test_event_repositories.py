@@ -14,6 +14,7 @@ from infrastructure.repos.django_guest_entry_repository import DjangoGuestEntryR
 from infrastructure.repos.django_timeline_block_repository import DjangoTimelineBlockRepository
 from interface.identity.models import User
 from interface.events.models import Event as DjangoEvent
+from domain.events.shared.money import Money
 
 pytestmark = pytest.mark.django_db
 
@@ -179,7 +180,7 @@ class TestDjangoBudgetLineRepository:
         assert saved.category == BudgetCategory.CATERING
         lines = repo.list_by_event(event.id)
         assert len(lines) == 1
-        assert lines[0].estimated_cost == 2000.0
+        assert lines[0].estimated_cost == Money("2000.00")
         repo.delete(saved.id)
         assert repo.get_by_id(saved.id) is None
 

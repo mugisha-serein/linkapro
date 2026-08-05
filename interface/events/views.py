@@ -22,6 +22,37 @@ from application.events.commands import (
     UpdateGuestCommand,
 )
 from application.events.dtos import ChecklistDTO, ChecklistItemDTO, GuestEntryDTO, DashboardSummaryDTO
+from domain.events.budget.errors import BudgetLineNotFound
+from domain.events.checklists.errors import ChecklistNotFound
+from domain.events.event.errors import EventNotFound
+from domain.events.guests.errors import GuestNotFound
+from domain.events.timeline.errors import TimelineBlockNotFound
+
+
+_TYPED_NOT_FOUND_ERRORS = (
+    EventNotFound,
+    ChecklistNotFound,
+    BudgetLineNotFound,
+    GuestNotFound,
+    TimelineBlockNotFound,
+)
+_ROLLOUT_NOT_FOUND_CATCH = _TYPED_NOT_FOUND_ERRORS + (ValueError,)
+_LEGACY_NOT_FOUND_MESSAGES = {
+    "Event not found",
+    "Checklist not found",
+    "Checklist item not found",
+    "Budget line not found",
+    "Guest not found",
+    "Timeline block not found",
+}
+
+
+def _rollout_not_found_response(exc):
+    if isinstance(exc, _TYPED_NOT_FOUND_ERRORS) or (
+        isinstance(exc, ValueError) and str(exc) in _LEGACY_NOT_FOUND_MESSAGES
+    ):
+        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+    raise exc
 
 
 class EventListCreateView(APIView):
@@ -87,7 +118,10 @@ class EventDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         cmd = serializer.to_command(event_id=event_id)
         command_handlers = get_command_handlers()
-        updated = command_handlers.update_event(cmd)
+        try:
+            updated = command_handlers.update_event(cmd)
+        except _ROLLOUT_NOT_FOUND_CATCH as exc:
+            return _rollout_not_found_response(exc)
         if "country" in serializer.validated_data:
             Event.objects.filter(id=event_id, planner_id=request.user.id).update(
                 country=serializer.validated_data["country"]
@@ -190,7 +224,10 @@ class ChecklistItemDetailView(APIView):
         )
 
         command_handlers = get_command_handlers()
-        saved = command_handlers.update_checklist_item(cmd)
+        try:
+            saved = command_handlers.update_checklist_item(cmd)
+        except _ROLLOUT_NOT_FOUND_CATCH as exc:
+            return _rollout_not_found_response(exc)
         return Response(serialize_checklist_item_dto(saved))
 
 
@@ -237,12 +274,15 @@ class BudgetLineDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         cmd = UpdateBudgetLineCommand(
             line_id=line.id,
-            estimated_cost=float(serializer.validated_data["estimated_cost"]) if "estimated_cost" in serializer.validated_data else None,
-            actual_cost=float(serializer.validated_data["actual_cost"]) if serializer.validated_data.get("actual_cost") is not None else None,
+            estimated_cost=serializer.validated_data["estimated_cost"] if "estimated_cost" in serializer.validated_data else None,
+            actual_cost=serializer.validated_data["actual_cost"] if serializer.validated_data.get("actual_cost") is not None else None,
             notes=serializer.validated_data.get("notes"),
         )
         command_handlers = get_command_handlers()
-        updated = command_handlers.update_budget_line(cmd)
+        try:
+            updated = command_handlers.update_budget_line(cmd)
+        except _ROLLOUT_NOT_FOUND_CATCH as exc:
+            return _rollout_not_found_response(exc)
         return Response(serialize_budget_line_dto(updated))
 
 
@@ -299,7 +339,10 @@ class GuestDetailView(APIView):
             table_assignment=data.get("table_assignment"),
             notes=data.get("notes"),
         )
-        updated = get_command_handlers().update_guest(cmd)
+        try:
+            updated = get_command_handlers().update_guest(cmd)
+        except _ROLLOUT_NOT_FOUND_CATCH as exc:
+            return _rollout_not_found_response(exc)
         return Response(serialize_guest_dto(updated))
 
 

@@ -28,8 +28,8 @@ class DjangoBudgetLineRepository(IBudgetLineRepository):
         obj.event = DjangoEvent.objects.get(id=domain_line.event_id)
         obj.category = domain_line.category.value
         obj.description = domain_line.description
-        obj.estimated_cost = domain_line.estimated_cost
-        obj.actual_cost = domain_line.actual_cost
+        obj.estimated_cost = domain_line.estimated_cost.amount
+        obj.actual_cost = domain_line.actual_cost.amount if domain_line.actual_cost is not None else None
         obj.notes = domain_line.notes
         obj.save()
         return self._to_domain(obj)
@@ -43,8 +43,8 @@ class DjangoBudgetLineRepository(IBudgetLineRepository):
             event_id=model.event_id,
             category=BudgetCategory(model.category),
             description=model.description,
-            estimated_cost=float(model.estimated_cost),
-            actual_cost=float(model.actual_cost) if model.actual_cost else None,
+            estimated_cost=model.estimated_cost,
+            actual_cost=model.actual_cost if model.actual_cost is not None else None,
             notes=model.notes,
             created_at=model.created_at,
             updated_at=model.updated_at,
