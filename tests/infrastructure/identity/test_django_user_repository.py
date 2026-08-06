@@ -60,6 +60,25 @@ class TestDjangoUserRepository:
         assert found is not None
         assert found.first_name == "Find"
 
+    def test_get_by_email_matches_existing_mixed_case_email(self):
+        repo = DjangoUserRepository()
+        django_user = DjangoUser.objects.create(
+            email="MixedCase.User@example.com",
+            first_name="Mixed",
+            last_name="Case",
+            role="vendor",
+            is_active=True,
+            is_verified=True,
+        )
+        django_user.set_password("StrongPass1!")
+        django_user.save()
+
+        found = repo.get_by_email(Email("mixedcase.user@example.com"))
+
+        assert found is not None
+        assert found.id == django_user.id
+        assert str(found.email) == "mixedcase.user@example.com"
+
     def test_update_existing(self):
         repo = DjangoUserRepository()
         domain_user = User(

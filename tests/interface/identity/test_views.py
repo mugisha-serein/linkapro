@@ -105,6 +105,7 @@ class TestIdentityViews:
             return DjangoUserRepository()
 
         monkeypatch.setattr("interface.identity.services.RedisTokenBlacklist", InMemoryTokenBlacklist)
+        monkeypatch.setattr("payments.infrastructure.authentication.RedisTokenBlacklist", InMemoryTokenBlacklist)
         monkeypatch.setattr("interface.identity.services.DjangoUserRepository", django_user_repository_factory)
         cache.clear()
         self.repo = DjangoUserRepository()
@@ -235,6 +236,78 @@ class TestIdentityViews:
         assert response.data["success"] is False
         assert response.data["code"] == "invalid_credentials"
         assert "error" not in response.data
+
+    @pytest.mark.parametrize("role", ["admin", "vendor", "planner"])
+    @override_settings(COOKIE_AUTH_ALLOWED_ORIGINS=[COOKIE_AUTH_ORIGIN])
+    def test_active_verified_roles_login_and_refresh(self, role):
+        user = DjangoUser.objects.create_user(
+            email=f"{role}@example.com",
+            password="StrongPass1!",
+            first_name=role.title(),
+            last_name="User",
+            role=role,
+            is_active=True,
+            is_verified=True,
+            is_staff=(role == "admin"),
+        )
+
+        login_response = self.client.post(
+            reverse("login"),
+            {"email": f"{role}@example.com", "password": "StrongPass1!"},
+            format="json",
+        )
+
+        assert login_response.status_code == 200
+        assert login_response.data["code"] == "login_completed"
+        assert login_response.data["data"]["user"]["id"] == str(user.id)
+        assert login_response.data["data"]["user"]["role"] == role
+        assert "access" in login_response.data["data"]
+        assert "refresh_token" in login_response.cookies
+        refresh_cookie = login_response.cookies["refresh_token"]
+        assert refresh_cookie["httponly"] is True
+        assert refresh_cookie["path"] == "/"
+        assert refresh_cookie["samesite"] == "None"
+        assert refresh_cookie["secure"] is True
+        assert refresh_cookie["domain"] == ""
+
+        access_token = login_response.data["data"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+        profile_response = self.client.get(reverse("profile"), format="json")
+        assert profile_response.status_code == 200
+        assert profile_response.data["code"] == "profile_loaded"
+
+        self.client.credentials()
+        self.client.cookies["refresh_token"] = refresh_cookie.value
+        refresh_response = self.client.post(reverse("refresh"), format="json", HTTP_ORIGIN=COOKIE_AUTH_ORIGIN)
+        assert refresh_response.status_code == 200
+        assert refresh_response.data["code"] == "token_refreshed"
+        assert "access" in refresh_response.data["data"]
+        assert refresh_response.data["data"]["user"]["role"] == role
+        assert "refresh_token" in refresh_response.cookies
+
+    @override_settings(COOKIE_AUTH_ALLOWED_ORIGINS=[COOKIE_AUTH_ORIGIN])
+    def test_vendor_login_resolves_existing_mixed_case_email(self):
+        user = DjangoUser.objects.create_user(
+            email="Vendor.Mixed@example.com",
+            password="StrongPass1!",
+            first_name="Vendor",
+            last_name="Mixed",
+            role="vendor",
+            is_active=True,
+            is_verified=True,
+        )
+
+        response = self.client.post(
+            reverse("login"),
+            {"email": "vendor.mixed@example.com", "password": "StrongPass1!"},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        assert response.data["code"] == "login_completed"
+        assert response.data["data"]["user"]["id"] == str(user.id)
+        assert response.data["data"]["user"]["role"] == "vendor"
+        assert "refresh_token" in response.cookies
 
     @override_settings(REST_FRAMEWORK=_auth_throttle_rates(login_ip="2/min"))
     def test_login_ip_throttle_blocks_after_configured_limit(self):
