@@ -25,7 +25,7 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
     def get_by_email(self, email: Email) -> Optional[DomainUser]:
         DjangoUser = user_model()
         try:
-            user = DjangoUser.objects.get(email=str(email))
+            user = DjangoUser.objects.get(email__iexact=str(email))
             return self._to_domain(user)
         except ObjectDoesNotExist:
             return None
