@@ -14,6 +14,10 @@ class AuthenticationStatus(str, Enum):
     AUTHENTICATED = "authenticated"
     MFA_REQUIRED = "mfa_required"
     INVALID_CREDENTIALS = "invalid_credentials"
+    USER_NOT_FOUND = "user_not_found"
+    PASSWORD_MISMATCH = "password_mismatch"
+    PROFILE_JOIN_FAILED = "profile_join_failed"
+    ROLE_CHECK_FAILED = "role_check_failed"
     INACTIVE = "inactive"
     SOCIAL_LOGIN_ONLY = "social_login_only"
     INVALID_TEMP_TOKEN = "invalid_temp_token"
@@ -44,7 +48,7 @@ class AuthenticatedSessionIssuer:
         if not user.password_hash:
             return AuthenticationDecision(AuthenticationStatus.SOCIAL_LOGIN_ONLY, user=user)
         if not password_hasher.verify(plain_password, user.password_hash):
-            return AuthenticationDecision(AuthenticationStatus.INVALID_CREDENTIALS, user=user)
+            return AuthenticationDecision(AuthenticationStatus.PASSWORD_MISMATCH, user=user)
         return self._finalize_login(user, eligibility)
 
     def evaluate_oauth_login(self, user) -> AuthenticationDecision:

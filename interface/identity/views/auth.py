@@ -40,6 +40,26 @@ def _auth_error_contract(auth_status):
             "Invalid email or password.",
             {},
         ),
+        AuthenticationStatus.USER_NOT_FOUND: (
+            "invalid_credentials",
+            "Invalid email or password.",
+            {},
+        ),
+        AuthenticationStatus.PASSWORD_MISMATCH: (
+            "invalid_credentials",
+            "Invalid email or password.",
+            {},
+        ),
+        AuthenticationStatus.PROFILE_JOIN_FAILED: (
+            "invalid_credentials",
+            "Invalid email or password.",
+            {},
+        ),
+        AuthenticationStatus.ROLE_CHECK_FAILED: (
+            "invalid_credentials",
+            "Invalid email or password.",
+            {},
+        ),
         AuthenticationStatus.INACTIVE: (
             "invalid_credentials",
             "Invalid email or password.",
@@ -74,7 +94,10 @@ def _auth_error_contract(auth_status):
 
 def _auth_error_response(auth_status, request=None):
     code, message, field_errors = _auth_error_contract(auth_status)
-    logger.info("identity_authentication_failed", extra={"auth_status": getattr(auth_status, "value", str(auth_status))})
+    logger.info(
+        _auth_failure_event(auth_status),
+        extra={"auth_status": getattr(auth_status, "value", str(auth_status))},
+    )
     response_status = status.HTTP_423_LOCKED if auth_status is AuthenticationStatus.LOCKED else status.HTTP_401_UNAUTHORIZED
     return api_error(
         code=code,
@@ -83,6 +106,19 @@ def _auth_error_response(auth_status, request=None):
         status=response_status,
         request=request,
     )
+
+
+def _auth_failure_event(auth_status) -> str:
+    mapping = {
+        AuthenticationStatus.USER_NOT_FOUND: "user_not_found",
+        AuthenticationStatus.PASSWORD_MISMATCH: "password_mismatch",
+        AuthenticationStatus.PROFILE_JOIN_FAILED: "profile_join_failed",
+        AuthenticationStatus.ROLE_CHECK_FAILED: "role_check_failed",
+        AuthenticationStatus.INACTIVE: "account_inactive",
+        AuthenticationStatus.SOCIAL_LOGIN_ONLY: "social_login_only",
+    }
+    val = getattr(auth_status, "value", str(auth_status))
+    return mapping.get(auth_status, val)
 
 
 def _rate_limited_response(code, message, request=None):

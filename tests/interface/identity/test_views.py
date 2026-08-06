@@ -210,7 +210,7 @@ class TestIdentityViews:
         )
         self.repo.save(user)
 
-    def test_login_wrong_password(self):
+    def test_login_wrong_password(self, caplog):
         plain = PlainPassword("Correct1!")
         hashed = self.hasher.hash(plain)
 
@@ -231,11 +231,27 @@ class TestIdentityViews:
 
         url = reverse("login")
         data = {"email": "wrong-login@example.com", "password": "WrongPass1!"}
-        response = self.client.post(url, data, format="json")
+        with caplog.at_level(logging.INFO):
+            response = self.client.post(url, data, format="json")
         assert response.status_code == 401
         assert response.data["success"] is False
         assert response.data["code"] == "invalid_credentials"
         assert "error" not in response.data
+        assert any(record.message == "password_mismatch" for record in caplog.records)
+        assert not any(record.message == "identity_authentication_failed" for record in caplog.records)
+
+    def test_login_unknown_user_logs_user_not_found(self, caplog):
+        with caplog.at_level(logging.INFO):
+            response = self.client.post(
+                reverse("login"),
+                {"email": "missing-login@example.com", "password": "WrongPass1!"},
+                format="json",
+            )
+
+        assert response.status_code == 401
+        assert response.data["code"] == "invalid_credentials"
+        assert any(record.message == "user_not_found" for record in caplog.records)
+        assert not any(record.message == "identity_authentication_failed" for record in caplog.records)
 
     @pytest.mark.parametrize("role", ["admin", "vendor", "planner"])
     @override_settings(COOKIE_AUTH_ALLOWED_ORIGINS=[COOKIE_AUTH_ORIGIN])
@@ -308,6 +324,30 @@ class TestIdentityViews:
         assert response.data["data"]["user"]["id"] == str(user.id)
         assert response.data["data"]["user"]["role"] == "vendor"
         assert "refresh_token" in response.cookies
+
+    def test_login_uses_login_rate_limit_checked_event(self, caplog):
+        DjangoUser.objects.create_user(
+            email="throttle-login@example.com",
+            password="StrongPass1!",
+            first_name="Throttle",
+            last_name="Login",
+            role="planner",
+            is_active=True,
+            is_verified=True,
+        )
+
+        with caplog.at_level(logging.INFO):
+            response = self.client.post(
+                reverse("login"),
+                {"email": "throttle-login@example.com", "password": "StrongPass1!"},
+                format="json",
+            )
+
+        assert response.status_code == 200
+        checked_events = [record for record in caplog.records if record.message == "login_rate_limit_checked"]
+        assert len(checked_events) == 2
+        assert {record.scope for record in checked_events} == {"login_ip", "login_email"}
+        assert not any(record.message == "password_recovery_rate_limit_checked" for record in caplog.records)
 
     @override_settings(REST_FRAMEWORK=_auth_throttle_rates(login_ip="2/min"))
     def test_login_ip_throttle_blocks_after_configured_limit(self):
