@@ -1,3 +1,4 @@
+from typing import Any
 from __future__ import annotations
 
 import uuid
@@ -18,17 +19,17 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
         DjangoUser = user_model()
         try:
             user = DjangoUser.objects.get(id=user_id)
-            return self._to_domain(user)
-        except ObjectDoesNotExist:
+        except DjangoUser.DoesNotExist:
             return None
+        return self._to_domain(user)
 
     def get_by_email(self, email: Email) -> Optional[DomainUser]:
         DjangoUser = user_model()
         try:
             user = DjangoUser.objects.get(email__iexact=str(email))
-            return self._to_domain(user)
-        except ObjectDoesNotExist:
+        except DjangoUser.DoesNotExist:
             return None
+        return self._to_domain(user)
 
     def save(self, domain_user: DomainUser) -> DomainUser:
         DjangoUser = user_model()
@@ -84,14 +85,19 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
     def deactivate(self, user_id: uuid.UUID) -> None:
         user_model().objects.filter(id=user_id).update(is_active=False)
 
-    def _to_domain(self, model: DjangoUser) -> DomainUser:
+    def _to_domain(self, model: Any) -> DomainUser:
+        try:
+            role = DomainRole(model.role) if model.role else None
+        except (ValueError, TypeError):
+            role = None
+
         return DomainUser(
             id=model.id,
             email=Email(model.email),
             password_hash=PasswordHash(model.password) if model.password and is_password_usable(model.password) else None,
-            first_name=model.first_name,
-            last_name=model.last_name,
-            role=DomainRole(model.role),
+            first_name=model.first_name or "",
+            last_name=model.last_name or "",
+            role=role,
             two_factor_enabled=model.two_factor_enabled,
             auth_token_version=model.auth_token_version,
             status=self._status_from_model(model),
@@ -133,7 +139,7 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
             two_factor_enabled=False,
         )
 
-    def _remember_password_hash(self, user: DjangoUser, password_hash: str) -> None:
+    def _remember_password_hash(self, user: Any, password_hash: str) -> None:
         DjangoPasswordHistoryEntry = password_history_entry_model()
         DjangoPasswordHistoryEntry.objects.create(user=user, password_hash=password_hash)
         keep_ids = list(

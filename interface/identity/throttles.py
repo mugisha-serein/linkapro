@@ -99,7 +99,7 @@ class EmailVerificationRateLimited(APIException):
         )
 
 
-class PasswordRecoveryThrottle(SimpleRateThrottle):
+class BaseIdentityThrottle(SimpleRateThrottle):
     cache = cache
 
     def get_rate(self):
@@ -129,7 +129,7 @@ class PasswordRecoveryThrottle(SimpleRateThrottle):
             return False
 
         logger.info(
-            "password_recovery_rate_limit_checked",
+            self._rate_limit_checked_event(),
             extra={
                 "endpoint": request.path,
                 "scope": self.scope,
@@ -141,6 +141,22 @@ class PasswordRecoveryThrottle(SimpleRateThrottle):
         if not allowed:
             self._log_limited(request, reason="limit_exceeded")
         return allowed
+
+    def get_safe_metadata(self, request) -> dict:
+        return {}
+
+    def _rate_limit_checked_event(self) -> str:
+        return "auth_rate_limit_checked"
+
+    def _cache_key(self, fingerprint: str | None):
+        if not fingerprint:
+            return None
+        return self.cache_format % {"scope": self.scope, "ident": fingerprint}
+
+
+class PasswordRecoveryThrottle(BaseIdentityThrottle):
+    def _rate_limit_checked_event(self) -> str:
+        return "password_recovery_rate_limit_checked"
 
     def _log_limited(self, request, *, reason: str) -> None:
         event_name = "forgot_password_rate_limited" if self.scope.startswith("forgot_password") else "reset_password_rate_limited"
@@ -154,14 +170,6 @@ class PasswordRecoveryThrottle(SimpleRateThrottle):
                 **self.safe_metadata,
             },
         )
-
-    def get_safe_metadata(self, request) -> dict:
-        return {}
-
-    def _cache_key(self, fingerprint: str | None):
-        if not fingerprint:
-            return None
-        return self.cache_format % {"scope": self.scope, "ident": fingerprint}
 
 
 class ForgotPasswordIPThrottle(PasswordRecoveryThrottle):
@@ -208,7 +216,18 @@ class ResetPasswordTokenThrottle(PasswordRecoveryThrottle):
         return {"token_hash": rate_limit_hash(_reset_token(request))}
 
 
-class AuthEndpointThrottle(PasswordRecoveryThrottle):
+class AuthEndpointThrottle(BaseIdentityThrottle):
+    def _rate_limit_checked_event(self) -> str:
+        if self.scope.startswith("login"):
+            return "login_rate_limit_checked"
+        if self.scope.startswith("register"):
+            return "registration_rate_limit_checked"
+        if self.scope.startswith("two_factor"):
+            return "mfa_rate_limit_checked"
+        if self.scope.startswith("google_oauth"):
+            return "google_oauth_rate_limit_checked"
+        return "auth_rate_limit_checked"
+
     def _log_limited(self, request, *, reason: str) -> None:
         event_name = _rate_limited_event(self.scope)
         logger.warning(

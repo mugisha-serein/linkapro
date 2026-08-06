@@ -96,7 +96,7 @@ def test_login_with_password_invokes_dummy_hash_for_unknown_account():
 
     decision = _use_case(account_repository, password_hasher, event_outbox).execute(cmd)
 
-    assert decision.status is AuthenticationStatus.INVALID_CREDENTIALS
+    assert decision.status is AuthenticationStatus.USER_NOT_FOUND
     password_hasher.verify_against_dummy.assert_called_once_with(cmd.plain_password)
     password_hasher.verify.assert_not_called()
     account_repository.save.assert_not_called()
@@ -124,10 +124,69 @@ def test_login_with_password_locks_after_invalid_credentials_threshold():
     second = use_case.execute(cmd)
     third = use_case.execute(cmd)
 
-    assert first.status is AuthenticationStatus.INVALID_CREDENTIALS
+    assert first.status is AuthenticationStatus.USER_NOT_FOUND
     assert second.status is AuthenticationStatus.LOCKED
     assert third.status is AuthenticationStatus.LOCKED
     assert password_hasher.verify_against_dummy.call_count == 2
+
+
+def test_login_with_password_distinguishes_password_mismatch():
+    account_repository = Mock()
+    password_hasher = Mock()
+    password_hasher.verify.return_value = False
+    event_outbox = Mock()
+    user = User(
+        id=uuid.uuid4(),
+        email=Email("user@example.com"),
+        password_hash=PasswordHash("hashed"),
+        first_name="Login",
+        last_name="User",
+        role=UserRole.PLANNER,
+        is_active=True,
+        is_verified=True,
+    )
+    account_repository.get_by_email.return_value = user
+
+    decision = _use_case(account_repository, password_hasher, event_outbox).execute(
+        LoginUserCommand(
+            email=Email("user@example.com"),
+            plain_password=PlainPassword("WrongPass1!"),
+        )
+    )
+
+    assert decision.status is AuthenticationStatus.PASSWORD_MISMATCH
+    account_repository.save.assert_not_called()
+    event_outbox.dispatch.assert_not_called()
+
+
+def test_login_with_password_authenticates_admin_vendor_and_planner_roles():
+    for role in (UserRole.ADMIN, UserRole.VENDOR, UserRole.PLANNER):
+        account_repository = Mock()
+        password_hasher = Mock()
+        password_hasher.verify.return_value = True
+        event_outbox = Mock()
+        user = User(
+            id=uuid.uuid4(),
+            email=Email(f"{role.value}@example.com"),
+            password_hash=PasswordHash("hashed"),
+            first_name=role.value.title(),
+            last_name="User",
+            role=role,
+            is_active=True,
+            is_verified=True,
+        )
+        account_repository.get_by_email.return_value = user
+
+        decision = _use_case(account_repository, password_hasher, event_outbox).execute(
+            LoginUserCommand(
+                email=user.email,
+                plain_password=PlainPassword("StrongPass1!"),
+            )
+        )
+
+        assert decision.status is AuthenticationStatus.AUTHENTICATED
+        assert decision.user.role is role
+        account_repository.save.assert_called_once_with(user)
 
 
 def test_login_with_password_persists_login_event_after_success():
