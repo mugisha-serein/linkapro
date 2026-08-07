@@ -112,6 +112,39 @@ class TestIdentityViews:
         self.hasher = DjangoPasswordHasher()
         self.client = APIClient()
 
+    def test_login_without_trailing_slash_does_not_raise_append_slash_error(self):
+        # Regression test: POST /login (without trailing slash) must be handled
+        # directly by the no-slash URL alias instead of triggering Django's
+        # APPEND_SLASH redirect, which raises a RuntimeError/500 for POST bodies.
+        url = reverse("login-no-slash")
+        assert url.endswith("/login")
+        response = self.client.post(
+            url,
+            {"email": "unknown-noslash@example.com", "password": "WrongPass1!"},
+            format="json",
+        )
+        # Should be a normal controlled response (unknown user -> 401), not a 500.
+        assert response.status_code == 401
+        assert response.data["success"] is False
+
+    def test_register_without_trailing_slash_does_not_raise_append_slash_error(self):
+        url = reverse("register-no-slash")
+        assert url.endswith("/register")
+        data = {
+            "email": "noslash-register@example.com",
+            "password": "StrongPass1!",
+            "first_name": "No",
+            "last_name": "Slash",
+            "role": "planner",
+        }
+        response = self.client.post(url, data, format="json")
+        assert response.status_code == 201
+        assert response.data["success"] is True
+        assert response.data["code"] == "registration_completed"
+
+        user = self.repo.get_by_email(Email("noslash-register@example.com"))
+        assert user is not None
+
     def test_register_success(self):
         url = reverse("register")
         data = {

@@ -57,6 +57,14 @@ class ThrottledTokenRevokeView(TokenRevokeView):
 
 
 urlpatterns = [
+    # No-trailing-slash aliases for POST endpoints so clients that hit them
+    # without a trailing slash do not trigger Django's APPEND_SLASH redirect
+    # (which cannot preserve a POST body and raises a RuntimeError / 500).
+    path("register", RegisterView.as_view(), name="register-no-slash"),
+    path("login", LoginView.as_view(), name="login-no-slash"),
+    path("refresh", ThrottledTokenRefreshView.as_view(), name="refresh-no-slash"),
+    path("revoke", ThrottledTokenRevokeView.as_view(), name="revoke-no-slash"),
+
     path("register/", RegisterView.as_view(), name="register"),
     path("login/", LoginView.as_view(), name="login"),
     path("profile/", ProfileView.as_view(), name="profile"),
