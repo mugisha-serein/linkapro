@@ -378,96 +378,16 @@ class GoogleOAuthIPThrottle(AuthEndpointThrottle):
         return {"client_ip_hash": rate_limit_hash(get_client_ip(request))}
 
 
-def is_login_locked_out(request, email: str | None = None) -> bool:
-    email_hash = rate_limit_hash(_normalize_email_value(email) or _normalized_email(request))
-    metadata = {
-        "email_hash": email_hash,
-        "client_ip_hash": rate_limit_hash(get_client_ip(request)),
-    }
-    try:
-        decision = _account_lockout_service().is_locked(email_hash)
-    except Exception as exc:
-        logger.error(
-            "account_lockout_unavailable",
-            extra={
-                "endpoint": request.path,
-                "request_id": getattr(request, "correlation_id", None),
-                "reason": exc.__class__.__name__,
-                **metadata,
-            },
-            exc_info=True,
-        )
-        logger.warning(
-            "login_rate_limited",
-            extra={
-                "endpoint": request.path,
-                "request_id": getattr(request, "correlation_id", None),
-                "reason": "account_lockout_unavailable",
-                **metadata,
-            },
-        )
-        return True
-    if decision.locked:
-        logger.warning(
-            "login_rate_limited",
-            extra={
-                "endpoint": request.path,
-                "request_id": getattr(request, "correlation_id", None),
-                "reason": "account_lockout",
-                "failed_attempts": decision.failed_attempts,
-                **metadata,
-            },
-        )
-        return True
-    return False
-
-
-def record_login_failure(request, email: str | None = None, *, auth_status=None) -> None:
-    email_hash = rate_limit_hash(_normalize_email_value(email) or _normalized_email(request))
-    metadata = {
-        "email_hash": email_hash,
-        "client_ip_hash": rate_limit_hash(get_client_ip(request)),
-        "auth_status": getattr(auth_status, "value", str(auth_status)) if auth_status is not None else None,
-    }
-    logger.info(
-        "login_failed",
-        extra={
-            "endpoint": request.path,
-            "request_id": getattr(request, "correlation_id", None),
-            **metadata,
-        },
-    )
-    try:
-        decision = _account_lockout_service().record_failure(email_hash)
-    except Exception as exc:
-        logger.error(
-            "account_lockout_update_failed",
-            extra={
-                "endpoint": request.path,
-                "request_id": getattr(request, "correlation_id", None),
-                "reason": exc.__class__.__name__,
-                **metadata,
-            },
-            exc_info=True,
-        )
-        return
-    if decision.locked:
-        logger.warning(
-            "auth_lockout_triggered",
-            extra={
-                "endpoint": request.path,
-                "request_id": getattr(request, "correlation_id", None),
-                "counter": "account_login_fail",
-                "threshold": _login_lockout_config().max_failures,
-                **metadata,
-            },
-        )
-
-
 def clear_login_failures(request, email: str | None = None, *, user_id=None) -> None:
-    email_hash = rate_limit_hash(_normalize_email_value(email) or _normalized_email(request))
+    # The login use case records failures keyed by the raw (normalized) email,
+    # so clearing must use that same key. Passing a pre-hashed fingerprint here
+    # would hit a different cache key (the repository hashes the account key
+    # again), silently leaving the failure counter in place and keeping the
+    # account locked after a successful login.
+    account_key = _normalize_email_value(email) or _normalized_email(request)
+    email_hash = rate_limit_hash(account_key)
     try:
-        _account_lockout_service().record_success(email_hash)
+        _account_lockout_service().record_success(account_key)
     except Exception as exc:
         logger.error(
             "login_failure_state_clear_failed",

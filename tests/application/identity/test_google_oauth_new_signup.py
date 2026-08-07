@@ -42,11 +42,24 @@ class _IdGenerator:
         return value
 
 
+class _KeyProvider:
+    """Stateless stand-in for the Vault-backed envelope key provider."""
+
+    _PREFIX = b"wrapped:"
+
+    def wrap_dek(self, dek):
+        return self._PREFIX + dek
+
+    def unwrap_dek(self, wrapped):
+        return wrapped[len(self._PREFIX):]
+
+
 def test_new_google_email_creates_user_and_returns_session_tokens():
     dispatcher = _Dispatcher()
+    key_provider = _KeyProvider()
     use_case = GoogleLoginUseCase(
         user_repo=DjangoUserRepository(),
-        oauth_repo=DjangoOAuthTokenRepository(),
+        oauth_repo=DjangoOAuthTokenRepository(key_provider=key_provider),
         token_service=JWTTokenService(),
         session_store=DjangoIdentitySessionStore(),
         clock=_Clock(),
@@ -81,5 +94,15 @@ def test_new_google_email_creates_user_and_returns_session_tokens():
     assert result.bootstrap_user["email"] == "google-new@example.com"
     assert created_user.role == "planner"
     assert created_user.is_verified is True
-    assert saved_oauth_token.access_token == "google-access-token"
-    assert saved_oauth_token.refresh_token == "google-refresh-token"
+    # Tokens are stored encrypted, never as raw plaintext.
+    assert saved_oauth_token.encrypted_access_token != "google-access-token"
+    assert "google-access-token" not in saved_oauth_token.encrypted_access_token
+    assert "google-refresh-token" not in saved_oauth_token.encrypted_refresh_token
+    assert saved_oauth_token.dek_encrypted is not None
+
+    # A fresh repository with the same key provider decrypts the stored tokens.
+    token_repo = DjangoOAuthTokenRepository(key_provider=key_provider)
+    decrypted = token_repo.get_by_provider_and_user(OAuthProvider.GOOGLE, "google-new-123")
+    assert decrypted is not None
+    assert decrypted.access_token.raw_value == "google-access-token"
+    assert decrypted.refresh_token.raw_value == "google-refresh-token"

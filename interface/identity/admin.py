@@ -11,8 +11,9 @@ class UserAdmin(admin.ModelAdmin):
 @admin.register(OAuthToken)
 class OAuthTokenAdmin(admin.ModelAdmin):
     exclude = [
-        "access_token",
-        "refresh_token",
+        "encrypted_access_token",
+        "encrypted_refresh_token",
+        "dek_encrypted",
     ]
     list_display = ["user", "provider", "provider_user_id", "expires_at"]
     list_filter = ["provider"]
