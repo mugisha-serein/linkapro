@@ -55,8 +55,20 @@ class RecordingTokenFamilyRepository:
         self.blacklisted.append(family_id)
 
 
+class _KeyProvider:
+    """Stateless stand-in for the Vault-backed envelope key provider."""
+
+    _PREFIX = b"wrapped:"
+
+    def wrap_dek(self, dek):
+        return self._PREFIX + dek
+
+    def unwrap_dek(self, wrapped):
+        return wrapped[len(self._PREFIX):]
+
+
 def _repo() -> DjangoUserRepository:
-    return DjangoUserRepository()
+    return DjangoUserRepository(key_provider=_KeyProvider())
 
 
 def _revoke_all_sessions_use_case(token_family_repository=None) -> RevokeAllSessionsUseCase:

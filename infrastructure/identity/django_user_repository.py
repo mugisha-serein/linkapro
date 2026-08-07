@@ -1,6 +1,10 @@
 from __future__ import annotations
 from typing import Any
 
+import json
+import logging
+import re
+import secrets
 import uuid
 from typing import Optional
 from django.contrib.auth.hashers import is_password_usable
@@ -11,10 +15,29 @@ from domain.identity.account import AccountStatus, User as DomainUser, UserRole 
 from domain.identity.credentials import Email, PasswordHash, PasswordHistory
 from domain.identity.mfa import TOTPSecret
 from application.identity.shared.ports import TotpSecretRepository, AccountRepository
+from payments.application.ports import IKeyProvider
+from payments.domain.value_objects import EncryptedField
+from payments.helpers.encryption import (
+    encrypted_field_from_json,
+    encrypted_field_to_json,
+    is_encrypted_payload,
+)
+from payments.infrastructure.crypto import decrypt_field, encrypt_field
+from payments.infrastructure.vault_key_provider import VaultKeyProvider
 from infrastructure.identity.django_models import password_history_entry_model, user_model
 
 
+logger = logging.getLogger(__name__)
+
+# TOTP secrets are base32-encoded; used to distinguish legacy plaintext values
+# from corrupted encrypted payloads before at-rest encryption was enabled.
+_BASE32_SECRET_RE = re.compile(r"^[A-Z2-7]+=*$")
+
+
 class DjangoUserRepository(AccountRepository, TotpSecretRepository):
+    def __init__(self, key_provider: IKeyProvider | None = None) -> None:
+        self.key_provider = key_provider or VaultKeyProvider()
+
     def get_by_id(self, user_id: uuid.UUID) -> Optional[DomainUser]:
         DjangoUser = user_model()
         try:
@@ -109,8 +132,17 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
         )
     
     def set_totp_secret(self, user_id: uuid.UUID, secret: TOTPSecret) -> None:
+        dek = secrets.token_bytes(32)
+        wrapped_dek = self.key_provider.wrap_dek(dek)
+        encrypted = encrypt_field(secret.reveal_for_totp_verification().encode("utf-8"), dek)
+        encrypted_with_dek = EncryptedField(
+            ciphertext=encrypted.ciphertext,
+            iv=encrypted.iv,
+            tag=encrypted.tag,
+            dek_encrypted=wrapped_dek,
+        )
         user_model().objects.filter(id=user_id).update(
-            totp_secret=secret.reveal_for_totp_verification(),
+            totp_secret=json.dumps(encrypted_field_to_json(encrypted_with_dek)),
             two_factor_enabled=True,
         )
 
@@ -127,11 +159,42 @@ class DjangoUserRepository(AccountRepository, TotpSecretRepository):
         DjangoUser = user_model()
         try:
             user = DjangoUser.objects.get(id=user_id)
-            if user.two_factor_enabled and user.totp_secret:
-                return TOTPSecret(user.totp_secret)
-            return None
         except DjangoUser.DoesNotExist:
             return None
+        if not user.two_factor_enabled or not user.totp_secret:
+            return None
+        value = user.totp_secret
+        try:
+            payload = json.loads(value)
+        except (TypeError, ValueError):
+            return self._legacy_totp_secret(value, user_id)
+        if not is_encrypted_payload(payload):
+            return self._legacy_totp_secret(value, user_id)
+        try:
+            encrypted = encrypted_field_from_json(payload)
+            dek = self.key_provider.unwrap_dek(encrypted.dek_encrypted)
+            plaintext = decrypt_field(encrypted, dek).decode("utf-8")
+        except Exception as exc:
+            # Fail closed: a Vault outage or corrupted/tampered ciphertext must
+            # never surface as a raw 500 through the MFA login flow.
+            logger.error(
+                "totp_secret_decrypt_failed",
+                extra={"user_id": str(user_id), "error_type": exc.__class__.__name__},
+                exc_info=True,
+            )
+            return None
+        return TOTPSecret(plaintext)
+
+    @staticmethod
+    def _legacy_totp_secret(value: str, user_id: uuid.UUID) -> Optional[TOTPSecret]:
+        if not _BASE32_SECRET_RE.fullmatch(value.strip().upper()):
+            logger.error(
+                "totp_secret_unrecognized_value",
+                extra={"user_id": str(user_id)},
+            )
+            return None
+        logger.warning("totp_secret_plaintext_value_detected", extra={"user_id": str(user_id)})
+        return TOTPSecret(value)
 
     def clear_totp_secret(self, user_id: uuid.UUID) -> None:
         user_model().objects.filter(id=user_id).update(

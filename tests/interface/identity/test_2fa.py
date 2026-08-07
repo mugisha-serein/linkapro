@@ -16,6 +16,18 @@ from infrastructure.identity.django_user_repository import DjangoUserRepository
 pytestmark = pytest.mark.django_db
 
 
+class _KeyProvider:
+    """Stateless stand-in for the Vault-backed envelope key provider."""
+
+    _PREFIX = b"wrapped:"
+
+    def wrap_dek(self, dek):
+        return self._PREFIX + dek
+
+    def unwrap_dek(self, wrapped):
+        return wrapped[len(self._PREFIX):]
+
+
 def _mfa_enrollment_throttle_config(rate: str) -> dict:
     config = deepcopy(django_settings.REST_FRAMEWORK)
     config["DEFAULT_THROTTLE_RATES"] = {
@@ -51,11 +63,11 @@ class TestTwoFactor:
                 self.blacklist(grant.grant_id, grant.remaining_ttl_seconds(now=timezone.now()))
 
         def django_user_repository_factory():
-            return DjangoUserRepository()
+            return DjangoUserRepository(key_provider=_KeyProvider())
 
         monkeypatch.setattr("interface.identity.services.DjangoUserRepository", django_user_repository_factory)
         monkeypatch.setattr("interface.identity.services.RedisTokenBlacklist", InMemoryTokenBlacklist)
-        self.repo = DjangoUserRepository()
+        self.repo = DjangoUserRepository(key_provider=_KeyProvider())
         self.client = APIClient()
 
     def test_enable_2fa_returns_secret_and_qr(self):

@@ -26,6 +26,7 @@ from interface.identity.models import (
     PasswordResetToken,
     User as DjangoUser,
 )
+from interface.identity.throttles import clear_login_failures
 from interface.identity.password_reset_email import send_password_reset_email
 from tasks.email_tasks import send_password_reset_email_task
 from tasks.identity_domain_events import publish_identity_domain_event
@@ -47,6 +48,18 @@ PASSWORD_RESET_TOKEN_INVALID_RESPONSE = {
     "field_errors": {"token": ["Invalid or expired reset token."]},
 }
 COOKIE_AUTH_ORIGIN = "http://localhost:3000"
+
+
+class _KeyProvider:
+    """Stateless stand-in for the Vault-backed envelope key provider."""
+
+    _PREFIX = b"wrapped:"
+
+    def wrap_dek(self, dek):
+        return self._PREFIX + dek
+
+    def unwrap_dek(self, wrapped):
+        return wrapped[len(self._PREFIX):]
 
 
 def _auth_throttle_rates(**overrides):
@@ -102,13 +115,13 @@ class TestIdentityViews:
                 self.blacklist(grant.grant_id, grant.remaining_ttl_seconds(now=timezone.now()))
 
         def django_user_repository_factory():
-            return DjangoUserRepository()
+            return DjangoUserRepository(key_provider=_KeyProvider())
 
         monkeypatch.setattr("interface.identity.services.RedisTokenBlacklist", InMemoryTokenBlacklist)
         monkeypatch.setattr("payments.infrastructure.authentication.RedisTokenBlacklist", InMemoryTokenBlacklist)
         monkeypatch.setattr("interface.identity.services.DjangoUserRepository", django_user_repository_factory)
         cache.clear()
-        self.repo = DjangoUserRepository()
+        self.repo = DjangoUserRepository(key_provider=_KeyProvider())
         self.hasher = DjangoPasswordHasher()
         self.client = APIClient()
 
@@ -570,6 +583,47 @@ class TestIdentityViews:
         assert response.data["code"] == "login_completed"
         assert attempt_repository.load_failed_attempt_counter("clear-failure@example.com").attempts == ()
         assert user.id
+
+    @override_settings(LOGIN_FAILURE_LOCKOUT_THRESHOLD=2, LOGIN_FAILURE_LOCKOUT_SECONDS=900)
+    def test_clear_login_failures_clears_counter_and_lock_recorded_by_use_case(self):
+        # Regression for #7 (lockout key mismatch): the login use case records
+        # failures keyed by the raw email, but the view-level clear helper used
+        # to pass a pre-hashed email fingerprint. The repository hashes the
+        # account key again, so the helper cleared a different cache key and the
+        # failure counter (and lock) survived successful logins.
+        user = DjangoUser.objects.create_user(
+            email="key-mismatch@example.com",
+            password="StrongPass1!",
+            first_name="Key",
+            last_name="Mismatch",
+            role="planner",
+            is_verified=True,
+        )
+        login_url = reverse("login")
+        first = self.client.post(
+            login_url,
+            {"email": user.email, "password": "WrongPass1!"},
+            format="json",
+        )
+        second = self.client.post(
+            login_url,
+            {"email": user.email, "password": "WrongPass1!"},
+            format="json",
+        )
+
+        attempt_repository = DjangoAuthenticationAttemptRepository()
+        locked = attempt_repository.load_failed_attempt_counter(user.email)
+        assert first.status_code == 401
+        assert second.status_code == 423
+        assert len(locked.attempts) == 2
+        assert locked.locked_until is not None
+
+        # The login view invokes this helper on every successful login.
+        clear_login_failures(second.wsgi_request, user.email)
+
+        cleared = attempt_repository.load_failed_attempt_counter(user.email)
+        assert cleared.attempts == ()
+        assert cleared.locked_until is None
 
     def test_login_rate_limiter_cache_failure_fails_closed(self, monkeypatch):
         def unavailable(*args, **kwargs):

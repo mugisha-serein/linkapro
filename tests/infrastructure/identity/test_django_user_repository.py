@@ -10,6 +10,23 @@ from infrastructure.identity.django_user_repository import DjangoUserRepository
 from interface.identity.models import User as DjangoUser
 
 
+class _KeyProvider:
+    """Stateless stand-in for the Vault-backed envelope key provider.
+
+    Stateless on purpose: any instance can unwrap a DEK wrapped by any other
+    instance, which mirrors how different repository instances (the test
+    fixture vs. the view factory) must interoperate in the integration tests.
+    """
+
+    _PREFIX = b"wrapped:"
+
+    def wrap_dek(self, dek):
+        return self._PREFIX + dek
+
+    def unwrap_dek(self, wrapped):
+        return wrapped[len(self._PREFIX):]
+
+
 def _succeeded_email_challenge(user_id: uuid.UUID):
     code = VerificationCode("123456")
     challenge = VerificationPolicy().issue_challenge(
@@ -115,8 +132,9 @@ class TestDjangoUserRepository:
 
         assert repo.get_by_id(domain_user.id) is None
 
-    def test_totp_secret_round_trips_through_repository(self):
-        repo = DjangoUserRepository()
+    def test_totp_secret_round_trips_encrypted_through_repository(self):
+        key_provider = _KeyProvider()
+        repo = DjangoUserRepository(key_provider=key_provider)
         domain_user = User(
             id=uuid.uuid4(),
             email=Email("mfa@example.com"),
@@ -130,5 +148,80 @@ class TestDjangoUserRepository:
         repo.set_totp_secret(domain_user.id, TOTPSecret("JBSWY3DPEHPK3PXP"))
 
         stored_user = DjangoUser.objects.get(id=domain_user.id)
-        assert stored_user.totp_secret == "JBSWY3DPEHPK3PXP"
+        assert stored_user.totp_secret != "JBSWY3DPEHPK3PXP"
+        assert "JBSWY3DPEHPK3PXP" not in stored_user.totp_secret
         assert repo.get_totp_secret(domain_user.id).reveal_for_totp_verification() == "JBSWY3DPEHPK3PXP"
+
+        # A fresh repository using the same key provider decrypts the stored value.
+        fresh_repo = DjangoUserRepository(key_provider=key_provider)
+        assert fresh_repo.get_totp_secret(domain_user.id).reveal_for_totp_verification() == "JBSWY3DPEHPK3PXP"
+
+    def test_get_totp_secret_accepts_legacy_plaintext_value(self):
+        repo = DjangoUserRepository(key_provider=_KeyProvider())
+        django_user = DjangoUser.objects.create(
+            email="legacy-totp@example.com",
+            first_name="Legacy",
+            last_name="Totp",
+            role="planner",
+            is_active=True,
+            is_verified=True,
+            totp_secret="JBSWY3DPEHPK3PXP",
+            two_factor_enabled=True,
+        )
+
+        secret = repo.get_totp_secret(django_user.id)
+
+        assert secret is not None
+        assert secret.reveal_for_totp_verification() == "JBSWY3DPEHPK3PXP"
+
+    def test_get_totp_secret_returns_none_for_corrupt_payload(self):
+        repo = DjangoUserRepository(key_provider=_KeyProvider())
+        django_user = DjangoUser.objects.create(
+            email="corrupt-totp@example.com",
+            first_name="Corrupt",
+            last_name="Totp",
+            role="planner",
+            is_active=True,
+            is_verified=True,
+            totp_secret='{"ciphertext":"!!!","iv":"!!!","tag":"!!!","dek_encrypted":"!!!"}',
+            two_factor_enabled=True,
+        )
+
+        assert repo.get_totp_secret(django_user.id) is None
+
+    def test_get_totp_secret_returns_none_for_unrecognized_value(self):
+        repo = DjangoUserRepository(key_provider=_KeyProvider())
+        django_user = DjangoUser.objects.create(
+            email="garbage-totp@example.com",
+            first_name="Garbage",
+            last_name="Totp",
+            role="planner",
+            is_active=True,
+            is_verified=True,
+            totp_secret="not-a-real-secret",
+            two_factor_enabled=True,
+        )
+
+        assert repo.get_totp_secret(django_user.id) is None
+
+    def test_clear_totp_secret_removes_encrypted_value(self):
+        key_provider = _KeyProvider()
+        repo = DjangoUserRepository(key_provider=key_provider)
+        domain_user = User(
+            id=uuid.uuid4(),
+            email=Email("mfa-clear@example.com"),
+            password_hash=PasswordHash("hash"),
+            first_name="Mfa",
+            last_name="Clear",
+            role=UserRole.PLANNER,
+        )
+        repo.save(domain_user)
+        repo.set_totp_secret(domain_user.id, TOTPSecret("JBSWY3DPEHPK3PXP"))
+        assert repo.get_totp_secret(domain_user.id) is not None
+
+        repo.clear_totp_secret(domain_user.id)
+
+        stored_user = DjangoUser.objects.get(id=domain_user.id)
+        assert stored_user.totp_secret is None
+        assert stored_user.two_factor_enabled is False
+        assert repo.get_totp_secret(domain_user.id) is None
